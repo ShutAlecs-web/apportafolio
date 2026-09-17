@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-import psycopg2 # CAMBIO: Motor PostgreSQL institucional
+import psycopg2 
 import hashlib
 from datetime import datetime
 import json
@@ -22,7 +22,7 @@ st.set_page_config(
 
 # 2. ESTILOS NEÓN INSTITUCIONALES
 st.markdown("""<style translate="no" class="notranslate">
-@import url('[https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap](https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap)');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap');
 .stApp { background-color: #06070a !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #e5e7eb; }
 .ticker-bar { background: #0d1117; border-bottom: 1px solid #1f2937; padding: 10px 20px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; border-radius: 8px; margin-bottom: 24px; }
@@ -739,7 +739,7 @@ if st.session_state.get("modo_pro_toggle", False):
                             if isinstance(link, str) and link.startswith('http'):
                                 safe_link = link
                             else:
-                                safe_link = f"[https://finance.yahoo.com/quote/](https://finance.yahoo.com/quote/){yf_sym}"
+                                safe_link = f"https://finance.yahoo.com/quote/{yf_sym}"
                             clean_news.append({"title": title, "link": safe_link})
                     return hist, info, clean_news
                 except: return pd.DataFrame(), {}, []
@@ -792,8 +792,7 @@ if st.session_state.get("modo_pro_toggle", False):
                 if backend_api_key:
                     try:
                         import requests
-                        # CAMBIO: Usamos gemini-pro para evitar errores 404
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
+                        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
                         headers = {'Content-Type': 'application/json'}
                         
                         prompt_filled = PROMPT_MAESTRO.format(
