@@ -1,0 +1,7 @@
+streamlit
+pandas
+yfinance
+plotly
+psycopg2-binary
+google-generativeai
+XlsxWriter
