@@ -22,7 +22,7 @@ st.set_page_config(
 
 # 2. ESTILOS NEÓN INSTITUCIONALES
 st.markdown("""<style translate="no" class="notranslate">
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap');
+@import url('[https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap](https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap)');
 .stApp { background-color: #06070a !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #e5e7eb; }
 .ticker-bar { background: #0d1117; border-bottom: 1px solid #1f2937; padding: 10px 20px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; border-radius: 8px; margin-bottom: 24px; }
@@ -739,7 +739,7 @@ if st.session_state.get("modo_pro_toggle", False):
                             if isinstance(link, str) and link.startswith('http'):
                                 safe_link = link
                             else:
-                                safe_link = f"https://finance.yahoo.com/quote/{yf_sym}"
+                                safe_link = f"[https://finance.yahoo.com/quote/](https://finance.yahoo.com/quote/){yf_sym}"
                             clean_news.append({"title": title, "link": safe_link})
                     return hist, info, clean_news
                 except: return pd.DataFrame(), {}, []
@@ -793,7 +793,7 @@ if st.session_state.get("modo_pro_toggle", False):
                     try:
                         import requests
                         # CAMBIO: Usamos gemini-pro para evitar errores 404
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
+                        url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=){backend_api_key}"
                         headers = {'Content-Type': 'application/json'}
                         
                         prompt_filled = PROMPT_MAESTRO.format(
@@ -812,4 +812,243 @@ if st.session_state.get("modo_pro_toggle", False):
                         
                         if response.status_code == 200:
                             ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                            clean_json = ai_response.replace("```json", "").replace("
+                            clean_json = ai_response.replace(chr(96)*3 + "json", "").replace(chr(96)*3, "").strip()
+                            parsed_response = json.loads(clean_json)
+                            
+                            ai_verdict = parsed_response.get("verdict", "HOLD")
+                            ai_rating = int(parsed_response.get("rating", 5))
+                            ai_bulls = parsed_response.get("bull_points", [])
+                            ai_bears = parsed_response.get("bear_points", [])
+                            ai_macro = parsed_response.get("macro_synthesis", "")
+                        else:
+                            ai_verdict = "ERROR API"
+                            error_api = f"Error {response.status_code}: {response.text[:100]}"
+                    except Exception as e:
+                        ai_verdict = "ERROR API"
+                        error_api = f"Error interno: {str(e)[:100]}"
+                
+                if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
+                    score = 5.0
+                    ma50 = hist_data['Close'].tail(50).mean()
+                    ma200 = hist_data['Close'].mean()
+                    if current_price < ma50 and current_price > ma200: score += 2.0; ai_bulls.append("Corrección saludable a corto plazo.")
+                    elif current_price < ma200: score += 3.0; ai_bulls.append("Cotiza bajo su MA200. Descuento profundo.")
+                    elif current_price > ma50 * 1.15: score -= 2.0; ai_bears.append("Sobrecomprado (>15% arriba de la MA50).")
+                    if isinstance(pe_ratio, float):
+                        if pe_ratio < 20: score += 2.0; ai_bulls.append(f"Valuación atractiva (P/E: {pe_ratio:.1f}).")
+                        elif pe_ratio > 40: score -= 1.5; ai_bears.append(f"Valuación exigente/Premium (P/E: {pe_ratio:.1f}).")
+                    if is_owned and p_peso > 20.0: score -= 2.0; ai_bears.append(f"Riesgo de Concentración ({p_peso:.1f}% del portafolio).")
+                    ai_rating = max(1, min(10, int(score)))
+                    ai_verdict = "ZONA DE COMPRA" if ai_rating >= 7 else ("HOLD" if ai_rating >= 4 else "ESPERAR")
+                    
+                    if error_api: ai_macro = f"⚠️ Fallo conexión IA: {error_api}"
+                    elif not backend_api_key: ai_macro = "⚠️ Llave de Gemini no detectada en secrets.toml."
+                    else: ai_macro = "Motor matemático local activo."
+
+                score_color = "#00ff88" if ai_rating >= 7 else ("#fbbf24" if ai_rating >= 4 else "#ff3366")
+
+                col_chart, col_stats = st.columns([2.5, 1])
+                with col_chart:
+                    fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
+                    fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({0 if pct_change_1y>=0 else 255}, {255 if pct_change_1y>=0 else 51}, {136 if pct_change_1y>=0 else 102}, 0.15)"), row=1, col=1)
+                    fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(139, 148, 158, 0.4)'), row=2, col=1)
+                    fig_deep.update_layout(title=f"{target_asset} | Análisis de 1 Año", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=40,b=10,l=10,r=10), showlegend=False, xaxis2=dict(showgrid=False), yaxis=dict(gridcolor="#1f2937"), yaxis2=dict(showgrid=False, showticklabels=False))
+                    st.plotly_chart(fig_deep, use_container_width=True)
+                    
+                    bulls_html = "".join([f"<li style='margin-bottom:4px;'>{r}</li>" for r in ai_bulls])
+                    bears_html = "".join([f"<li style='margin-bottom:4px;'>{r}</li>" for r in ai_bears])
+                    
+                    st.markdown(
+                        (
+                            f"<div style='background:#11131c;border:1px solid {score_color};border-radius:12px;padding:20px;margin-top:10px;' class='notranslate' translate='no'>"
+                            f"<div style='display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #1f2937;padding-bottom:15px;margin-bottom:15px;'>"
+                            f"<div><p style='color:#8b949e;font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;'>Veredicto Algorítmico V5</p>"
+                            f"<h3 style='color:{score_color};margin:0;font-size:1.5rem;font-weight:800;'>{ai_verdict}</h3></div>"
+                            f"<div style='background:{score_color};color:black;font-weight:900;font-size:1.8rem;padding:5px 15px;border-radius:8px;display:flex;align-items:center;box-shadow:0 4px 15px {score_color}40;'>"
+                            f"{ai_rating}<span style='font-size:1rem;margin-left:2px;opacity:0.8;'>/10</span></div></div>"
+                            f"<div style='display:flex;gap:20px;margin-bottom:15px;'>"
+                            f"<div style='flex:1;background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:8px;padding:12px;'>"
+                            f"<p style='color:#00ff88;font-weight:bold;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>🟢 Puntos Fuertes (Bulls)</p>"
+                            f"<ul style='color:#e5e7eb;font-size:0.85rem;padding-left:20px;margin:0;'>{bulls_html}</ul></div>"
+                            f"<div style='flex:1;background:rgba(255,51,102,0.05);border:1px solid rgba(255,51,102,0.2);border-radius:8px;padding:12px;'>"
+                            f"<p style='color:#ff3366;font-weight:bold;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>🔴 Riesgos (Bears)</p>"
+                            f"<ul style='color:#e5e7eb;font-size:0.85rem;padding-left:20px;margin:0;'>{bears_html}</ul></div></div>"
+                            f"<div style='background:#0d1117;padding:12px;border-radius:8px;'>"
+                            f"<p style='color:#8b949e;font-size:0.75rem;text-transform:uppercase;font-weight:bold;margin-bottom:5px;'>Síntesis Macroeconómica</p>"
+                            f"<p style='color:#d1d5db;font-size:0.9rem;margin:0;line-height:1.5;'><i>\"{ai_macro}\"</i></p></div></div>"
+                        ),
+                        unsafe_allow_html=True
+                    )
+
+                    if asset_news:
+                        news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{n['link']}' target='_blank' style='color:#00f0ff; text-decoration:none;'>{n['title']}</a></li>" for n in asset_news])
+                        st.markdown(
+                            (
+                                f"<div style='margin-top:15px;' class='notranslate' translate='no'>"
+                                f"<p style='color:#8b949e;font-size:0.75rem;text-transform:uppercase;font-weight:bold;margin-bottom:8px;'>📰 Data Feed Inyectada al Modelo (Live News)</p>"
+                                f"<div style='background:#11131c;border:1px solid #1f2937;border-radius:8px;padding:12px;'>"
+                                f"<ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>"
+                            ),
+                            unsafe_allow_html=True
+                        )
+                    
+                with col_stats:
+                    if is_owned:
+                        ret_color_class = "pos-green" if p_retorno_total_mxn >= 0 else "pos-red"
+                        st.markdown(
+                            (
+                                f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'>"
+                                f"<h3 style='color:white;margin-top:0;margin-bottom:20px;font-size:1.1rem;'>Tu Posición (MXN)</h3>"
+                                f"<div class='pos-row'><div><span class='pos-label'>Acciones / Títulos</span><span class='pos-val'>{p_titulos:.5f}</span></div>"
+                                f"<div style='text-align:right;'><span class='pos-label'>Valor de Mercado</span><span class='pos-val'>${p_val_mercado:,.2f}</span></div></div>"
+                                f"<div class='pos-row'><div><span class='pos-label'>Costo Promedio</span><span class='pos-val'>${p_costo_prom:,.2f}</span></div>"
+                                f"<div style='text-align:right;'><span class='pos-label'>Diversidad Portafolio</span><span class='pos-val'>{p_peso:.2f}%</span></div></div>"
+                                f"<div class='pos-row' style='margin-bottom:0;'><div><span class='pos-label'>Retorno Total (Neto MXN)</span>"
+                                f"<span class='{ret_color_class}'>${p_retorno_total_mxn:+,.2f} ({p_retorno_total_pct:+.2f}%)</span></div>"
+                                f"<div style='text-align:right;'><span class='pos-label'>Cotización Pura (Origen)</span>"
+                                f"<span class='pos-val text-neon-cyan'>${current_price:,.2f} USD</span></div></div></div>"
+                            ),
+                            unsafe_allow_html=True
+                        )
+                    else: 
+                        st.markdown(
+                            (
+                                f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'>"
+                                f"<h3 style='color:white;margin-top:0;margin-bottom:20px;font-size:1.1rem;'>Estado de Cartera</h3>"
+                                f"<p style='color:#8b949e;font-size:0.85rem;'>Actualmente no posees {target_asset} en tu portafolio. Este activo es un candidato de observación.</p></div>"
+                            ),
+                            unsafe_allow_html=True
+                        )
+
+                    if isinstance(pe_ratio, float): pe_ratio = f"{pe_ratio:.2f}x"
+                    if isinstance(eps, float): eps = f"${eps:.2f}"
+                    if high_52 != low_52 and high_52 != "N/A": range_pct = max(0, min(100, ((current_price - low_52) / (high_52 - low_52)) * 100))
+                    else: range_pct = 50
+
+                    st.markdown(
+                        (
+                            f"<div class='pos-box notranslate' translate='no' style='margin-top:15px;'>"
+                            f"<h3 style='color:white;margin-top:0;margin-bottom:15px;font-size:1.1rem;'>Fundamentales y Rango</h3>"
+                            f"<span class='pos-label'>Rango de 52 Semanas</span>"
+                            f"<div style='display:flex;justify-content:space-between;font-size:0.8rem;color:#8b949e;margin-bottom:5px;'>"
+                            f"<span>${low_52:,.2f}</span><span style='color:white;font-weight:bold;'>${current_price:,.2f}</span><span>${high_52:,.2f}</span></div>"
+                            f"<div style='width:100%;background-color:#1f2937;border-radius:4px;height:8px;margin-bottom:20px;position:relative;'>"
+                            f"<div style='position:absolute;left:{range_pct}%;top:-4px;width:4px;height:16px;background-color:#00f0ff;border-radius:2px;'></div>"
+                            f"<div style='width:{range_pct}%;background-color:#3b82f6;height:100%;border-radius:4px;'></div></div>"
+                            f"<div class='pos-row' style='margin-bottom:0;'><div><span class='pos-label'>Ratio P/E</span><span class='pos-val'>{pe_ratio}</span></div>"
+                            f"<div style='text-align:right;'><span class='pos-label'>EPS (Beneficio)</span><span class='pos-val'>{eps}</span></div></div></div>"
+                        ),
+                        unsafe_allow_html=True
+                    )
+            else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
+    else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
+
+    # 11. SMART DCA Y SEMÁFORO DE REBALANCEO
+    st.markdown("---")
+    st.markdown("<h4 style='color:#8b949e;font-size:0.9rem;' class='notranslate' translate='no'>🎯 SMART DCA Y SEMÁFORO DE REBALANCEO</h4>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#6b7280;font-size:0.8rem;' class='notranslate' translate='no'>Ajusta tus parámetros de equilibrio y calcula tu próxima inyección de capital.</p>", unsafe_allow_html=True)
+
+    c_tgt1, c_tgt2, c_tgt3, c_dca = st.columns(4)
+    with c_tgt1: tgt_etf = st.number_input("Objetivo ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0)
+    with c_tgt2: tgt_acc = st.number_input("Objetivo Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0)
+    with c_tgt3: tgt_cripto = st.number_input("Objetivo Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0)
+    with c_dca: new_capital = st.number_input("Capital a Inyectar (MXN)", min_value=0.0, value=5000.0, step=500.0)
+
+    suma_tgt = tgt_etf + tgt_acc + tgt_cripto
+    if suma_tgt != 100.0:
+        st.warning(f"⚠️ La suma de los objetivos debe ser 100%. Actualmente es {suma_tgt}%. Ajusta los parámetros.")
+    else:
+        if not summary.empty:
+            tgt_dict = {"ETF": tgt_etf, "Acción": tgt_acc, "Cripto": tgt_cripto}
+            new_total_portafolio = total_activos + new_capital
+            rebal_data = []
+            deficits = {}
+            for cls, tgt in tgt_dict.items():
+                current_val = summary.loc[summary["Clase"]==cls, "valor_actual"].sum() if cls in summary["Clase"].values else 0.0
+                current_pct = (current_val / total_activos * 100) if total_activos > 0 else 0.0
+                target_val = new_total_portafolio * (tgt / 100.0)
+                deficit = target_val - current_val
+                deficits[cls] = max(0, deficit)
+                diff = current_pct - tgt
+                action = "🔴 COMPRAR FUERTE" if diff < -2.0 else ("🟡 PAUSAR" if diff > 2.0 else "🟢 EN BALANCE")
+                rebal_data.append({"Clase": cls, "Actual_Pct": current_pct, "Objetivo_Pct": tgt, "Diferencia": diff, "Accion": action, "Valor_Actual": current_val})
+                
+            total_deficit = sum(deficits.values())
+            compras_sugeridas = {}
+            for cls in tgt_dict.keys():
+                if total_deficit > 0: compras_sugeridas[cls] = new_capital * (deficits[cls] / total_deficit)
+                else: compras_sugeridas[cls] = new_capital * (tgt_dict[cls] / 100.0)
+            
+            rebal_df = pd.DataFrame(rebal_data)
+            rebal_df["Compra Sugerida (MXN)"] = rebal_df["Clase"].map(compras_sugeridas)
+            
+            col_graf, col_tabla = st.columns([1.2, 1])
+            with col_graf:
+                fig_reb = go.Figure()
+                fig_reb.add_trace(go.Bar(y=rebal_df['Clase'], x=rebal_df['Actual_Pct'], name='Asignación Actual', orientation='h', marker_color='#c084fc'))
+                fig_reb.add_trace(go.Bar(y=rebal_df['Clase'], x=rebal_df['Objetivo_Pct'], name='Meta (Objetivo)', orientation='h', marker_color='rgba(0,0,0,0)', marker_line_color='#00ff88', marker_line_width=2))
+                fig_reb.update_layout(barmode='overlay', paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=30,b=10,l=10,r=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), xaxis_title="Porcentaje (%)", height=280)
+                fig_reb.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937")
+                st.plotly_chart(fig_reb, use_container_width=True)
+                
+            with col_tabla:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.dataframe(rebal_df[["Clase", "Diferencia", "Accion"]].style.format({"Diferencia": "{:+.1f}%"}), hide_index=True, use_container_width=True)
+                st.markdown(
+                    (
+                        f"<div class='pos-box notranslate' translate='no' style='padding:15px;margin-top:0;'>"
+                        f"<p style='color:#8b949e;font-size:0.75rem;margin-bottom:5px;text-transform:uppercase;'>Plan de Acción (Smart DCA)</p>"
+                        f"<p style='color:white;font-size:0.9rem;line-height:1.4;'>Para inyectar <b>${new_capital:,.2f} MXN</b>, el algoritmo sugiere destinar:</p>"
+                        f"<ul style='color:#00ff88;font-family:monospace;font-size:0.95rem;margin-top:5px;margin-bottom:0;'>"
+                        f"<li>ETFs: ${compras_sugeridas['ETF']:,.2f}</li>"
+                        f"<li>Acciones: ${compras_sugeridas['Acción']:,.2f}</li>"
+                        f"<li>Cripto: ${compras_sugeridas['Cripto']:,.2f}</li></ul></div>"
+                    ),
+                    unsafe_allow_html=True
+                )
+        else: st.info("Agrega activos a tu portafolio para activar el Semáforo de Rebalanceo.")
+
+else:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.info("💡 **Modo Simple Activo:** Tu pantalla está optimizada para lectura fácil. Si deseas ver análisis institucionales, proyecciones XIRR y Due Diligence de activos, activa el **Modo Pro** en el menú lateral izquierdo.")
+    st.markdown("---")
+
+# 12. HISTORIAL CONTABLE
+st.markdown("<br><h4 style='color:#8b949e;font-size:0.9rem;' class='notranslate' translate='no'>📚 HISTORIAL DE MOVIMIENTOS Y CAJA</h4>", unsafe_allow_html=True)
+tab_ops, tab_caja = st.tabs(["📊 Historial de Transacciones", "🏦 Flujo de Caja"])
+
+with tab_ops:
+    if not tx_df.empty:
+        col_f1, col_f2 = st.columns([1, 3])
+        with col_f1:
+            tickers_disp = ["Todos"] + sorted(tx_df["ticker"].unique().tolist())
+            filtro_t = st.selectbox("Filtrar por Activo", tickers_disp, key="filtro_ticker_hist")
+        
+        df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
+        
+        st.dataframe(
+            df_mostrar_tx[["fecha", "tipo_operacion", "ticker", "clase", "titulos", "precio_unitario", "tipo_cambio", "total_mxn"]].rename(
+                columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Ticker", "clase": "Clase", "titulos": "Títulos", "precio_unitario": "Precio U.", "tipo_cambio": "T.C.", "total_mxn": "Total MXN"}
+            ).style.format({"Títulos": "{:.5f}", "Precio U.": "${:,.2f}", "T.C.": "${:,.2f}", "Total MXN": "${:,.2f}"}), 
+            hide_index=True, use_container_width=True, height=280
+        )
+    else: 
+        st.caption("Aún no tienes transacciones registradas.")
+
+with tab_caja:
+    if not cash_df.empty:
+        col_c1, col_c2 = st.columns([1, 3])
+        with col_c1:
+            tipos_disp = ["Todos"] + sorted(cash_df["tipo"].unique().tolist())
+            filtro_c = st.selectbox("Filtrar por Tipo", tipos_disp, key="filtro_tipo_caja")
+            
+        df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
+        
+        st.dataframe(
+            df_mostrar_cash[["fecha", "tipo", "concepto", "monto_mxn"]].rename(
+                columns={"fecha": "Fecha", "tipo": "Tipo", "concepto": "Concepto", "monto_mxn": "Monto MXN"}
+            ).style.format({"Monto MXN": "${:+,.2f}"}), 
+            hide_index=True, use_container_width=True, height=280
+        )
+    else: 
+        st.caption("Aún no tienes movimientos de caja registrados.")
