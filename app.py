@@ -793,7 +793,7 @@ if st.session_state.get("modo_pro_toggle", False):
                     try:
                         import requests
                         # CAMBIO: Usamos gemini-pro para evitar errores 404
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={backend_api_key}"
+                        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key={backend_api_key}"
                         headers = {'Content-Type': 'application/json'}
                         
                         prompt_filled = PROMPT_MAESTRO.format(
