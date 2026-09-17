@@ -792,7 +792,6 @@ if st.session_state.get("modo_pro_toggle", False):
                 if backend_api_key:
                     try:
                         import requests
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
                         headers = {'Content-Type': 'application/json'}
                         
                         prompt_filled = PROMPT_MAESTRO.format(
@@ -807,7 +806,19 @@ if st.session_state.get("modo_pro_toggle", False):
                             "generationConfig": {"temperature": 0.2}
                         }
                         
-                        response = requests.post(url, headers=headers, json=payload)
+                        # ESCÁNER AUTOMÁTICO DE MODELOS: Prueba 4 rutas oficiales hasta que una funcione
+                        rutas_google = [
+                            "v1beta/models/gemini-1.5-flash",
+                            "v1/models/gemini-1.5-flash",
+                            "v1beta/models/gemini-1.0-pro",
+                            "v1beta/models/gemini-pro"
+                        ]
+                        
+                        for ruta in rutas_google:
+                            url = f"https://generativelanguage.googleapis.com/{ruta}:generateContent?key={backend_api_key}"
+                            response = requests.post(url, headers=headers, json=payload)
+                            if response.status_code == 200:
+                                break  # ¡Se conectó! Rompe el bucle y continúa
                         
                         if response.status_code == 200:
                             ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
