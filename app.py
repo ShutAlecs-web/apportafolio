@@ -806,19 +806,9 @@ if st.session_state.get("modo_pro_toggle", False):
                             "generationConfig": {"temperature": 0.2}
                         }
                         
-                        # ESCÁNER AUTOMÁTICO DE MODELOS: Prueba 4 rutas oficiales hasta que una funcione
-                        rutas_google = [
-                            "v1beta/models/gemini-1.5-flash",
-                            "v1/models/gemini-1.5-flash",
-                            "v1beta/models/gemini-1.0-pro",
-                            "v1beta/models/gemini-pro"
-                        ]
-                        
-                        for ruta in rutas_google:
-                            url = f"https://generativelanguage.googleapis.com/{ruta}:generateContent?key={backend_api_key}"
-                            response = requests.post(url, headers=headers, json=payload)
-                            if response.status_code == 200:
-                                break  # ¡Se conectó! Rompe el bucle y continúa
+                        # Conexión directa y exclusiva al modelo oficial
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
+                        response = requests.post(url, headers=headers, json=payload)
                         
                         if response.status_code == 200:
                             ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
@@ -832,10 +822,11 @@ if st.session_state.get("modo_pro_toggle", False):
                             ai_macro = parsed_response.get("macro_synthesis", "")
                         else:
                             ai_verdict = "ERROR API"
-                            error_api = f"Error {response.status_code}: {response.text[:100]}"
+                            # Aquí Google va a confesar su verdadero problema sin filtros
+                            error_api = f"Error {response.status_code}: {response.text}"
                     except Exception as e:
                         ai_verdict = "ERROR API"
-                        error_api = f"Error interno: {str(e)[:100]}"
+                        error_api = f"Error interno: {str(e)}"
                 
                 if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
                     score = 5.0
