@@ -792,7 +792,7 @@ if st.session_state.get("modo_pro_toggle", False):
                 if backend_api_key:
                     try:
                         import requests
-                        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
                         headers = {'Content-Type': 'application/json'}
                         
                         prompt_filled = PROMPT_MAESTRO.format(
