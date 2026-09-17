@@ -812,4 +812,4 @@ if st.session_state.get("modo_pro_toggle", False):
                         
                         if response.status_code == 200:
                             ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                            clean_json = ai_response.replace("json", "").replace("", "").strip()
+                            clean_json = ai_response.replace("```json", "").replace("
