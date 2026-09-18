@@ -807,7 +807,7 @@ if st.session_state.get("modo_pro_toggle", False):
                         }
                         
                         # Conexión directa y exclusiva al modelo oficial
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={backend_api_key}"
+                        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.0-pro:generateContent?key=){backend_api_key}"
                         response = requests.post(url, headers=headers, json=payload)
                         
                         if response.status_code == 200:
