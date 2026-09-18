@@ -814,7 +814,7 @@ if st.session_state.get("modo_pro_toggle", False):
                         }
                         
                         # 3. URL limpia
-                        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+                        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
                         response = requests.post(url, headers=headers, json=payload)
                         
                         if response.status_code == 200:
