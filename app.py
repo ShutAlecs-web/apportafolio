@@ -792,7 +792,14 @@ if st.session_state.get("modo_pro_toggle", False):
                 if backend_api_key:
                     try:
                         import requests
-                        headers = {'Content-Type': 'application/json'}
+                        # 1. Limpiamos la llave de CUALQUIER espacio o salto de línea invisible
+                        clean_key = str(backend_api_key).strip()
+                        
+                        # 2. La enviamos por el túnel seguro, no por la URL
+                        headers = {
+                            'Content-Type': 'application/json',
+                            'x-goog-api-key': clean_key
+                        }
                         
                         prompt_filled = PROMPT_MAESTRO.format(
                             ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2),
@@ -806,8 +813,8 @@ if st.session_state.get("modo_pro_toggle", False):
                             "generationConfig": {"temperature": 0.2}
                         }
                         
-                        # Conexión directa y exclusiva al modelo oficial
-                        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.0-pro:generateContent?key=){backend_api_key}"
+                        # 3. URL limpia
+                        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
                         response = requests.post(url, headers=headers, json=payload)
                         
                         if response.status_code == 200:
@@ -822,7 +829,6 @@ if st.session_state.get("modo_pro_toggle", False):
                             ai_macro = parsed_response.get("macro_synthesis", "")
                         else:
                             ai_verdict = "ERROR API"
-                            # Aquí Google va a confesar su verdadero problema sin filtros
                             error_api = f"Error {response.status_code}: {response.text}"
                     except Exception as e:
                         ai_verdict = "ERROR API"
