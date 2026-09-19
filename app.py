@@ -148,50 +148,71 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 4 (Pantalla Dividida Premium) ---
+    # --- CSS EXCLUSIVO PORTADA 5 (Stealth Mode / Negro Absoluto) ---
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;300;400&display=swap');
     
-    /* 1. Mitad imagen (Izquierda), Mitad color sólido oscuro (Derecha) */
-    [data-testid="stAppViewContainer"], .stApp {
-        background: url('https://images.unsplash.com/photo-1618044733300-9472054094ee?q=80&w=2000&auto=format&fit=crop') no-repeat left center fixed !important;
-        background-size: 50% 100% !important;
-        background-color: #06070a !important; /* El color de la mitad derecha */
-    }
-    
+    /* 1. Fondo Negro Mate Absoluto */
+    [data-testid="stAppViewContainer"], .stApp { background-color: #000000 !important; background-image: none !important; }
     header[data-testid="stHeader"] { background-color: transparent !important; }
     
-    /* 2. Tipografía Editorial Clásica (Serif) */
-    .split-title { font-family: 'Playfair Display', serif; font-size: 3.5rem; color: #ffffff; line-height: 1.1; margin-bottom: 10px; }
-    .split-subtitle { font-family: 'Inter', sans-serif; font-size: 0.85rem; color: #8b949e; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 50px; font-weight: 300;}
+    /* 2. Tipografía Criptográfica Extrafina */
+    .stealth-title { font-family: 'JetBrains Mono', monospace; font-weight: 100; font-size: 2.2rem; color: #ffffff; letter-spacing: 12px; text-align: center; text-transform: uppercase; margin-bottom: 5px; }
+    .stealth-subtitle { font-family: 'JetBrains Mono', monospace; font-weight: 300; font-size: 0.7rem; color: #4b5563; text-align: center; letter-spacing: 6px; text-transform: uppercase; margin-bottom: 80px; }
     
-    /* 3. Formulario Integrado (Sin bordes de tarjeta gruesos) */
-    [data-testid="stForm"] { background: transparent !important; border: none !important; padding: 2rem 4rem !important; box-shadow: none !important; margin-top: 50px;}
-    [data-testid="stForm"] label { color: #8b949e !important; font-family: 'Inter', sans-serif !important; font-size: 0.8rem !important; text-transform: uppercase; letter-spacing: 1px;}
+    /* 3. Formulario Invisible (Cero bordes) */
+    [data-testid="stForm"] { background: transparent !important; border: none !important; box-shadow: none !important; padding: 2rem !important; }
     
-    [data-testid="stForm"] input { background: #11141d !important; border: 1px solid #1f2937 !important; color: #ffffff !important; border-radius: 4px !important; font-family: 'Inter', sans-serif !important; padding: 0.8rem !important; }
-    [data-testid="stForm"] input:focus { border-color: #c084fc !important; box-shadow: none !important; background: #06070a !important;}
+    /* Ocultamos las etiquetas de texto (labels) para que sea súper limpio */
+    [data-testid="stForm"] label { display: none !important; }
     
-    [data-testid="stFormSubmitButton"] button { background: #ffffff !important; color: #000000 !important; font-weight: 600 !important; font-family: 'Inter', sans-serif !important; border: none !important; border-radius: 4px !important; padding: 0.8rem !important; margin-top: 30px !important; width: 100%; transition: all 0.3s; letter-spacing: 1px;}
-    [data-testid="stFormSubmitButton"] button:hover { background: #c084fc !important; color: #ffffff !important; }
+    /* 4. Cajones de entrada como simples líneas en el piso */
+    [data-testid="stForm"] input { 
+        background: transparent !important; 
+        border: none !important; 
+        border-bottom: 1px solid #1f2937 !important; /* Línea gris súper tenue */
+        color: #ffffff !important; 
+        border-radius: 0 !important; 
+        font-family: 'JetBrains Mono', monospace !important; 
+        font-weight: 300 !important; 
+        padding: 1rem 0 !important; 
+        font-size: 0.9rem !important; 
+        transition: border-color 0.5s ease !important; 
+        text-align: center; 
+    }
+    [data-testid="stForm"] input::placeholder { color: #374151 !important; text-align: center; letter-spacing: 2px;}
+    [data-testid="stForm"] input:focus { border-bottom: 1px solid #ffffff !important; box-shadow: none !important; outline: none !important; background: transparent !important; }
     
-    /* Responsividad: Si lo abren en celular, se oculta la imagen y queda fondo sólido */
-    @media (max-width: 800px) { [data-testid="stAppViewContainer"], .stApp { background: #06070a !important; } [data-testid="stForm"] { padding: 1rem !important; } }
+    /* 5. Botón fantasma */
+    [data-testid="stFormSubmitButton"] button { 
+        background: transparent !important; 
+        color: #4b5563 !important; 
+        font-weight: 300 !important; 
+        font-family: 'JetBrains Mono', monospace !important; 
+        border: 1px solid #1f2937 !important; 
+        border-radius: 0 !important; 
+        padding: 0.8rem !important; 
+        margin-top: 50px !important; 
+        letter-spacing: 5px !important; 
+        text-transform: uppercase !important; 
+        width: 100%; 
+        transition: all 0.5s ease !important; 
+    }
+    [data-testid="stFormSubmitButton"] button:hover { color: #ffffff !important; border-color: #ffffff !important; }
     </style>
     """, unsafe_allow_html=True)
 
-    # Dividimos la pantalla en 2. La columna izquierda (c_img) queda vacía para mostrar la foto de fondo.
-    c_img, c_form = st.columns([1, 1])
-    with c_form:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.markdown("<h1 class='split-title'>Terminal<br>Apportafolio.</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='split-subtitle'>Gestión Patrimonial Exclusiva</p>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 1.2, 1])
+    with c2:
+        st.markdown("<br><br><br><br><br>", unsafe_allow_html=True)
+        st.markdown("<h1 class='stealth-title'>APPORTAFOLIO</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='stealth-subtitle'>Terminal System</p>", unsafe_allow_html=True)
         
         with st.form("login_form"):
-            usr = st.text_input("Usuario")
-            pwd = st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Acceder", use_container_width=True):
+            usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
+            pwd = st.text_input("Contraseña", type="password", placeholder="CLAVE DE ACCESO")
+            if st.form_submit_button("INGRESAR", use_container_width=True):
                 conn = get_connection()
                 cur = conn.cursor()
                 cur.execute("SELECT user_id FROM users WHERE username=%s AND password_hash=%s", (usr, hash_password(pwd)))
