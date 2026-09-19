@@ -148,112 +148,66 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 3 (Estilo Cinemático HUD) ---
+    # --- CSS EXCLUSIVO PORTADA 3.1 (Crimson Alpha / Monocromo + Rojo) ---
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
 
-    /* 1. Fondo de Arquitectura Financiera Imponente */
+    /* 1. Fondo Monocromático Arquitectónico */
     [data-testid="stAppViewContainer"], .stApp {
-        background: linear-gradient(rgba(5, 10, 15, 0.3), rgba(5, 10, 15, 0.85)), 
-                    url('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
+        background: linear-gradient(rgba(10, 10, 12, 0.85), rgba(10, 10, 12, 0.95)), 
+                    url('https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
         background-size: cover !important;
     }
     
-    /* 2. HUD Lines (Las líneas finas de tus imágenes de referencia) */
-    .stApp::before {
-        content: ""; position: fixed; top: 18%; left: 0; right: 0; height: 1px; background: rgba(255, 215, 0, 0.35); z-index: 0; pointer-events: none;
-    }
-    .stApp::after {
-        content: ""; position: fixed; top: 0; bottom: 0; left: 8%; width: 1px; background: rgba(255, 215, 0, 0.35); z-index: 0; pointer-events: none;
-    }
-
-    /* Ocultar header de streamlit */
+    /* 2. HUD Lines en Rojo Neón */
+    .stApp::before { content: ""; position: fixed; top: 18%; left: 0; right: 0; height: 1px; background: rgba(255, 51, 102, 0.4); z-index: 0; pointer-events: none; }
+    .stApp::after { content: ""; position: fixed; top: 0; bottom: 0; left: 8%; width: 1px; background: rgba(255, 51, 102, 0.4); z-index: 0; pointer-events: none; }
     header[data-testid="stHeader"] { background-color: transparent !important; }
 
-    /* 3. Tipografía Gigante (Idéntica a "ABIERTOS MUY TARDE") */
-    .hud-brand {
-        font-family: 'Space Mono', monospace; font-size: 0.85rem; color: #ffffff; letter-spacing: 3px; margin-bottom: 50px; font-weight: 700;
-    }
-    .hud-badge {
-        display: inline-block; border: 1px solid rgba(255,215,0,0.5); border-radius: 50px; padding: 4px 15px; font-family: 'Space Mono', monospace; font-size: 0.75rem; color: #ffd700; margin-bottom: 15px; letter-spacing: 2px;
-    }
-    .hud-giant-1 {
-        font-family: 'Anton', sans-serif; font-size: 7.5rem; line-height: 0.85; color: #ffffff; text-transform: uppercase; margin: 0; letter-spacing: 1px;
-    }
-    .hud-giant-2 {
-        font-family: 'Anton', sans-serif; font-size: 7.5rem; line-height: 0.85; color: #ffd700; text-transform: uppercase; margin: 0; letter-spacing: 1px; text-shadow: 0 0 30px rgba(255, 215, 0, 0.2);
-    }
-    .hud-desc {
-        font-family: 'Space Mono', monospace; font-size: 0.95rem; color: #e2e8f0; margin-top: 25px; border-left: 2px solid #ffd700; padding-left: 15px; max-width: 450px; line-height: 1.5;
-    }
+    /* 3. Tipografía Alta y Agresiva */
+    .hud-brand { font-family: 'Space Mono', monospace; font-size: 0.8rem; color: #a1a1aa; letter-spacing: 4px; margin-bottom: 40px; font-weight: 700; text-transform: uppercase; }
+    .hud-badge { display: inline-block; border: 1px solid rgba(255,51,102,0.6); padding: 4px 15px; font-family: 'Space Mono', monospace; font-size: 0.7rem; color: #ff3366; margin-bottom: 10px; letter-spacing: 2px; text-transform: uppercase; border-radius: 2px;}
+    
+    .hud-giant-1 { font-family: 'Bebas Neue', sans-serif; font-size: 8.5rem; line-height: 0.85; color: #ffffff; margin: 0; letter-spacing: 2px; }
+    .hud-giant-2 { font-family: 'Bebas Neue', sans-serif; font-size: 8.5rem; line-height: 0.85; color: #ff3366; margin: 0; letter-spacing: 2px; text-shadow: 0 0 40px rgba(255, 51, 102, 0.3); }
+    
+    .hud-desc { font-family: 'Space Mono', monospace; font-size: 0.9rem; color: #d4d4d8; margin-top: 30px; border-left: 2px solid #ff3366; padding-left: 15px; max-width: 400px; line-height: 1.6; }
 
-    /* 4. Tarjeta de Login (Estilo Panel de Control) */
+    /* 4. Tarjeta de Login (Afilada y sin bordes redondos) */
     [data-testid="stForm"] {
-        background: rgba(5, 10, 15, 0.65) !important;
-        border: 1px solid rgba(255, 215, 0, 0.2) !important;
-        backdrop-filter: blur(12px) !important;
-        -webkit-backdrop-filter: blur(12px) !important;
+        background: rgba(10, 10, 12, 0.7) !important;
+        border: 1px solid rgba(255, 51, 102, 0.2) !important;
+        backdrop-filter: blur(15px) !important;
+        -webkit-backdrop-filter: blur(15px) !important;
         padding: 2.5rem !important;
-        border-radius: 0px !important; /* Cuadrado para dar toque tecnológico/HUD */
+        border-radius: 0px !important; 
         box-shadow: 0 20px 50px rgba(0,0,0,0.9) !important;
         position: relative;
-        margin-top: 90px;
+        margin-top: 100px;
     }
-    /* Esquinas estilo sci-fi/HUD en el login */
-    [data-testid="stForm"]::before {
-        content: ''; position: absolute; top: -1px; left: -1px; width: 15px; height: 15px; border-top: 2px solid #ffd700; border-left: 2px solid #ffd700;
-    }
-    [data-testid="stForm"]::after {
-        content: ''; position: absolute; bottom: -1px; right: -1px; width: 15px; height: 15px; border-bottom: 2px solid #ffd700; border-right: 2px solid #ffd700;
-    }
+    [data-testid="stForm"]::before { content: ''; position: absolute; top: -1px; left: -1px; width: 20px; height: 20px; border-top: 2px solid #ff3366; border-left: 2px solid #ff3366; }
+    [data-testid="stForm"]::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 20px; height: 20px; border-bottom: 2px solid #ff3366; border-right: 2px solid #ff3366; }
 
-    [data-testid="stForm"] label { color: #94a3b8 !important; font-family: 'Space Mono', monospace !important; font-size: 0.8rem !important; text-transform: uppercase; letter-spacing: 2px;}
-    
-    [data-testid="stForm"] input {
-        background: rgba(0, 0, 0, 0.5) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        color: #ffd700 !important;
-        font-family: 'Space Mono', monospace !important;
-        border-radius: 0 !important;
-        padding: 0.8rem !important;
-    }
-    [data-testid="stForm"] input:focus {
-        border-color: #ffd700 !important;
-        box-shadow: none !important;
-        background: rgba(0, 0, 0, 0.8) !important;
-    }
+    [data-testid="stForm"] label { color: #a1a1aa !important; font-family: 'Space Mono', monospace !important; font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 2px;}
+    [data-testid="stForm"] input { background: rgba(0, 0, 0, 0.6) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; color: #ff3366 !important; font-family: 'Space Mono', monospace !important; border-radius: 0 !important; padding: 0.8rem !important; }
+    [data-testid="stForm"] input:focus { border-color: #ff3366 !important; box-shadow: none !important; background: rgba(0, 0, 0, 0.9) !important; }
 
     [data-testid="stFormSubmitButton"] button {
-        background: #ffd700 !important;
-        color: #000000 !important;
-        font-weight: 700 !important;
-        font-family: 'Space Mono', monospace !important;
-        border: none !important;
-        border-radius: 0 !important;
-        padding: 0.9rem !important;
-        margin-top: 20px !important;
-        text-transform: uppercase !important;
-        letter-spacing: 3px !important;
-        width: 100%;
+        background: #ff3366 !important; color: #ffffff !important; font-weight: 700 !important; font-family: 'Space Mono', monospace !important; border: none !important; border-radius: 0 !important; padding: 0.9rem !important; margin-top: 20px !important; text-transform: uppercase !important; letter-spacing: 3px !important; width: 100%; transition: all 0.3s ease !important;
     }
-    [data-testid="stFormSubmitButton"] button:hover {
-        background: #ffffff !important;
-        color: #000000 !important;
-    }
+    [data-testid="stFormSubmitButton"] button:hover { background: #ffffff !important; color: #000000 !important; box-shadow: 0 0 20px rgba(255,51,102,0.4) !important;}
     </style>
     """, unsafe_allow_html=True)
 
-    # Reestructuramos columnas para que el texto gigante quede a la izquierda y el login a la derecha
     c1, c2, c3, c4 = st.columns([0.2, 2.5, 1.5, 0.2])
-    
     with c2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.markdown("<div class='hud-brand'>APPORTAFOLIO_OS°</div>", unsafe_allow_html=True)
-        st.markdown("<div class='hud-badge'>087 &nbsp; WEALTH &nbsp; DIRECCIÓN C</div>", unsafe_allow_html=True)
-        st.markdown("<h1 class='hud-giant-1'>TERMINAL</h1>", unsafe_allow_html=True)
-        st.markdown("<h1 class='hud-giant-2'>PRIVADA.</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='hud-desc'>Gestión patrimonial de alta precisión. El mercado no duerme, nosotros tampoco.</p>", unsafe_allow_html=True)
+        st.markdown("<div class='hud-brand'>APPORTAFOLIO // SYS</div>", unsafe_allow_html=True)
+        st.markdown("<div class='hud-badge'>ALGORITMO V5 ACTIVO</div>", unsafe_allow_html=True)
+        st.markdown("<h1 class='hud-giant-1'>PRIVATE</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='hud-giant-2'>CAPITAL.</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='hud-desc'>Ejecución táctica y gestión de riesgos para cuentas de alto patrimonio. No apto para minoristas.</p>", unsafe_allow_html=True)
         
     with c3:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
@@ -267,7 +221,6 @@ if st.session_state["user_id"] is None:
                 user = cur.fetchone()
                 cur.close()
                 conn.close()
-                
                 if user:
                     st.session_state["user_id"] = user[0]
                     st.rerun()
