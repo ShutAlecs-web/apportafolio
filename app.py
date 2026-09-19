@@ -775,18 +775,10 @@ if st.session_state.get("modo_pro_toggle", False):
                     backend_api_key = st.secrets["GEMINI_API_KEY"]
                 except Exception: pass
                 
-                if not backend_api_key:
-                    try:
-                        secret_path = os.path.join(".streamlit", "secrets.toml")
-                        if os.path.exists(secret_path):
-                            with open(secret_path, "rb") as f:
-                                raw_content = f.read()
-                                content = raw_content.decode("utf-8", errors="ignore").replace("\x00", "")
-                                match = re.search(r'GEMINI_API_KEY\s*=\s*[\'"]([^\'"]+)[\'"]', content)
-                                if match: backend_api_key = match.group(1)
-                    except: pass
-
-                if not backend_api_key: backend_api_key = os.environ.get("GEMINI_API_KEY")
+                backend_api_key = None
+    try:
+        backend_api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception: pass
 
                 error_api = ""
                 if backend_api_key:
