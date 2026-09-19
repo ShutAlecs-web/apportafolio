@@ -9,13 +9,12 @@ import re
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(
-    page_title="Apportafolio | Private Wealth",
-    page_icon="🗝️",
+    page_title="Apportafolio | Fintech",
+    page_icon="📱",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Escudo Anti-Hackeos
 def sanitize_ticker(t_str):
     if not t_str: return ""
     return re.sub(r'[^A-Z0-9\-\=\.]', '', str(t_str).upper().strip())
@@ -76,84 +75,62 @@ if st.session_state["user_id"] is None:
 
 
 # ==========================================
-# APP PRINCIPAL (ESTILO B: SWISS FAMILY OFFICE)
+# APP PRINCIPAL (ESTILO C: NEO-BRÓKER / FINTECH)
 # ==========================================
 
-# CSS GLOBAL OLD MONEY
+# CSS GLOBAL IOS/ROBINHOOD VIBE
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 
-/* Fondo Azul Medianoche Profundo y Tipografía Editorial */
+/* Fondo Negro y tipografía Inter limpia */
 [data-testid="stAppViewContainer"], .stApp { 
-    background-color: #050811 !important; 
+    background-color: #000000 !important; 
     font-family: 'Inter', sans-serif !important; 
-    color: #cbd5e1;
+    color: #ffffff;
 }
 header[data-testid="stHeader"] { background-color: transparent !important; }
 
-/* Estilo de Pestañas: Minimalistas, sin botones, línea dorada */
+/* Estilo de Pestañas: Pastillas iOS Segmented Control */
 div[data-testid="stTabs"] button {
-    background-color: transparent !important;
+    background-color: #1c1c1e !important;
+    border-radius: 20px !important;
     border: none !important;
-    border-bottom: 2px solid transparent !important;
-    color: #64748b !important;
-    padding: 10px 15px !important;
-    font-family: 'Playfair Display', serif !important;
-    font-size: 1.1rem !important;
-    letter-spacing: 1px !important;
-    margin-right: 15px !important;
-    transition: all 0.3s ease;
+    color: #8e8e93 !important;
+    padding: 8px 18px !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    margin-right: 10px !important;
+    transition: all 0.2s ease;
 }
 div[data-testid="stTabs"] button[aria-selected="true"] {
-    border-bottom: 2px solid #d4af37 !important; /* Oro Pálido */
-    color: #d4af37 !important;
-    font-style: italic;
+    background-color: #2c2c2e !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5) !important;
 }
 
-/* Tarjetas Móviles: Estilo Reporte Impreso (Sin cajas, solo divisores finos) */
+/* Tarjetas Móviles: Estilo Apple Wallet (Redondeadas y Suaves) */
 .m-card {
-    background: transparent;
-    border-top: 1px solid rgba(212, 175, 55, 0.25);
-    border-bottom: 1px solid transparent;
-    padding: 22px 10px;
-    margin-bottom: 5px;
-    transition: background 0.3s ease;
+    background: #1c1c1e;
+    border-radius: 24px;
+    padding: 24px;
+    margin-bottom: 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
-.m-card:hover { background: rgba(255,255,255,0.01); }
-.m-title { 
-    font-family: 'Inter', sans-serif; 
-    color: #94a3b8; 
-    font-size: 0.75rem; 
-    text-transform: uppercase; 
-    letter-spacing: 3px; 
-    margin-bottom: 10px; 
-    font-weight: 400;
-}
-.m-val { 
-    font-family: 'Playfair Display', serif; 
-    font-size: 2.2rem; 
-    font-weight: 400; 
-    color: #ffffff; 
-    line-height: 1.1; 
-}
-.m-sub { 
-    font-family: 'Inter', sans-serif;
-    font-size: 0.8rem; 
-    margin-top: 8px; 
-    font-weight: 300; 
-    color: #64748b; 
-}
+.m-title { color: #8e8e93; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;}
+.m-val { font-size: 2.6rem; font-weight: 800; color: #ffffff; letter-spacing: -1.5px; line-height: 1.1; }
+.m-sub { font-size: 0.95rem; margin-top: 8px; font-weight: 600; color: #8e8e93;}
 
-/* Colores Sutiles y Elegantes */
-.c-grn { color: #34d399; } /* Verde Esmeralda Suave */
-.c-red { color: #fb7185; } /* Rojo Rosado/Burdeos */
-.c-gld { color: #d4af37; } /* Oro Clásico */
+/* Colores iOS (Menta, Coral, Azul) */
+.c-grn { color: #30d158; } 
+.c-red { color: #ff453a; } 
+.c-blu { color: #0a84ff; } 
+.c-pur { color: #bf5af2; }
 </style>
 """, unsafe_allow_html=True)
 
 # SIDEBAR TÁCTICO
-st.sidebar.markdown("<p style='font-family:\"Playfair Display\"; color:#d4af37; font-size:1.2rem; font-style:italic;'>ALEX_ADMIN</p>", unsafe_allow_html=True)
+st.sidebar.markdown("**HOLA, ALEX** 👋")
 if st.sidebar.button("Cerrar Sesión", use_container_width=True):
     st.session_state["user_id"] = None
     st.rerun()
@@ -165,40 +142,41 @@ pnl_glob = 120500.20
 ret_glob = 15.4
 salario_inv = 18400.00
 
-# TICKER TAPE (ESTILO NOTICIERO FINANCIERO CLÁSICO)
-t_html = "<marquee behavior='scroll' direction='left' scrollamount='5' style='font-family: \"Inter\", sans-serif; font-size: 0.85rem; padding: 12px 0; color:#64748b; font-weight:300; letter-spacing: 1px;'>"
-t_html += f"COTIZACIONES DEL DÍA &nbsp;&nbsp;|&nbsp;&nbsp; S&P 500: <span style='color:#ffffff;'>5,120.40</span> <span style='color:#34d399;'>(+1.2%)</span> &nbsp;&nbsp;|&nbsp;&nbsp; NASDAQ: <span style='color:#ffffff;'>16,200.10</span> <span style='color:#34d399;'>(+1.5%)</span> &nbsp;&nbsp;|&nbsp;&nbsp; USD/MXN: <span style='color:#ffffff;'>17.05</span> <span style='color:#fb7185;'>(-0.4%)</span> &nbsp;&nbsp;|&nbsp;&nbsp; ORO: <span style='color:#ffffff;'>$2,150</span> <span style='color:#34d399;'>(+0.8%)</span>"
+# TICKER TAPE (Burbuja Flotante)
+t_html = "<marquee behavior='scroll' direction='left' scrollamount='5' style='font-family: \"Inter\", sans-serif; font-size: 0.9rem; padding: 12px 20px; color:#8e8e93; font-weight:600;'>"
+t_html += f"S&P 500: <span style='color:#ffffff;'>5,120</span> <span style='color:#30d158;'>(+1.2%)</span> &nbsp;&nbsp;🔥&nbsp;&nbsp; NASDAQ: <span style='color:#ffffff;'>16,200</span> <span style='color:#30d158;'>(+1.5%)</span> &nbsp;&nbsp;🚀&nbsp;&nbsp; USD/MXN: <span style='color:#ffffff;'>17.05</span> <span style='color:#ff453a;'>(-0.4%)</span> &nbsp;&nbsp;💎&nbsp;&nbsp; BTC: <span style='color:#ffffff;'>$68K</span> <span style='color:#30d158;'>(+2.1%)</span>"
 t_html += "</marquee>"
-st.markdown(f"<div style='border-bottom:1px solid rgba(212,175,55,0.2); background:transparent; margin-bottom: 25px; margin-top:-30px;'>{t_html}</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='background:#1c1c1e; border-radius:30px; margin-bottom: 25px; margin-top:-20px;'>{t_html}</div>", unsafe_allow_html=True)
 
 # TABS NATIVAS
-tab1, tab2, tab3, tab4 = st.tabs(["Resumen Patrimonial", "Análisis Táctico", "Gestión de Riesgo", "Tesoreria"])
+tab1, tab2, tab3, tab4 = st.tabs(["Cartera", "Radar V5", "Riesgo", "Historial"])
 
 with tab1:
-    st.markdown("<p style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:5px; margin-top:10px;'>Posición Global</p>", unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    c1.markdown(f"<div class='m-card'><div class='m-title'>Patrimonio Líquido</div><div class='m-val'>${tot_portafolio:,.0f}</div><div class='m-sub c-gld'>Efectivo: ${liquidez_mxn:,.0f}</div></div>", unsafe_allow_html=True)
+    # Tarjeta Principal Gigante
     c_pnl = "c-grn" if pnl_glob >= 0 else "c-red"
-    c2.markdown(f"<div class='m-card'><div class='m-title'>Rendimiento Histórico</div><div class='m-val {c_pnl}'>${pnl_glob:+,.0f}</div><div class='m-sub {c_pnl}'>{ret_glob:+.2f}% Neto Acumulado</div></div>", unsafe_allow_html=True)
-
-    st.markdown("<p style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-top:25px; margin-bottom:5px;'>Desempeño Destacado</p>", unsafe_allow_html=True)
-    ch1, ch2 = st.columns(2)
-    ch1.markdown(f"<div class='m-card'><div class='m-title c-gld'>Rendimiento por Dividendo</div><div class='m-val'>${salario_inv:,.0f}</div><div class='m-sub'>Ingreso Pasivo Anualizado</div></div>", unsafe_allow_html=True)
-    ch2.markdown(f"<div class='m-card'><div class='m-title c-grn'>Mayor Plusvalía</div><div class='m-val'>NVIDIA Corp.</div><div class='m-sub c-grn'>+ $35,200 MXN</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='m-card' style='text-align:center;'><div class='m-title'>Balance Total</div><div class='m-val'>${tot_portafolio:,.2f}</div><div class='m-sub {c_pnl}'>+${pnl_glob:,.0f} ({ret_glob}%) Todo el tiempo</div></div>", unsafe_allow_html=True)
     
-    st.markdown(f"<div class='m-card' style='text-align:center; border-bottom:1px solid rgba(212, 175, 55, 0.25);'><div class='m-title c-red'>Corrección Actual</div><div class='m-val'>Tesla Inc.</div><div class='m-sub c-red'>- $4,100 MXN (No Realizado)</div></div>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    c1.markdown(f"<div class='m-card'><div class='m-title'>Poder de Compra</div><div class='m-val' style='font-size:1.8rem;'>${liquidez_mxn:,.0f}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='m-card'><div class='m-title'>Ingreso Pasivo</div><div class='m-val c-blu' style='font-size:1.8rem;'>${salario_inv:,.0f}</div></div>", unsafe_allow_html=True)
+
+    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:20px; margin-bottom:15px; font-weight:800;'>Tus Movimientos ⚡</h4>", unsafe_allow_html=True)
+    ch1, ch2 = st.columns(2)
+    ch1.markdown(f"<div class='m-card'><div class='m-title c-grn'>Top Activo</div><div class='m-val' style='font-size:1.5rem;'>NVDA</div><div class='m-sub c-grn'>+$35,200</div></div>", unsafe_allow_html=True)
+    ch2.markdown(f"<div class='m-card'><div class='m-title c-red'>A la baja</div><div class='m-val' style='font-size:1.5rem;'>TSLA</div><div class='m-sub c-red'>-$4,100</div></div>", unsafe_allow_html=True)
 
 with tab2:
-    st.markdown("<p style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:15px; margin-top:10px;'>Motor de Inteligencia Artificial</p>", unsafe_allow_html=True)
-    sel_as = st.selectbox("Seleccione un instrumento:", ["Apple Inc. (AAPL)", "Microsoft Corp. (MSFT)", "Vanguard S&P 500 (VOO)"], label_visibility="collapsed")
-    st.markdown(f"<div class='m-card' style='border-top: 1px solid #34d399;'><div class='m-title'>Veredicto Estructural: {sel_as}</div><div style='color:#34d399; font-family:\"Playfair Display\", serif; font-size:2rem; font-style:italic;'>Zona de Compra <span style='font-size:1.2rem; color:#64748b; font-family:\"Inter\", sans-serif;'>(8/10)</span></div><div class='m-sub' style='line-height:1.6;'>Valuación excepcionalmente atractiva frente a su media móvil de 200 días. Se sugiere acumulación gradual.</div></div>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:10px; margin-bottom:15px; font-weight:800;'>Inteligencia Artificial</h4>", unsafe_allow_html=True)
+    sel_as = st.selectbox("Selecciona un activo para analizar:", ["Apple (AAPL)", "Microsoft (MSFT)", "S&P 500 (VOO)"], label_visibility="collapsed")
+    st.markdown(f"<div class='m-card'><div class='m-title'>Veredicto: {sel_as}</div><div class='m-val c-blu' style='font-size:2rem;'>ZONA DE COMPRA <span style='font-size:1.2rem; color:#8e8e93;'>(8/10)</span></div><div class='m-sub' style='color:#ffffff; margin-top:15px;'>El activo presenta una valuación atractiva frente a su media móvil de 200 días. Sugerimos hacer DCA agresivo.</div></div>", unsafe_allow_html=True)
 
 with tab3:
-    st.markdown("<p style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:5px; margin-top:10px;'>Métricas Cuantitativas</p>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:10px; margin-bottom:15px; font-weight:800;'>Salud del Portafolio</h4>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    c1.markdown(f"<div class='m-card'><div class='m-title'>Volatilidad (Beta)</div><div class='m-val c-gld'>0.85</div><div class='m-sub'>Comparativa vs S&P 500</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='m-card'><div class='m-title'>Exposición Diaria (VaR)</div><div class='m-val c-red'>$24,000</div><div class='m-sub'>Pérdida máxima esperada al 95%</div></div>", unsafe_allow_html=True)
+    c1.markdown(f"<div class='m-card'><div class='m-title'>Volatilidad</div><div class='m-val c-pur' style='font-size:1.8rem;'>0.85 Beta</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='m-card'><div class='m-title'>Max Riesgo Diario</div><div class='m-val c-red' style='font-size:1.8rem;'>$24,000 VaR</div></div>", unsafe_allow_html=True)
 
 with tab4:
-    st.markdown("<p style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:5px; margin-top:10px;'>Libro de Operaciones</p>", unsafe_allow_html=True)
-    st.markdown(f"<div class='m-card' style='border-bottom:1px solid rgba(212, 175, 55, 0.25);'><div class='m-sub' style='line-height:1.8;'><span style='color:#d4af37;'>24 Mar 2024</span> &nbsp;&nbsp; Adquisición Estratégica: 15.4 VOO @ $450.20<br><span style='color:#d4af37;'>23 Mar 2024</span> &nbsp;&nbsp; Flujo de Capital (Dividendo): FIBRAMQ @ $1,200.00<br><span style='color:#d4af37;'>20 Mar 2024</span> &nbsp;&nbsp; Inyección a Tesorería: $10,000.00 MXN</div></div>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:10px; margin-bottom:15px; font-weight:800;'>Actividad Reciente</h4>", unsafe_allow_html=True)
+    st.markdown(f"<div class='m-card' style='padding:15px 24px;'><div style='display:flex; justify-content:space-between;'><div style='font-weight:600; color:#ffffff;'>Compra VOO</div><div class='c-red'>-$6,933.00</div></div><div class='m-sub'>Ayer</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='m-card' style='padding:15px 24px;'><div style='display:flex; justify-content:space-between;'><div style='font-weight:600; color:#ffffff;'>Dividendo FIBRAMQ</div><div class='c-grn'>+$1,200.00</div></div><div class='m-sub'>Hace 2 días</div></div>", unsafe_allow_html=True)
