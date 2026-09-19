@@ -232,6 +232,60 @@ if st.session_state["user_id"] is None:
                 else: st.error("Credenciales incorrectas.")
     st.stop()
 
+# --- CSS: QUIET LUXURY FINTECH PARA EL DASHBOARD ---
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap');
+
+/* Fondo Azul Abisal Profundo */
+[data-testid="stAppViewContainer"], .stApp { 
+    background-color: #03050a !important; 
+    font-family: 'Inter', sans-serif !important; 
+    color: #cbd5e1;
+}
+header[data-testid="stHeader"] { background-color: transparent !important; }
+
+/* Pestañas (Tabs): Pastillas iOS pero con estilo de Lujo */
+div[data-testid="stTabs"] button {
+    background-color: #080b13 !important;
+    border-radius: 20px !important;
+    border: 1px solid rgba(255,255,255,0.03) !important;
+    color: #64748b !important;
+    padding: 8px 18px !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 400 !important;
+    font-size: 0.95rem !important;
+    margin-right: 10px !important;
+    transition: all 0.3s ease;
+}
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    background-color: rgba(212, 175, 55, 0.05) !important;
+    color: #d4af37 !important; /* Oro Pálido */
+    border: 1px solid rgba(212, 175, 55, 0.3) !important;
+    font-family: 'Playfair Display', serif !important;
+    font-style: italic;
+    letter-spacing: 1px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+}
+
+/* Tarjetas Móviles: Curvas de Apple con elegancia Suiza */
+.m-card {
+    background: linear-gradient(145deg, #080b13 0%, #0a0e17 100%);
+    border-radius: 24px;
+    border: 1px solid rgba(212, 175, 55, 0.15); /* Borde dorado súper sutil */
+    padding: 24px;
+    margin-bottom: 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.m-title { color: #8b949e; font-size: 0.75rem; font-weight: 400; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; font-family: 'Inter', sans-serif;}
+.m-val { font-family: 'Playfair Display', serif; font-size: 2.6rem; font-weight: 400; color: #ffffff; letter-spacing: -0.5px; line-height: 1.1; }
+.m-sub { font-size: 0.9rem; margin-top: 8px; font-weight: 300; color: #64748b; font-family: 'Inter', sans-serif;}
+
+/* Colores Sutiles y Elegantes */
+.c-grn { color: #34d399; } .c-red { color: #fb7185; } .c-gld { color: #d4af37; }
+</style>
+""", unsafe_allow_html=True)
+
 # 4. GESTIÓN MULTI-CLIENTE
 user_id = st.session_state["user_id"]
 conn = get_connection()
