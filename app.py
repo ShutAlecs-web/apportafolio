@@ -148,22 +148,87 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    c1, c2, c3 = st.columns([1, 1.2, 1])
-    with c2:
-        st.markdown("<br><br><br><h1 style='text-align: center; color: white;'>CMA TERMINAL</h1>", unsafe_allow_html=True)
+    # --- CSS: PORTADA HÍBRIDA (Split-Screen + Cielo Estrellado + Oro) ---
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400&family=Playfair+Display:ital@1&display=swap');
+    
+    /* Fondo Realista Estrellado con Overlay Azul Noche */
+    [data-testid="stAppViewContainer"], .stApp {
+        background: linear-gradient(rgba(2, 5, 10, 0.75), rgba(2, 5, 10, 0.95)), 
+                    url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
+        background-size: cover !important;
+    }
+    header[data-testid="stHeader"] { background-color: transparent !important; }
+    
+    /* Tipografía delgada y dorada (Alineada a la izquierda para la pantalla dividida) */
+    .portada-title {
+        font-family: 'Montserrat', sans-serif;
+        font-weight: 200;
+        font-size: 4.5rem;
+        letter-spacing: 0.15em;
+        text-align: left;
+        line-height: 1.1;
+        margin-bottom: 5px;
+        /* El oro en movimiento */
+        background: linear-gradient(to right, #bf953f 0%, #fcf6ba 25%, #b38728 50%, #fbf5b7 75%, #aa771c 100%);
+        background-size: 200% auto;
+        color: #000;
+        background-clip: text;
+        text-fill-color: transparent;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: shine 6s linear infinite;
+    }
+    @keyframes shine { to { background-position: 200% center; } }
+
+    .portada-subtitle {
+        font-family: 'Playfair Display', serif; font-style: italic; color: #8b949e; text-align: left; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 40px; margin-top: 10px;
+    }
+
+    /* Tarjeta de Login (Derecha - Glassmorphism oscuro) */
+    [data-testid="stForm"] {
+        background: rgba(9, 23, 46, 0.2) !important;
+        border: 1px solid rgba(191, 149, 63, 0.25) !important;
+        border-radius: 16px !important;
+        backdrop-filter: blur(15px) !important;
+        -webkit-backdrop-filter: blur(15px) !important;
+        padding: 3rem 2.5rem !important;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important;
+        margin-top: 20px;
+    }
+    [data-testid="stForm"] label { color: #8b949e !important; font-family: 'Montserrat', sans-serif !important; font-weight: 300 !important; letter-spacing: 2px !important; text-transform: uppercase; font-size: 0.8rem !important;}
+    [data-testid="stForm"] input { background: rgba(0, 0, 0, 0.4) !important; border: 1px solid rgba(191, 149, 63, 0.3) !important; color: #fcf6ba !important; border-radius: 8px !important; font-family: 'Montserrat', sans-serif !important; padding: 0.8rem !important;}
+    [data-testid="stForm"] input:focus { border-color: #fcf6ba !important; box-shadow: 0 0 15px rgba(191, 149, 63, 0.3) !important; }
+
+    /* Botón de Acceso (Oro Sólido) */
+    [data-testid="stFormSubmitButton"] button {
+        background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important; color: #02050a !important; font-weight: 600 !important; font-family: 'Montserrat', sans-serif !important; letter-spacing: 3px !important; text-transform: uppercase !important; border: none !important; border-radius: 8px !important; padding: 0.8rem !important; margin-top: 20px !important; width: 100%; transition: all 0.3s ease !important;
+    }
+    [data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important; }
+    
+    @media (max-width: 800px) { .portada-title { font-size: 3rem; text-align: center; } .portada-subtitle { text-align: center; } }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Layout Dividido: Izquierda texto, Derecha Login
+    c_izq, c_der = st.columns([1.3, 1])
+    with c_izq:
+        st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+        st.markdown("<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='portada-subtitle'>Exclusivo y personalizado para ti.</p>", unsafe_allow_html=True)
+        
+    with c_der:
+        st.markdown("<br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
             usr = st.text_input("Usuario")
             pwd = st.text_input("Contraseña", type="password")
             if st.form_submit_button("Acceder", use_container_width=True):
-                conn = get_connection()
-                cur = conn.cursor()
+                conn = get_connection(); cur = conn.cursor()
                 cur.execute("SELECT user_id FROM users WHERE username=%s AND password_hash=%s", (usr, hash_password(pwd)))
                 user = cur.fetchone()
-                cur.close()
-                conn.close()
-                if user:
-                    st.session_state["user_id"] = user[0]
-                    st.rerun()
+                cur.close(); conn.close()
+                if user: st.session_state["user_id"] = user[0]; st.rerun()
                 else: st.error("Credenciales incorrectas.")
     st.stop()
 
