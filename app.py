@@ -148,7 +148,7 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 5 (Stealth Mode / Negro Absoluto) ---
+    # --- CSS EXCLUSIVO PORTADA 5.1 (Stealth Mode Corregido) ---
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;300;400&display=swap');
@@ -158,8 +158,27 @@ if st.session_state["user_id"] is None:
     header[data-testid="stHeader"] { background-color: transparent !important; }
     
     /* 2. Tipografía Criptográfica Extrafina */
-    .stealth-title { font-family: 'JetBrains Mono', monospace; font-weight: 100; font-size: 2.2rem; color: #ffffff; letter-spacing: 12px; text-align: center; text-transform: uppercase; margin-bottom: 5px; }
-    .stealth-subtitle { font-family: 'JetBrains Mono', monospace; font-weight: 300; font-size: 0.7rem; color: #4b5563; text-align: center; letter-spacing: 6px; text-transform: uppercase; margin-bottom: 80px; }
+    .stealth-title { 
+        font-family: 'JetBrains Mono', monospace; 
+        font-weight: 100; 
+        font-size: 2.2rem; 
+        color: #ffffff; 
+        letter-spacing: 10px; 
+        text-align: center; 
+        text-transform: uppercase; 
+        margin-bottom: 5px; 
+        white-space: nowrap; /* ESTO EVITA QUE LA LETRA SE CAIGA A OTRA LÍNEA */
+    }
+    .stealth-subtitle { 
+        font-family: 'JetBrains Mono', monospace; 
+        font-weight: 300; 
+        font-size: 0.7rem; 
+        color: #4b5563; 
+        text-align: center; 
+        letter-spacing: 6px; 
+        text-transform: uppercase; 
+        margin-bottom: 80px; 
+    }
     
     /* 3. Formulario Invisible (Cero bordes) */
     [data-testid="stForm"] { background: transparent !important; border: none !important; box-shadow: none !important; padding: 2rem !important; }
@@ -203,11 +222,12 @@ if st.session_state["user_id"] is None:
     </style>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1, 1.2, 1])
+    # Ampliamos la columna central para que la palabra gigante tenga todo el espacio necesario
+    c1, c2, c3 = st.columns([0.5, 2.5, 0.5])
     with c2:
         st.markdown("<br><br><br><br><br>", unsafe_allow_html=True)
         st.markdown("<h1 class='stealth-title'>APPORTAFOLIO</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='stealth-subtitle'>Terminal System</p>", unsafe_allow_html=True)
+        st.markdown("<p class='stealth-subtitle'>Exclusivo y personalizado para ti.</p>", unsafe_allow_html=True)
         
         with st.form("login_form"):
             usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
