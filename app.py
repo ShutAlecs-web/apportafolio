@@ -148,28 +148,38 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 2.1 (Silicon Valley Glass CORREGIDO) ---
+    # --- CSS EXCLUSIVO PORTADA 2.2 (Animación Forzada en todas las capas) ---
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap');
     
-    /* 1. Fondo Degradado Animado (Corregido para forzar a Streamlit) */
-    [data-testid="stAppViewContainer"], .stApp {
-        background: linear-gradient(-45deg, #0f172a, #1d4ed8, #4c1d95, #0f172a) !important;
+    /* 1. Forzar la animación del degradado en la raíz del navegador */
+    html, body, [data-testid="stAppViewContainer"], .stApp {
+        background: linear-gradient(-45deg, #020617, #1e3a8a, #312e81, #020617) !important;
         background-size: 400% 400% !important;
-        animation: gradientBG 12s ease infinite !important;
+        animation: gradientAnim 10s ease infinite !important;
+        -webkit-animation: gradientAnim 10s ease infinite !important;
     }
     
-    /* Ocultar elementos por defecto de Streamlit que tapan el fondo */
-    [data-testid="stHeader"] { background: transparent !important; }
+    /* Ocultar la barra superior de Streamlit que hace ruido visual */
+    header[data-testid="stHeader"] {
+        background-color: transparent !important;
+    }
     
-    @keyframes gradientBG {
+    /* Keyframes estándar y para Safari/Chrome */
+    @keyframes gradientAnim {
         0% { background-position: 0% 50%; }
         50% { background-position: 100% 50%; }
         100% { background-position: 0% 50%; }
     }
     
-    /* 2. Tipografía Ultra Clean y Minimalista */
+    @-webkit-keyframes gradientAnim {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    /* 2. Tipografía Ultra Clean */
     .portada-title {
         font-family: 'Inter', sans-serif;
         font-weight: 700;
@@ -179,26 +189,25 @@ if st.session_state["user_id"] is None:
         line-height: 1.1;
         margin-bottom: 5px;
         color: #ffffff;
-        text-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
 
     .portada-subtitle {
         font-family: 'Inter', sans-serif;
         font-weight: 400;
-        color: #cbd5e1;
+        color: #94a3b8;
         text-align: center;
         font-size: 1.05rem;
         letter-spacing: 0.05em;
         margin-bottom: 40px;
     }
 
-    /* 3. Tarjeta de Login (Frosted Glass Real) */
+    /* 3. Tarjeta de Login (Frosted Glass) */
     [data-testid="stForm"] {
-        background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        background: rgba(255, 255, 255, 0.03) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
         border-radius: 24px !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
+        backdrop-filter: blur(25px) !important;
+        -webkit-backdrop-filter: blur(25px) !important;
         padding: 2.5rem !important;
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
     }
@@ -221,13 +230,13 @@ if st.session_state["user_id"] is None:
     }
     
     [data-testid="stForm"] input:focus {
-        border-color: #38bdf8 !important;
-        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.3) !important;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3) !important;
         background: rgba(0, 0, 0, 0.4) !important;
         outline: none !important;
     }
 
-    /* 4. Botón de Acceso (Blanco Sólido Minimalista) */
+    /* 4. Botón de Acceso */
     [data-testid="stFormSubmitButton"] button {
         background: #ffffff !important;
         color: #0f172a !important;
