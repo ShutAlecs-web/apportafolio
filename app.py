@@ -780,10 +780,15 @@ if st.session_state.get("modo_pro_toggle", False):
         backend_api_key = st.secrets["GEMINI_API_KEY"]
     except Exception: pass
 
-                error_api = ""
-                if backend_api_key:
-                    try:
-                        import requests
+    backend_api_key = None
+    try:
+        backend_api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception: pass
+
+    error_api = ""
+    if backend_api_key:
+        try:
+            import requests
                         # 1. Limpiamos la llave de CUALQUIER espacio o salto de línea invisible
                         clean_key = str(backend_api_key).strip()
                         
