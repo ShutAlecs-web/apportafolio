@@ -148,20 +148,16 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 1 (Estrellado y Oro) ---
+    # --- CSS EXCLUSIVO PORTADA 1.1 (Cielo Realista, Oro y FOMO) ---
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400&family=Playfair+Display:ital@1&display=swap');
     
-    /* 1. Fondo Azul Noche con efecto de estrellas sutiles */
+    /* 1. Fondo Realista Estrellado con Overlay Azul Noche */
     .stApp {
-        background-color: #020611 !important;
-        background-image: 
-            radial-gradient(white, rgba(255,255,255,.1) 1px, transparent 2px),
-            radial-gradient(white, rgba(255,255,255,.1) 1px, transparent 2px),
-            radial-gradient(ellipse at top, #09172e 0%, #02050a 100%) !important;
-        background-size: 150px 150px, 250px 250px, 100% 100% !important;
-        background-position: 0 0, 50px 50px, 0 0 !important;
+        background: linear-gradient(rgba(2, 5, 10, 0.75), rgba(2, 5, 10, 0.95)), 
+                    url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
+        background-size: cover !important;
     }
     
     /* 2. Tipografía delgada y dorada */
@@ -191,32 +187,32 @@ if st.session_state["user_id"] is None:
     .portada-subtitle {
         font-family: 'Playfair Display', serif;
         font-style: italic;
-        color: #7b8b9e;
+        color: #8b949e;
         text-align: center;
-        font-size: 1rem;
-        letter-spacing: 0.1em;
+        font-size: 1.05rem;
+        letter-spacing: 0.15em;
         margin-bottom: 40px;
     }
 
     /* 3. Tarjeta de Login (Glassmorphism oscuro) */
     [data-testid="stForm"] {
-        background: rgba(9, 23, 46, 0.3) !important;
-        border: 1px solid rgba(191, 149, 63, 0.2) !important;
+        background: rgba(9, 23, 46, 0.2) !important;
+        border: 1px solid rgba(191, 149, 63, 0.25) !important;
         border-radius: 12px !important;
-        backdrop-filter: blur(10px) !important;
+        backdrop-filter: blur(15px) !important;
         padding: 2.5rem !important;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.6) !important;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important;
     }
 
     [data-testid="stForm"] label {
-        color: #7b8b9e !important;
+        color: #8b949e !important;
         font-family: 'Montserrat', sans-serif !important;
         font-weight: 300 !important;
         letter-spacing: 1px !important;
     }
 
     [data-testid="stForm"] input {
-        background: rgba(0, 0, 0, 0.3) !important;
+        background: rgba(0, 0, 0, 0.4) !important;
         border: 1px solid rgba(191, 149, 63, 0.3) !important;
         color: #fcf6ba !important;
         border-radius: 4px !important;
@@ -244,7 +240,7 @@ if st.session_state["user_id"] is None:
     }
     [data-testid="stFormSubmitButton"] button:hover {
         transform: translateY(-2px) !important;
-        box-shadow: 0 10px 20px rgba(191, 149, 63, 0.3) !important;
+        box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -253,7 +249,7 @@ if st.session_state["user_id"] is None:
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='portada-subtitle'>Exclusive Wealth Management</p>", unsafe_allow_html=True)
+        st.markdown("<p class='portada-subtitle'>Gestión Patrimonial Privada • Solo por Invitación</p>", unsafe_allow_html=True)
         
         with st.form("login_form"):
             usr = st.text_input("Usuario")
@@ -270,7 +266,7 @@ if st.session_state["user_id"] is None:
                     st.session_state["user_id"] = user[0]
                     st.rerun()
                 else: st.error("Credenciales incorrectas.")
-st.stop()
+    st.stop()
 
 # 4. GESTIÓN MULTI-CLIENTE
 user_id = st.session_state["user_id"]
