@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import re
 import io
+import time  # NUEVO: Importado para el Escudo Anti-Baneo
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(
@@ -41,6 +42,12 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #e5e7eb; }
 .pos-red { color: #ff3366; font-size: 0.95rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
 #MainMenu {visibility: hidden;} footer {visibility: hidden;}
 </style>""", unsafe_allow_html=True)
+
+# NUEVO: Escudo Anti-Hackeos Básicos (Regex)
+def sanitize_ticker(t_str):
+    if not t_str: return ""
+    # Solo permite letras mayúsculas, números, guiones, puntos y signos de igual
+    return re.sub(r'[^A-Z0-9\-\=\.]', '', str(t_str).upper().strip())
 
 # PROMPT MAESTRO V5
 PROMPT_MAESTRO = """
@@ -277,7 +284,7 @@ if active_client_id == "USR-001":
     with col_b2:
         if st.button("Validar", use_container_width=True):
             if search_ticker:
-                tk_sym = search_ticker.upper().strip()
+                tk_sym = sanitize_ticker(search_ticker)
                 with st.spinner("..."):
                     try:
                         tk_data = yf.Ticker(tk_sym)
@@ -308,7 +315,8 @@ if active_client_id == "USR-001":
             f_fecha = st.date_input("Fecha", value=datetime.today())
             
             if st.form_submit_button("Ejecutar Operación", use_container_width=True):
-                if f_ticker and f_titulos > 0 and f_precio > 0:
+                f_ticker_clean = sanitize_ticker(f_ticker)
+                if f_ticker_clean and f_titulos > 0 and f_precio > 0:
                     valor_bruto_mxn = (f_titulos * f_precio) * f_tc
                     costos_mxn = (f_comision + f_iva) * f_tc
                     
@@ -326,10 +334,10 @@ if active_client_id == "USR-001":
                     ts_id = datetime.now().timestamp()
                     
                     cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", 
-                                 (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker.upper(), f_clase, f_plat, f_moneda, titulos_final, f_precio, f_comision, f_iva, f_tc, total_op_mxn))
+                                 (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, titulos_final, f_precio, f_comision, f_iva, f_tc, total_op_mxn))
                     
                     cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", 
-                                 (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker.upper()}", impacto_caja))
+                                 (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", impacto_caja))
                     
                     conn.commit()
                     cur.close()
@@ -337,7 +345,7 @@ if active_client_id == "USR-001":
                     
                     st.session_state["val_ticker"] = ""
                     st.session_state["val_price"] = 0.0
-                    st.success(f"✅ {f_tipo_op} de {f_ticker.upper()} registrada exitosamente.")
+                    st.success(f"✅ {f_tipo_op} de {f_ticker_clean} registrada exitosamente.")
                     st.rerun()
                 else: st.error("⚠️ Verifica el Ticker, Títulos y Precio.")
 
@@ -377,7 +385,8 @@ def calc_liquidez_real(df_caja):
 
 liquidez_mxn = calc_liquidez_real(cash_df)
 
-@st.cache_data(ttl=300)
+# NUEVO: max_entries=50 (Límite de RAM)
+@st.cache_data(ttl=300, max_entries=50)
 def get_prices_and_sparklines(tickers, fallback):
     yf_tickers = []
     if tickers:
@@ -459,7 +468,8 @@ if not summary.empty: summary["ponderacion_pct"] = (summary["valor_actual"] / to
 else: summary["ponderacion_pct"] = 0.0
 
 # 6. TICKER TAPE Y MACROECONOMÍA
-@st.cache_data(ttl=300)
+# NUEVO: max_entries=50 (Límite de RAM)
+@st.cache_data(ttl=300, max_entries=50)
 def get_market_data():
     symbols = {"S&P 500": "^GSPC", "Nasdaq": "^IXIC", "Dow": "^DJI", "Oro": "GC=F", "Plata": "SI=F", "Petróleo WTI": "CL=F", "USD/MXN": "MXN=X", "EUR/MXN": "EURMXN=X", "BTC/USD": "BTC-USD"}
     data = {}
@@ -718,11 +728,13 @@ if st.session_state.get("modo_pro_toggle", False):
         selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para Deep Dive:", sorted(summary["ticker"].tolist()) + ["🔍 Buscar nuevo ticker (Ej: AAPL, SPY)"])
         if selected_asset.startswith("🔍"):
             search_ticker = st.text_input("Ingresa el Ticker de Yahoo Finance a analizar (Ej: NVDA, URA, SCHD):").upper()
-            target_asset = search_ticker if search_ticker else None
-        else: target_asset = selected_asset
+            target_asset = sanitize_ticker(search_ticker) if search_ticker else None
+        else: 
+            target_asset = sanitize_ticker(selected_asset)
 
         if target_asset:
-            @st.cache_data(ttl=3600)
+            # NUEVO: max_entries=50 (Límite de RAM)
+            @st.cache_data(ttl=3600, max_entries=50)
             def fetch_asset_deep_dive(t):
                 try:
                     yf_sym = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
@@ -774,62 +786,63 @@ if st.session_state.get("modo_pro_toggle", False):
                 try:
                     backend_api_key = st.secrets["GEMINI_API_KEY"]
                 except Exception: pass
-                
-                backend_api_key = None
-    try:
-        backend_api_key = st.secrets["GEMINI_API_KEY"]
-    except Exception: pass
 
-    backend_api_key = None
-    try:
-        backend_api_key = st.secrets["GEMINI_API_KEY"]
-    except Exception: pass
-
-    error_api = ""
-    if backend_api_key:
-        try:
-            import requests
-                        # 1. Limpiamos la llave de CUALQUIER espacio o salto de línea invisible
-                        clean_key = str(backend_api_key).strip()
-                        
-                        # 2. La enviamos por el túnel seguro, no por la URL
-                        headers = {
-                            'Content-Type': 'application/json',
-                            'x-goog-api-key': clean_key
-                        }
-                        
-                        prompt_filled = PROMPT_MAESTRO.format(
-                            ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2),
-                            pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2),
-                            portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, 
-                            fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo."
-                        )
-                        
-                        payload = {
-                            "contents": [{"parts": [{"text": prompt_filled}]}],
-                            "generationConfig": {"temperature": 0.2}
-                        }
-                        
-                        # 3. URL limpia
-                        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-                        response = requests.post(url, headers=headers, json=payload)
-                        
-                        if response.status_code == 200:
-                            ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                            clean_json = ai_response.replace(chr(96)*3 + "json", "").replace(chr(96)*3, "").strip()
-                            parsed_response = json.loads(clean_json)
-                            
-                            ai_verdict = parsed_response.get("verdict", "HOLD")
-                            ai_rating = int(parsed_response.get("rating", 5))
-                            ai_bulls = parsed_response.get("bull_points", [])
-                            ai_bears = parsed_response.get("bear_points", [])
-                            ai_macro = parsed_response.get("macro_synthesis", "")
-                        else:
-                            ai_verdict = "ERROR API"
-                            error_api = f"Error {response.status_code}: {response.text}"
-                    except Exception as e:
+                error_api = ""
+                if backend_api_key:
+                    # NUEVO: Semáforo Anti-Baneo de IA
+                    current_time = time.time()
+                    last_call = st.session_state.get("last_gemini_call", 0)
+                    time_left = 30.0 - (current_time - last_call)
+                    
+                    if time_left > 0:
+                        error_api = f"Rate Limit: Espera {int(time_left)}s"
                         ai_verdict = "ERROR API"
-                        error_api = f"Error interno: {str(e)}"
+                        st.toast(f"⏳ Escudo Anti-Baneo activo: Por favor, espera {int(time_left)} segundos antes de volver a consultar a la IA.", icon="🛡️")
+                    else:
+                        st.session_state["last_gemini_call"] = current_time
+                        try:
+                            import requests
+                            # 1. Limpiamos la llave
+                            clean_key = str(backend_api_key).strip()
+                            
+                            # 2. La enviamos por el túnel seguro
+                            headers = {
+                                'Content-Type': 'application/json',
+                                'x-goog-api-key': clean_key
+                            }
+                            
+                            prompt_filled = PROMPT_MAESTRO.format(
+                                ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2),
+                                pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2),
+                                portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, 
+                                fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo."
+                            )
+                            
+                            payload = {
+                                "contents": [{"parts": [{"text": prompt_filled}]}],
+                                "generationConfig": {"temperature": 0.2}
+                            }
+                            
+                            # 3. Llamada al API
+                            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 200:
+                                ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
+                                clean_json = ai_response.replace(chr(96)*3 + "json", "").replace(chr(96)*3, "").strip()
+                                parsed_response = json.loads(clean_json)
+                                
+                                ai_verdict = parsed_response.get("verdict", "HOLD")
+                                ai_rating = int(parsed_response.get("rating", 5))
+                                ai_bulls = parsed_response.get("bull_points", [])
+                                ai_bears = parsed_response.get("bear_points", [])
+                                ai_macro = parsed_response.get("macro_synthesis", "")
+                            else:
+                                ai_verdict = "ERROR API"
+                                error_api = f"Error {response.status_code}: {response.text}"
+                        except Exception as e:
+                            ai_verdict = "ERROR API"
+                            error_api = f"Error interno: {str(e)}"
                 
                 if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
                     score = 5.0
@@ -845,7 +858,7 @@ if st.session_state.get("modo_pro_toggle", False):
                     ai_rating = max(1, min(10, int(score)))
                     ai_verdict = "ZONA DE COMPRA" if ai_rating >= 7 else ("HOLD" if ai_rating >= 4 else "ESPERAR")
                     
-                    if error_api: ai_macro = f"⚠️ Fallo conexión IA: {error_api}"
+                    if error_api: ai_macro = f"⚠️ Fallo conexión IA o Anti-Baneo activo: {error_api}"
                     elif not backend_api_key: ai_macro = "⚠️ Llave de Gemini no detectada en secrets.toml."
                     else: ai_macro = "Motor matemático local activo."
 
