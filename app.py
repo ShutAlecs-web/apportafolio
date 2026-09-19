@@ -148,69 +148,46 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 3.2 (Deep Quant / Ocean Blue + Cyan) ---
+    # --- CSS EXCLUSIVO PORTADA 4 (Pantalla Dividida Premium) ---
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&display=swap');
-
-    /* 1. Fondo Océano Profundo / Datos */
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;600&display=swap');
+    
+    /* 1. Mitad imagen (Izquierda), Mitad color sólido oscuro (Derecha) */
     [data-testid="stAppViewContainer"], .stApp {
-        background: linear-gradient(rgba(2, 6, 23, 0.8), rgba(2, 6, 23, 0.95)), 
-                    url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
-        background-size: cover !important;
+        background: url('https://images.unsplash.com/photo-1618044733300-9472054094ee?q=80&w=2000&auto=format&fit=crop') no-repeat left center fixed !important;
+        background-size: 50% 100% !important;
+        background-color: #06070a !important; /* El color de la mitad derecha */
     }
     
-    /* 2. HUD Lines en Cyan Neón */
-    .stApp::before { content: ""; position: fixed; top: 18%; left: 0; right: 0; height: 1px; background: rgba(0, 240, 255, 0.3); z-index: 0; pointer-events: none; }
-    .stApp::after { content: ""; position: fixed; top: 0; bottom: 0; left: 8%; width: 1px; background: rgba(0, 240, 255, 0.3); z-index: 0; pointer-events: none; }
     header[data-testid="stHeader"] { background-color: transparent !important; }
-
-    /* 3. Tipografía Gigante Tecnológica */
-    .hud-brand { font-family: 'Space Mono', monospace; font-size: 0.8rem; color: #94a3b8; letter-spacing: 4px; margin-bottom: 40px; font-weight: 700; text-transform: uppercase; }
-    .hud-badge { display: inline-block; border: 1px solid rgba(0,240,255,0.5); padding: 4px 15px; font-family: 'Space Mono', monospace; font-size: 0.7rem; color: #00f0ff; margin-bottom: 10px; letter-spacing: 2px; text-transform: uppercase; background: rgba(0,240,255,0.05); }
     
-    .hud-giant-1 { font-family: 'Anton', sans-serif; font-size: 8rem; line-height: 0.85; color: #ffffff; margin: 0; letter-spacing: 1px; }
-    .hud-giant-2 { font-family: 'Anton', sans-serif; font-size: 8rem; line-height: 0.85; color: #00f0ff; margin: 0; letter-spacing: 1px; text-shadow: 0 0 30px rgba(0, 240, 255, 0.2); }
+    /* 2. Tipografía Editorial Clásica (Serif) */
+    .split-title { font-family: 'Playfair Display', serif; font-size: 3.5rem; color: #ffffff; line-height: 1.1; margin-bottom: 10px; }
+    .split-subtitle { font-family: 'Inter', sans-serif; font-size: 0.85rem; color: #8b949e; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 50px; font-weight: 300;}
     
-    .hud-desc { font-family: 'Space Mono', monospace; font-size: 0.9rem; color: #cbd5e1; margin-top: 30px; border-left: 2px solid #00f0ff; padding-left: 15px; max-width: 420px; line-height: 1.6; }
-
-    /* 4. Tarjeta de Login (Cristal Azulado) */
-    [data-testid="stForm"] {
-        background: rgba(2, 6, 23, 0.6) !important;
-        border: 1px solid rgba(0, 240, 255, 0.2) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
-        padding: 2.5rem !important;
-        border-radius: 0px !important; 
-        box-shadow: 0 20px 50px rgba(0,0,0,0.8) !important;
-        position: relative;
-        margin-top: 100px;
-    }
-    [data-testid="stForm"]::before { content: ''; position: absolute; top: -1px; left: -1px; width: 20px; height: 20px; border-top: 2px solid #00f0ff; border-left: 2px solid #00f0ff; }
-    [data-testid="stForm"]::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 20px; height: 20px; border-bottom: 2px solid #00f0ff; border-right: 2px solid #00f0ff; }
-
-    [data-testid="stForm"] label { color: #94a3b8 !important; font-family: 'Space Mono', monospace !important; font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 2px;}
-    [data-testid="stForm"] input { background: rgba(0, 0, 0, 0.4) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; color: #00f0ff !important; font-family: 'Space Mono', monospace !important; border-radius: 0 !important; padding: 0.8rem !important; }
-    [data-testid="stForm"] input:focus { border-color: #00f0ff !important; box-shadow: none !important; background: rgba(0, 0, 0, 0.7) !important; }
-
-    [data-testid="stFormSubmitButton"] button {
-        background: rgba(0, 240, 255, 0.1) !important; color: #00f0ff !important; border: 1px solid #00f0ff !important; font-weight: 700 !important; font-family: 'Space Mono', monospace !important; border-radius: 0 !important; padding: 0.9rem !important; margin-top: 20px !important; text-transform: uppercase !important; letter-spacing: 3px !important; width: 100%; transition: all 0.3s ease !important;
-    }
-    [data-testid="stFormSubmitButton"] button:hover { background: #00f0ff !important; color: #000000 !important; box-shadow: 0 0 25px rgba(0,240,255,0.4) !important;}
+    /* 3. Formulario Integrado (Sin bordes de tarjeta gruesos) */
+    [data-testid="stForm"] { background: transparent !important; border: none !important; padding: 2rem 4rem !important; box-shadow: none !important; margin-top: 50px;}
+    [data-testid="stForm"] label { color: #8b949e !important; font-family: 'Inter', sans-serif !important; font-size: 0.8rem !important; text-transform: uppercase; letter-spacing: 1px;}
+    
+    [data-testid="stForm"] input { background: #11141d !important; border: 1px solid #1f2937 !important; color: #ffffff !important; border-radius: 4px !important; font-family: 'Inter', sans-serif !important; padding: 0.8rem !important; }
+    [data-testid="stForm"] input:focus { border-color: #c084fc !important; box-shadow: none !important; background: #06070a !important;}
+    
+    [data-testid="stFormSubmitButton"] button { background: #ffffff !important; color: #000000 !important; font-weight: 600 !important; font-family: 'Inter', sans-serif !important; border: none !important; border-radius: 4px !important; padding: 0.8rem !important; margin-top: 30px !important; width: 100%; transition: all 0.3s; letter-spacing: 1px;}
+    [data-testid="stFormSubmitButton"] button:hover { background: #c084fc !important; color: #ffffff !important; }
+    
+    /* Responsividad: Si lo abren en celular, se oculta la imagen y queda fondo sólido */
+    @media (max-width: 800px) { [data-testid="stAppViewContainer"], .stApp { background: #06070a !important; } [data-testid="stForm"] { padding: 1rem !important; } }
     </style>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns([0.2, 2.5, 1.5, 0.2])
-    with c2:
+    # Dividimos la pantalla en 2. La columna izquierda (c_img) queda vacía para mostrar la foto de fondo.
+    c_img, c_form = st.columns([1, 1])
+    with c_form:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.markdown("<div class='hud-brand'>APPORTAFOLIO // SYS</div>", unsafe_allow_html=True)
-        st.markdown("<div class='hud-badge'>QUANTITATIVE EDGE</div>", unsafe_allow_html=True)
-        st.markdown("<h1 class='hud-giant-1'>TERMINAL</h1>", unsafe_allow_html=True)
-        st.markdown("<h1 class='hud-giant-2'>APPORTAFOLIO.</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='hud-desc'>Infraestructura de Grado Institucional. Procesamiento de datos y modelado de riesgos en tiempo real.</p>", unsafe_allow_html=True)
+        st.markdown("<h1 class='split-title'>Terminal<br>Apportafolio.</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='split-subtitle'>Gestión Patrimonial Exclusiva</p>", unsafe_allow_html=True)
         
-    with c3:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
             usr = st.text_input("Usuario")
             pwd = st.text_input("Contraseña", type="password")
