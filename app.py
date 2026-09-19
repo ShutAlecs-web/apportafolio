@@ -148,121 +148,115 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 2.2 (Animación Forzada en todas las capas) ---
+    # --- CSS EXCLUSIVO PORTADA 3 (Estilo Cinemático HUD) ---
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap');
-    
-    /* 1. Forzar la animación del degradado en la raíz del navegador */
-    html, body, [data-testid="stAppViewContainer"], .stApp {
-        background: linear-gradient(-45deg, #020617, #1e3a8a, #312e81, #020617) !important;
-        background-size: 400% 400% !important;
-        animation: gradientAnim 10s ease infinite !important;
-        -webkit-animation: gradientAnim 10s ease infinite !important;
+    @import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&display=swap');
+
+    /* 1. Fondo de Arquitectura Financiera Imponente */
+    [data-testid="stAppViewContainer"], .stApp {
+        background: linear-gradient(rgba(5, 10, 15, 0.3), rgba(5, 10, 15, 0.85)), 
+                    url('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
+        background-size: cover !important;
     }
     
-    /* Ocultar la barra superior de Streamlit que hace ruido visual */
-    header[data-testid="stHeader"] {
-        background-color: transparent !important;
+    /* 2. HUD Lines (Las líneas finas de tus imágenes de referencia) */
+    .stApp::before {
+        content: ""; position: fixed; top: 18%; left: 0; right: 0; height: 1px; background: rgba(255, 215, 0, 0.35); z-index: 0; pointer-events: none;
     }
-    
-    /* Keyframes estándar y para Safari/Chrome */
-    @keyframes gradientAnim {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
-    }
-    
-    @-webkit-keyframes gradientAnim {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
-    }
-    
-    /* 2. Tipografía Ultra Clean */
-    .portada-title {
-        font-family: 'Inter', sans-serif;
-        font-weight: 700;
-        font-size: 3.5rem;
-        letter-spacing: -0.03em;
-        text-align: center;
-        line-height: 1.1;
-        margin-bottom: 5px;
-        color: #ffffff;
+    .stApp::after {
+        content: ""; position: fixed; top: 0; bottom: 0; left: 8%; width: 1px; background: rgba(255, 215, 0, 0.35); z-index: 0; pointer-events: none;
     }
 
-    .portada-subtitle {
-        font-family: 'Inter', sans-serif;
-        font-weight: 400;
-        color: #94a3b8;
-        text-align: center;
-        font-size: 1.05rem;
-        letter-spacing: 0.05em;
-        margin-bottom: 40px;
+    /* Ocultar header de streamlit */
+    header[data-testid="stHeader"] { background-color: transparent !important; }
+
+    /* 3. Tipografía Gigante (Idéntica a "ABIERTOS MUY TARDE") */
+    .hud-brand {
+        font-family: 'Space Mono', monospace; font-size: 0.85rem; color: #ffffff; letter-spacing: 3px; margin-bottom: 50px; font-weight: 700;
+    }
+    .hud-badge {
+        display: inline-block; border: 1px solid rgba(255,215,0,0.5); border-radius: 50px; padding: 4px 15px; font-family: 'Space Mono', monospace; font-size: 0.75rem; color: #ffd700; margin-bottom: 15px; letter-spacing: 2px;
+    }
+    .hud-giant-1 {
+        font-family: 'Anton', sans-serif; font-size: 7.5rem; line-height: 0.85; color: #ffffff; text-transform: uppercase; margin: 0; letter-spacing: 1px;
+    }
+    .hud-giant-2 {
+        font-family: 'Anton', sans-serif; font-size: 7.5rem; line-height: 0.85; color: #ffd700; text-transform: uppercase; margin: 0; letter-spacing: 1px; text-shadow: 0 0 30px rgba(255, 215, 0, 0.2);
+    }
+    .hud-desc {
+        font-family: 'Space Mono', monospace; font-size: 0.95rem; color: #e2e8f0; margin-top: 25px; border-left: 2px solid #ffd700; padding-left: 15px; max-width: 450px; line-height: 1.5;
     }
 
-    /* 3. Tarjeta de Login (Frosted Glass) */
+    /* 4. Tarjeta de Login (Estilo Panel de Control) */
     [data-testid="stForm"] {
-        background: rgba(255, 255, 255, 0.03) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 24px !important;
-        backdrop-filter: blur(25px) !important;
-        -webkit-backdrop-filter: blur(25px) !important;
+        background: rgba(5, 10, 15, 0.65) !important;
+        border: 1px solid rgba(255, 215, 0, 0.2) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
         padding: 2.5rem !important;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+        border-radius: 0px !important; /* Cuadrado para dar toque tecnológico/HUD */
+        box-shadow: 0 20px 50px rgba(0,0,0,0.9) !important;
+        position: relative;
+        margin-top: 90px;
+    }
+    /* Esquinas estilo sci-fi/HUD en el login */
+    [data-testid="stForm"]::before {
+        content: ''; position: absolute; top: -1px; left: -1px; width: 15px; height: 15px; border-top: 2px solid #ffd700; border-left: 2px solid #ffd700;
+    }
+    [data-testid="stForm"]::after {
+        content: ''; position: absolute; bottom: -1px; right: -1px; width: 15px; height: 15px; border-bottom: 2px solid #ffd700; border-right: 2px solid #ffd700;
     }
 
-    [data-testid="stForm"] label {
-        color: #f8fafc !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 500 !important;
-        font-size: 0.95rem !important;
-    }
-
-    [data-testid="stForm"] input {
-        background: rgba(0, 0, 0, 0.25) !important;
-        border: 1px solid rgba(255, 255, 255, 0.15) !important;
-        color: #ffffff !important;
-        border-radius: 12px !important;
-        font-family: 'Inter', sans-serif !important;
-        transition: all 0.3s ease !important;
-        padding: 0.7rem !important;
-    }
+    [data-testid="stForm"] label { color: #94a3b8 !important; font-family: 'Space Mono', monospace !important; font-size: 0.8rem !important; text-transform: uppercase; letter-spacing: 2px;}
     
+    [data-testid="stForm"] input {
+        background: rgba(0, 0, 0, 0.5) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #ffd700 !important;
+        font-family: 'Space Mono', monospace !important;
+        border-radius: 0 !important;
+        padding: 0.8rem !important;
+    }
     [data-testid="stForm"] input:focus {
-        border-color: #3b82f6 !important;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3) !important;
-        background: rgba(0, 0, 0, 0.4) !important;
-        outline: none !important;
+        border-color: #ffd700 !important;
+        box-shadow: none !important;
+        background: rgba(0, 0, 0, 0.8) !important;
     }
 
-    /* 4. Botón de Acceso */
     [data-testid="stFormSubmitButton"] button {
-        background: #ffffff !important;
-        color: #0f172a !important;
+        background: #ffd700 !important;
+        color: #000000 !important;
         font-weight: 700 !important;
-        font-family: 'Inter', sans-serif !important;
+        font-family: 'Space Mono', monospace !important;
         border: none !important;
-        border-radius: 12px !important;
-        padding: 0.8rem !important;
-        margin-top: 25px !important;
-        transition: all 0.2s ease !important;
-        letter-spacing: 0.5px !important;
-        font-size: 1rem !important;
+        border-radius: 0 !important;
+        padding: 0.9rem !important;
+        margin-top: 20px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 3px !important;
+        width: 100%;
     }
     [data-testid="stFormSubmitButton"] button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 10px 25px rgba(255, 255, 255, 0.2) !important;
+        background: #ffffff !important;
+        color: #000000 !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1, 1.2, 1])
+    # Reestructuramos columnas para que el texto gigante quede a la izquierda y el login a la derecha
+    c1, c2, c3, c4 = st.columns([0.2, 2.5, 1.5, 0.2])
+    
     with c2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("<h1 class='portada-title'>Terminal<br>Apportafolio</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='portada-subtitle'>Gestión Patrimonial Privada • Solo por Invitación</p>", unsafe_allow_html=True)
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown("<div class='hud-brand'>APPORTAFOLIO_OS°</div>", unsafe_allow_html=True)
+        st.markdown("<div class='hud-badge'>087 &nbsp; WEALTH &nbsp; DIRECCIÓN C</div>", unsafe_allow_html=True)
+        st.markdown("<h1 class='hud-giant-1'>TERMINAL</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='hud-giant-2'>PRIVADA.</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='hud-desc'>Gestión patrimonial de alta precisión. El mercado no duerme, nosotros tampoco.</p>", unsafe_allow_html=True)
         
+    with c3:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
             usr = st.text_input("Usuario")
             pwd = st.text_input("Contraseña", type="password")
@@ -277,7 +271,7 @@ if st.session_state["user_id"] is None:
                 if user:
                     st.session_state["user_id"] = user[0]
                     st.rerun()
-                else: st.error("Credenciales incorrectas.")
+                else: st.error("Acceso denegado.")
 st.stop()
 
 # 4. GESTIÓN MULTI-CLIENTE
