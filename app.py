@@ -148,107 +148,104 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 1.1 (Cielo Realista, Oro y FOMO) ---
+    # --- CSS EXCLUSIVO PORTADA 2 (Silicon Valley Glass) ---
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400&family=Playfair+Display:ital@1&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap');
     
-    /* 1. Fondo Realista Estrellado con Overlay Azul Noche */
+    /* 1. Fondo Degradado Animado (Estilo Silicon Valley Dark) */
     .stApp {
-        background: linear-gradient(rgba(2, 5, 10, 0.75), rgba(2, 5, 10, 0.95)), 
-                    url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
-        background-size: cover !important;
+        background: linear-gradient(-45deg, #0f172a, #1e293b, #020617, #0f172a) !important;
+        background-size: 400% 400% !important;
+        animation: gradientBG 15s ease infinite !important;
     }
     
-    /* 2. Tipografía delgada y dorada */
+    @keyframes gradientBG {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    /* 2. Tipografía Ultra Clean y Minimalista */
     .portada-title {
-        font-family: 'Montserrat', sans-serif;
-        font-weight: 200;
-        font-size: 3.5rem;
-        letter-spacing: 0.2em;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 3.2rem;
+        letter-spacing: -0.03em;
         text-align: center;
         line-height: 1.1;
         margin-bottom: 5px;
-        /* Degradado metálico dorado animado */
-        background: linear-gradient(to right, #bf953f 0%, #fcf6ba 25%, #b38728 50%, #fbf5b7 75%, #aa771c 100%);
-        background-size: 200% auto;
-        color: #000;
-        background-clip: text;
-        text-fill-color: transparent;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        animation: shine 6s linear infinite;
-    }
-    
-    @keyframes shine {
-        to { background-position: 200% center; }
+        color: #f8fafc;
     }
 
     .portada-subtitle {
-        font-family: 'Playfair Display', serif;
-        font-style: italic;
-        color: #8b949e;
+        font-family: 'Inter', sans-serif;
+        font-weight: 400;
+        color: #94a3b8;
         text-align: center;
-        font-size: 1.05rem;
-        letter-spacing: 0.15em;
+        font-size: 1rem;
+        letter-spacing: 0.05em;
         margin-bottom: 40px;
     }
 
-    /* 3. Tarjeta de Login (Glassmorphism oscuro) */
+    /* 3. Tarjeta de Login (Frosted Glass Extremo) */
     [data-testid="stForm"] {
-        background: rgba(9, 23, 46, 0.2) !important;
-        border: 1px solid rgba(191, 149, 63, 0.25) !important;
-        border-radius: 12px !important;
-        backdrop-filter: blur(15px) !important;
+        background: rgba(255, 255, 255, 0.03) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 20px !important;
+        backdrop-filter: blur(25px) !important;
+        -webkit-backdrop-filter: blur(25px) !important;
         padding: 2.5rem !important;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5) !important;
     }
 
     [data-testid="stForm"] label {
-        color: #8b949e !important;
-        font-family: 'Montserrat', sans-serif !important;
-        font-weight: 300 !important;
-        letter-spacing: 1px !important;
+        color: #cbd5e1 !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 500 !important;
+        font-size: 0.9rem !important;
     }
 
     [data-testid="stForm"] input {
-        background: rgba(0, 0, 0, 0.4) !important;
-        border: 1px solid rgba(191, 149, 63, 0.3) !important;
-        color: #fcf6ba !important;
-        border-radius: 4px !important;
-        font-family: 'Montserrat', sans-serif !important;
+        background: rgba(0, 0, 0, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #f8fafc !important;
+        border-radius: 8px !important;
+        font-family: 'Inter', sans-serif !important;
+        transition: all 0.3s ease !important;
+        padding: 0.6rem !important;
     }
     
     [data-testid="stForm"] input:focus {
-        border-color: #fcf6ba !important;
-        box-shadow: 0 0 10px rgba(191, 149, 63, 0.3) !important;
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2) !important;
+        background: rgba(0, 0, 0, 0.4) !important;
     }
 
-    /* 4. Botón de Acceso (Oro Sólido) */
+    /* 4. Botón de Acceso (Blanco Sólido Minimalista) */
     [data-testid="stFormSubmitButton"] button {
-        background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important;
-        color: #02050a !important;
+        background: #f8fafc !important;
+        color: #0f172a !important;
         font-weight: 600 !important;
-        font-family: 'Montserrat', sans-serif !important;
-        letter-spacing: 3px !important;
-        text-transform: uppercase !important;
+        font-family: 'Inter', sans-serif !important;
         border: none !important;
-        border-radius: 4px !important;
-        padding: 0.5rem !important;
-        margin-top: 15px !important;
-        transition: all 0.3s ease !important;
+        border-radius: 8px !important;
+        padding: 0.7rem !important;
+        margin-top: 20px !important;
+        transition: all 0.2s ease !important;
+        letter-spacing: 0.5px !important;
     }
     [data-testid="stFormSubmitButton"] button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important;
+        background: #e2e8f0 !important;
+        transform: scale(1.02) !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1, 1.3, 1])
+    c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='portada-title'>Terminal<br>Apportafolio</h1>", unsafe_allow_html=True)
         st.markdown("<p class='portada-subtitle'>Gestión Patrimonial Privada • Solo por Invitación</p>", unsafe_allow_html=True)
         
         with st.form("login_form"):
