@@ -12,6 +12,7 @@ import json
 import re
 import io
 import time
+import numpy as np
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(
@@ -105,7 +106,7 @@ ASSET_SECTOR = {
     "ASML": "Semiconductores", "NVO": "Biotecnología / Salud", "MA": "Servicios Financieros", "V": "Servicios Financieros", "BTC": "Criptoactivos"
 }
 
-# FASE 2: Obtenedor de Dólar en Vivo (Caché protegido)
+# Obtenedor de Dólar en Vivo (Caché protegido)
 @st.cache_data(ttl=300, max_entries=50)
 def get_live_usd():
     try: return float(yf.Ticker("MXN=X").fast_info.last_price)
@@ -318,7 +319,6 @@ if active_client_id == "USR-001":
             f_precio = st.number_input("Precio Unitario", min_value=0.0, value=val_p, format="%.2f", step=1.0)
             f_comision = st.number_input("Comisión", min_value=0.0, format="%.2f")
             f_iva = st.number_input("IVA", min_value=0.0, format="%.3f")
-            # FASE 2 APLICADA: Valor del dólar en vivo
             f_tc = st.number_input("Tipo de Cambio (Live)", min_value=1.0, value=live_usd_rate, format="%.4f")
             f_fecha = st.date_input("Fecha", value=datetime.today())
             
@@ -727,6 +727,9 @@ if st.session_state.get("modo_pro_toggle", False):
 
     st.markdown("---")
 
+    # Inicializar memoria de la IA para que no se borre al hacer scroll o usar sliders
+    if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
+
     # 9. LUPA DE ACTIVOS - DUE DILIGENCE Y RATING V5
     st.markdown("<h4 style='color:#8b949e;font-size:0.9rem;' class='notranslate' translate='no'>🔍 RADIOGRAFÍA INDIVIDUAL Y RATING DE COMPRA (PROMPT V5)</h4>", unsafe_allow_html=True)
 
@@ -755,8 +758,7 @@ if st.session_state.get("modo_pro_toggle", False):
                         if title and isinstance(title, str): 
                             if isinstance(link, str) and link.startswith('http'):
                                 safe_link = link
-                            else:
-                                safe_link = f"https://finance.yahoo.com/quote/{yf_sym}"
+                            else: safe_link = f"https://finance.yahoo.com/quote/{yf_sym}"
                             clean_news.append({"title": title, "link": safe_link})
                     return hist, info, clean_news
                 except: return pd.DataFrame(), {}, []
@@ -783,85 +785,91 @@ if st.session_state.get("modo_pro_toggle", False):
                 high_52 = asset_info.get("fiftyTwoWeekHigh", current_price * 1.1)
                 low_52 = asset_info.get("fiftyTwoWeekLow", current_price * 0.9)
                 
-                ai_verdict, ai_rating, ai_bulls, ai_bears = "N/A", 5, [], []
-                ai_macro = "Motor matemático local activo. Evaluando métricas estándar."
                 noticias_texto = "\n".join([f"- {n['title']}" for n in asset_news]) if asset_news else "Sin noticias relevantes recientes."
 
-                backend_api_key = None
-                try:
-                    backend_api_key = st.secrets["GEMINI_API_KEY"]
-                except Exception: pass
+                # Lógica de Memoria Fotográfica VS LLamada Nueva
+                mem_data = st.session_state["ai_memory"].get(target_asset)
+                if mem_data:
+                    ai_verdict = mem_data["verdict"]
+                    ai_rating = mem_data["rating"]
+                    ai_bulls = mem_data["bulls"]
+                    ai_bears = mem_data["bears"]
+                    ai_macro = mem_data["macro"]
+                else:
+                    ai_verdict, ai_rating, ai_bulls, ai_bears = "N/A", 5, [], []
+                    ai_macro = "Motor matemático local activo. Evaluando métricas estándar."
+                    error_api = ""
+                    
+                    backend_api_key = None
+                    try: backend_api_key = st.secrets["GEMINI_API_KEY"]
+                    except Exception: pass
 
-                error_api = ""
-                if backend_api_key:
-                    current_time = time.time()
-                    last_call = st.session_state.get("last_gemini_call", 0)
-                    time_left = 30.0 - (current_time - last_call)
-                    
-                    if time_left > 0:
-                        error_api = f"Rate Limit: Espera {int(time_left)}s"
-                        ai_verdict = "ERROR API"
-                        st.toast(f"⏳ Escudo Anti-Baneo activo: Por favor, espera {int(time_left)} segundos antes de volver a consultar a la IA.", icon="🛡️")
-                    else:
-                        st.session_state["last_gemini_call"] = current_time
-                        try:
-                            import requests
-                            clean_key = str(backend_api_key).strip()
-                            
-                            headers = {
-                                'Content-Type': 'application/json',
-                                'x-goog-api-key': clean_key
-                            }
-                            
-                            prompt_filled = PROMPT_MAESTRO.format(
-                                ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2),
-                                pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2),
-                                portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, 
-                                fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo."
-                            )
-                            
-                            payload = {
-                                "contents": [{"parts": [{"text": prompt_filled}]}],
-                                "generationConfig": {"temperature": 0.2}
-                            }
-                            
-                            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-                            response = requests.post(url, headers=headers, json=payload)
-                            
-                            if response.status_code == 200:
-                                ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                                clean_json = ai_response.replace(chr(96)*3 + "json", "").replace(chr(96)*3, "").strip()
-                                parsed_response = json.loads(clean_json)
-                                
-                                ai_verdict = parsed_response.get("verdict", "HOLD")
-                                ai_rating = int(parsed_response.get("rating", 5))
-                                ai_bulls = parsed_response.get("bull_points", [])
-                                ai_bears = parsed_response.get("bear_points", [])
-                                ai_macro = parsed_response.get("macro_synthesis", "")
-                            else:
-                                ai_verdict = "ERROR API"
-                                error_api = f"Error {response.status_code}: {response.text}"
-                        except Exception as e:
+                    if backend_api_key:
+                        current_time = time.time()
+                        last_call = st.session_state.get("last_gemini_call", 0)
+                        time_left = 10.0 - (current_time - last_call) # Reducido a 10s
+                        
+                        if time_left > 0:
+                            error_api = f"Rate Limit: Espera {int(time_left)}s"
                             ai_verdict = "ERROR API"
-                            error_api = f"Error interno: {str(e)}"
-                
-                if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
-                    score = 5.0
-                    ma50 = hist_data['Close'].tail(50).mean()
-                    ma200 = hist_data['Close'].mean()
-                    if current_price < ma50 and current_price > ma200: score += 2.0; ai_bulls.append("Corrección saludable a corto plazo.")
-                    elif current_price < ma200: score += 3.0; ai_bulls.append("Cotiza bajo su MA200. Descuento profundo.")
-                    elif current_price > ma50 * 1.15: score -= 2.0; ai_bears.append("Sobrecomprado (>15% arriba de la MA50).")
-                    if isinstance(pe_ratio, float):
-                        if pe_ratio < 20: score += 2.0; ai_bulls.append(f"Valuación atractiva (P/E: {pe_ratio:.1f}).")
-                        elif pe_ratio > 40: score -= 1.5; ai_bears.append(f"Valuación exigente/Premium (P/E: {pe_ratio:.1f}).")
-                    if is_owned and p_peso > 20.0: score -= 2.0; ai_bears.append(f"Riesgo de Concentración ({p_peso:.1f}% del portafolio).")
-                    ai_rating = max(1, min(10, int(score)))
-                    ai_verdict = "ZONA DE COMPRA" if ai_rating >= 7 else ("HOLD" if ai_rating >= 4 else "ESPERAR")
+                            st.toast(f"⏳ Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.", icon="🛡️")
+                        else:
+                            st.session_state["last_gemini_call"] = current_time
+                            try:
+                                import requests
+                                clean_key = str(backend_api_key).strip()
+                                headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
+                                
+                                prompt_filled = PROMPT_MAESTRO.format(
+                                    ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2),
+                                    pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2),
+                                    portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, 
+                                    fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo."
+                                )
+                                
+                                payload = {"contents": [{"parts": [{"text": prompt_filled}]}], "generationConfig": {"temperature": 0.2}}
+                                url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+                                response = requests.post(url, headers=headers, json=payload)
+                                
+                                if response.status_code == 200:
+                                    ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
+                                    clean_json = ai_response.replace(chr(96)*3 + "json", "").replace(chr(96)*3, "").strip()
+                                    parsed_response = json.loads(clean_json)
+                                    
+                                    ai_verdict = parsed_response.get("verdict", "HOLD")
+                                    ai_rating = int(parsed_response.get("rating", 5))
+                                    ai_bulls = parsed_response.get("bull_points", [])
+                                    ai_bears = parsed_response.get("bear_points", [])
+                                    ai_macro = parsed_response.get("macro_synthesis", "")
+                                    
+                                    # GUARDAR EN MEMORIA
+                                    st.session_state["ai_memory"][target_asset] = {
+                                        "verdict": ai_verdict, "rating": ai_rating, "bulls": ai_bulls, "bears": ai_bears, "macro": ai_macro
+                                    }
+                                else:
+                                    ai_verdict = "ERROR API"
+                                    error_api = f"Error {response.status_code}: {response.text}"
+                            except Exception as e:
+                                ai_verdict = "ERROR API"
+                                error_api = f"Error interno: {str(e)}"
                     
-                    if error_api: ai_macro = f"⚠️ Fallo conexión IA o Anti-Baneo activo: {error_api}"
-                    elif not backend_api_key: ai_macro = "⚠️ Llave de Gemini no detectada en secrets.toml."
-                    else: ai_macro = "Motor matemático local activo."
+                    if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
+                        score = 5.0
+                        ma50 = hist_data['Close'].tail(50).mean()
+                        ma200 = hist_data['Close'].mean()
+                        if current_price < ma50 and current_price > ma200: score += 2.0; ai_bulls.append("Corrección saludable a corto plazo.")
+                        elif current_price < ma200: score += 3.0; ai_bulls.append("Cotiza bajo su MA200. Descuento profundo.")
+                        elif current_price > ma50 * 1.15: score -= 2.0; ai_bears.append("Sobrecomprado (>15% arriba de la MA50).")
+                        if isinstance(pe_ratio, float):
+                            if pe_ratio < 20: score += 2.0; ai_bulls.append(f"Valuación atractiva (P/E: {pe_ratio:.1f}).")
+                            elif pe_ratio > 40: score -= 1.5; ai_bears.append(f"Valuación exigente/Premium (P/E: {pe_ratio:.1f}).")
+                        if is_owned and p_peso > 20.0: score -= 2.0; ai_bears.append(f"Riesgo de Concentración ({p_peso:.1f}% del portafolio).")
+                        ai_rating = max(1, min(10, int(score)))
+                        ai_verdict = "ZONA DE COMPRA" if ai_rating >= 7 else ("HOLD" if ai_rating >= 4 else "ESPERAR")
+                        
+                        if error_api: ai_macro = f"⚠️ Fallo conexión IA o Anti-Baneo activo: {error_api}"
+                        elif not backend_api_key: ai_macro = "⚠️ Llave de Gemini no detectada en secrets.toml."
+                        else: ai_macro = "Motor matemático local activo."
 
                 score_color = "#00ff88" if ai_rating >= 7 else ("#fbbf24" if ai_rating >= 4 else "#ff3366")
 
@@ -961,95 +969,122 @@ if st.session_state.get("modo_pro_toggle", False):
             else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
     else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
 
-    # FASE 3: MÓDULO DE RIESGO INSTITUCIONAL Y STRESS TEST
+    # FASE 3: MÓDULO DE RIESGO INSTITUCIONAL AVANZADO Y STRESS TEST
     st.markdown("---")
-    st.markdown("<h4 style='color:#8b949e;font-size:0.9rem;' class='notranslate' translate='no'>🛡️ MÓDULO DE GESTIÓN DE RIESGO Y STRESS TEST</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#8b949e;font-size:0.9rem;' class='notranslate' translate='no'>🛡️ MÓDULO CUANTITATIVO DE RIESGO Y CORRELACIÓN</h4>", unsafe_allow_html=True)
     
     if not summary.empty:
-        @st.cache_data(ttl=86400, max_entries=50) # El Beta no cambia tan rápido, se guarda en caché por 24 hrs
-        def get_portfolio_beta(tickers):
-            betas = {}
-            for t in tickers:
-                try:
-                    yf_sym = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
-                    b = yf.Ticker(yf_sym).info.get('beta', None)
-                    betas[t] = b if b is not None else 1.0
-                except: betas[t] = 1.0
-            return betas
-        
-        asset_betas = get_portfolio_beta(summary["ticker"].tolist())
-        summary["beta"] = summary["ticker"].map(asset_betas)
-        port_beta = (summary["ponderacion_pct"] / 100 * summary["beta"]).sum()
-        
-        col_r1, col_r2 = st.columns([1.2, 2])
-        
-        with col_r1:
-            beta_color = "text-neon-red" if port_beta > 1.2 else ("text-neon-cyan" if port_beta < 0.8 else "text-neon-green")
-            beta_desc = "Alta Volatilidad (Agresivo)" if port_beta > 1.2 else ("Baja Volatilidad (Defensivo)" if port_beta < 0.8 else "Volatilidad de Mercado (Neutral)")
-            st.markdown(
-                f"<div class='metric-card notranslate' translate='no' style='margin-bottom:20px;'>"
-                f"<div class='metric-title'>Beta del Portafolio</div>"
-                f"<div class='metric-value {beta_color}'>{port_beta:.2f}</div>"
-                f"<div class='metric-subtext' style='color:#8b949e;'>{beta_desc} frente al S&P 500</div></div>",
-                unsafe_allow_html=True
-            )
-            
-            st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Simulador de Estrés del Mercado</p>", unsafe_allow_html=True)
-            stress_drop = st.slider("Si el S&P 500 cae...", min_value=-50, max_value=0, value=-20, step=5, format="%d%%")
-            simulated_drop = stress_drop * port_beta
-            simulated_loss = total_portafolio * (simulated_drop / 100)
-            
-            st.markdown(
-                f"<div style='background:#11131c;border:1px solid #ff3366;border-radius:8px;padding:15px;margin-top:10px;'>"
-                f"<p style='color:#8b949e;font-size:0.75rem;margin-bottom:5px;text-transform:uppercase;'>Impacto Matemático Estimado</p>"
-                f"<h3 style='color:#ff3366;margin:0;'>${simulated_loss:,.2f} MXN ({simulated_drop:+.2f}%)</h3>"
-                f"</div>", unsafe_allow_html=True
-            )
-            
-        with col_r2:
-            st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:10px;font-weight:bold;'>Plan de Contingencia Táctica (IA)</p>", unsafe_allow_html=True)
-            if st.button("🧠 Generar Protocolo de Emergencia con Gemini", use_container_width=True):
-                with st.spinner("Calculando exposición al riesgo y redactando plan táctico..."):
-                    backend_api_key = None
-                    try: backend_api_key = st.secrets["GEMINI_API_KEY"]
-                    except Exception: pass
-                    
-                    if backend_api_key:
-                        try:
-                            import requests
-                            clean_key = str(backend_api_key).strip()
-                            headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
-                            
-                            assets_list = ", ".join(summary["ticker"].tolist())
-                            prompt_risk = f"""
-                            Eres el CIO de un Multi-Family Office. El portafolio del cliente tiene un Beta de {port_beta:.2f}.
-                            Activos actuales: {assets_list}.
-                            Escenario de crisis: El índice S&P 500 acaba de caer {stress_drop}%. Por tu nivel de Beta, el portafolio caería un {simulated_drop:.2f}%.
-                            
-                            Instrucción: Genera un 'Plan de Contingencia Táctico' de emergencia. Sé directo, frío y cuantitativo.
-                            
-                            Usa estrictamente este formato (sin usar markdown como asteriscos, usa texto limpio):
-                            DIAGNÓSTICO DE EXPOSICIÓN: [Una línea sobre qué tan fuerte le pega la caída a sus activos actuales]
-                            OPORTUNIDAD DCA: [Qué activos de su lista debería promediar a la baja agresivamente porque están en descuento]
-                            REFUGIO TÁCTICO: [Qué debería hacer con su liquidez para protegerse]
-                            """
-                            
-                            payload = {"contents": [{"parts": [{"text": prompt_risk}]}], "generationConfig": {"temperature": 0.2}}
-                            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-                            response = requests.post(url, headers=headers, json=payload)
-                            
-                            if response.status_code == 200:
-                                ai_contingency = response.json()['candidates'][0]['content']['parts'][0]['text']
-                                st.success("✅ Protocolo de Crisis Generado.")
-                                st.markdown(f"<div style='background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.2);padding:15px;border-radius:8px;'><p style='color:#e5e7eb;font-size:0.95rem;line-height:1.6;white-space:pre-wrap;'>{ai_contingency}</p></div>", unsafe_allow_html=True)
-                            else:
-                                st.error(f"Error en API: {response.status_code}")
-                        except Exception as e:
-                            st.error(f"Error interno: {e}")
+        @st.cache_data(ttl=86400, max_entries=50) 
+        def get_advanced_risk_metrics(tickers):
+            try:
+                yf_tickers = ["BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t) for t in tickers]
+                data = yf.download(yf_tickers, period="1y", progress=False)
+                if 'Close' in data:
+                    close_data = data['Close']
+                    if isinstance(close_data, pd.Series): close_data = pd.DataFrame({tickers[0]: close_data})
                     else:
-                        st.warning("No hay API Key configurada para llamar a la Inteligencia Artificial.")
+                        name_map = dict(zip(yf_tickers, tickers))
+                        close_data.rename(columns=name_map, inplace=True)
+                    returns = close_data.pct_change().dropna()
+                    
+                    betas = {}
+                    for yf_sym, real_t in zip(yf_tickers, tickers):
+                        try: b = yf.Ticker(yf_sym).info.get('beta', 1.0)
+                        except: b = 1.0
+                        betas[real_t] = b if b is not None else 1.0
+                        
+                    return returns, betas
+                return pd.DataFrame(), {}
+            except: return pd.DataFrame(), {}
+        
+        tickers_list = summary["ticker"].tolist()
+        returns_df, asset_betas = get_advanced_risk_metrics(tickers_list)
+        
+        if not returns_df.empty:
+            summary["beta"] = summary["ticker"].map(asset_betas)
+            port_beta = (summary["ponderacion_pct"] / 100 * summary["beta"]).sum()
+            
+            # Cálculos Institucionales (VaR, Sharpe, Max DD)
+            weights = (summary.set_index("ticker")["ponderacion_pct"] / 100).to_dict()
+            port_returns = pd.Series(0.0, index=returns_df.index)
+            for t in returns_df.columns:
+                if t in weights: port_returns += returns_df[t] * weights[t]
+            
+            rf = 0.05
+            ann_ret = port_returns.mean() * 252
+            ann_vol = port_returns.std() * np.sqrt(252)
+            sharpe_ratio = (ann_ret - rf) / ann_vol if ann_vol > 0 else 0
+            
+            var_95_pct = np.percentile(port_returns, 5) * 100
+            var_95_mxn = total_portafolio * (abs(var_95_pct) / 100)
+            
+            cum_rets = (1 + port_returns).cumprod()
+            rolling_max = cum_rets.cummax()
+            drawdowns = (cum_rets - rolling_max) / rolling_max
+            max_dd = drawdowns.min() * 100
+
+            # Fila 1: KPIs Cuantitativos
+            col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+            beta_c = "text-neon-red" if port_beta > 1.2 else ("text-neon-cyan" if port_beta < 0.8 else "text-neon-green")
+            col_k1.markdown(f"<div class='metric-card'><div class='metric-title'>Beta (Volatilidad)</div><div class='metric-value {beta_c}'>{port_beta:.2f}</div><div class='metric-subtext'>Vs S&P 500</div></div>", unsafe_allow_html=True)
+            
+            sharpe_c = "text-neon-green" if sharpe_ratio > 1 else ("text-neon-gold" if sharpe_ratio > 0.5 else "text-neon-red")
+            col_k2.markdown(f"<div class='metric-card'><div class='metric-title'>Sharpe Ratio</div><div class='metric-value {sharpe_c}'>{sharpe_ratio:.2f}</div><div class='metric-subtext'>Rendimiento / Riesgo</div></div>", unsafe_allow_html=True)
+            
+            col_k3.markdown(f"<div class='metric-card'><div class='metric-title'>Max Drawdown (1Y)</div><div class='metric-value text-neon-red'>{max_dd:.1f}%</div><div class='metric-subtext'>Peor caída histórica</div></div>", unsafe_allow_html=True)
+            
+            col_k4.markdown(f"<div class='metric-card'><div class='metric-title'>Value at Risk (95%)</div><div class='metric-value text-neon-purple'>${var_95_mxn:,.0f}</div><div class='metric-subtext'>Pérdida máxima esperada diaria</div></div>", unsafe_allow_html=True)
+
+            # Fila 2: Stress Test & Correlación
+            st.markdown("<br>", unsafe_allow_html=True)
+            col_r1, col_r2 = st.columns([1, 1.5])
+            
+            with col_r1:
+                st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Simulador de Estrés del Mercado</p>", unsafe_allow_html=True)
+                stress_drop = st.slider("Si el S&P 500 cae...", min_value=-50, max_value=0, value=-20, step=5, format="%d%%")
+                simulated_drop = stress_drop * port_beta
+                simulated_loss = total_portafolio * (simulated_drop / 100)
+                
+                st.markdown(
+                    f"<div style='background:#11131c;border:1px solid #ff3366;border-radius:8px;padding:15px;margin-top:10px;'>"
+                    f"<p style='color:#8b949e;font-size:0.75rem;margin-bottom:5px;text-transform:uppercase;'>Impacto Matemático Estimado</p>"
+                    f"<h3 style='color:#ff3366;margin:0;'>${simulated_loss:,.2f} MXN ({simulated_drop:+.2f}%)</h3>"
+                    f"</div>", unsafe_allow_html=True
+                )
+                
+                st.markdown("<br><p style='color:#8b949e;font-size:0.85rem;margin-bottom:10px;font-weight:bold;'>Plan de Contingencia Táctica (IA)</p>", unsafe_allow_html=True)
+                if st.button("🧠 Generar Protocolo de Emergencia", use_container_width=True):
+                    with st.spinner("Calculando exposición al riesgo y redactando plan táctico..."):
+                        backend_api_key = None
+                        try: backend_api_key = st.secrets["GEMINI_API_KEY"]
+                        except: pass
+                        if backend_api_key:
+                            try:
+                                import requests
+                                headers = {'Content-Type': 'application/json', 'x-goog-api-key': str(backend_api_key).strip()}
+                                assets_list = ", ".join(tickers_list)
+                                prompt_risk = f"Eres el CIO de un Multi-Family Office. Portafolio Beta: {port_beta:.2f}. Activos: {assets_list}. Escenario: S&P 500 cae {stress_drop}%. Portafolio cae {simulated_drop:.2f}%. Genera 'Plan de Contingencia Táctico'. Usa formato: \nDIAGNÓSTICO DE EXPOSICIÓN: [Texto]\nOPORTUNIDAD DCA: [Texto]\nREFUGIO TÁCTICO: [Texto]"
+                                payload = {"contents": [{"parts": [{"text": prompt_risk}]}], "generationConfig": {"temperature": 0.2}}
+                                response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", headers=headers, json=payload)
+                                if response.status_code == 200:
+                                    st.session_state["contingency_plan"] = response.json()['candidates'][0]['content']['parts'][0]['text']
+                            except Exception as e: st.error(f"Error: {e}")
+                
+                # Memoria del Plan de Contingencia
+                if st.session_state.get("contingency_plan"):
+                    st.markdown(f"<div style='background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.2);padding:15px;border-radius:8px;margin-top:10px;'><p style='color:#e5e7eb;font-size:0.9rem;line-height:1.6;white-space:pre-wrap;'>{st.session_state['contingency_plan']}</p></div>", unsafe_allow_html=True)
+
+            with col_r2:
+                st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Matriz de Correlación (Diversificación Real)</p>", unsafe_allow_html=True)
+                if len(tickers_list) > 1:
+                    corr_matrix = returns_df.corr()
+                    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
+                    fig_corr.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10,b=10,l=10,r=10), height=350)
+                    st.plotly_chart(fig_corr, use_container_width=True)
+                else:
+                    st.info("Necesitas al menos 2 activos en tu portafolio para generar el mapa de calor de correlación.")
     else:
-        st.info("💡 Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo (Beta).")
+        st.info("💡 Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
 
     # 11. SMART DCA Y SEMÁFORO DE REBALANCEO
     st.markdown("---")
