@@ -9,8 +9,8 @@ import re
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(
-    page_title="Apportafolio | Fintech",
-    page_icon="📱",
+    page_title="Apportafolio | Tactical HUD",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -75,63 +75,81 @@ if st.session_state["user_id"] is None:
 
 
 # ==========================================
-# APP PRINCIPAL (ESTILO C: NEO-BRÓKER / FINTECH)
+# APP PRINCIPAL (ESTILO D: HUD CINEMÁTICO)
 # ==========================================
 
-# CSS GLOBAL IOS/ROBINHOOD VIBE
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
 
-/* Fondo Negro y tipografía Inter limpia */
+/* Fondo Negro con Grid Táctico (Cuadrícula fina) */
 [data-testid="stAppViewContainer"], .stApp { 
-    background-color: #000000 !important; 
-    font-family: 'Inter', sans-serif !important; 
+    background-color: #050505 !important; 
+    background-image: 
+        linear-gradient(rgba(255, 215, 0, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 215, 0, 0.04) 1px, transparent 1px) !important;
+    background-size: 40px 40px !important;
+    font-family: 'Space Mono', monospace !important; 
     color: #ffffff;
 }
 header[data-testid="stHeader"] { background-color: transparent !important; }
 
-/* Estilo de Pestañas: Pastillas iOS Segmented Control */
+/* Estilo de Pestañas: Consola Militar */
 div[data-testid="stTabs"] button {
-    background-color: #1c1c1e !important;
-    border-radius: 20px !important;
-    border: none !important;
-    color: #8e8e93 !important;
-    padding: 8px 18px !important;
-    font-weight: 600 !important;
-    font-size: 0.95rem !important;
-    margin-right: 10px !important;
+    background-color: transparent !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 0px !important;
+    color: #71717a !important;
+    padding: 8px 16px !important;
+    font-family: 'Space Mono', monospace !important;
+    font-weight: 700 !important;
+    font-size: 0.8rem !important;
+    margin-right: 8px !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
     transition: all 0.2s ease;
 }
 div[data-testid="stTabs"] button[aria-selected="true"] {
-    background-color: #2c2c2e !important;
+    background-color: rgba(255, 51, 102, 0.1) !important;
+    border: 1px solid #ff3366 !important; /* Acento Rojo Neón */
     color: #ffffff !important;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.5) !important;
+    box-shadow: inset 0 0 10px rgba(255,51,102,0.2) !important;
 }
 
-/* Tarjetas Móviles: Estilo Apple Wallet (Redondeadas y Suaves) */
+/* Tarjetas HUD: Cuadradas, transparentes, con esquinas marcadas */
 .m-card {
-    background: #1c1c1e;
-    border-radius: 24px;
-    padding: 24px;
-    margin-bottom: 16px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    background: rgba(5, 5, 5, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0px;
+    padding: 25px 20px;
+    margin-bottom: 20px;
+    position: relative;
+    box-shadow: 0 15px 30px rgba(0,0,0,0.9);
 }
-.m-title { color: #8e8e93; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;}
-.m-val { font-size: 2.6rem; font-weight: 800; color: #ffffff; letter-spacing: -1.5px; line-height: 1.1; }
-.m-sub { font-size: 0.95rem; margin-top: 8px; font-weight: 600; color: #8e8e93;}
+/* Esquinas de mira (Crosshairs) */
+.m-card::before {
+    content: ''; position: absolute; top: -1px; left: -1px; width: 12px; height: 12px;
+    border-top: 2px solid #ffd700; border-left: 2px solid #ffd700; /* Oro HUD */
+}
+.m-card::after {
+    content: ''; position: absolute; bottom: -1px; right: -1px; width: 12px; height: 12px;
+    border-bottom: 2px solid #ffd700; border-right: 2px solid #ffd700;
+}
 
-/* Colores iOS (Menta, Coral, Azul) */
-.c-grn { color: #30d158; } 
-.c-red { color: #ff453a; } 
-.c-blu { color: #0a84ff; } 
-.c-pur { color: #bf5af2; }
+.m-title { color: #a1a1aa; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 5px; font-family: 'Space Mono', monospace;}
+.m-val { font-family: 'Bebas Neue', sans-serif; font-size: 3.5rem; color: #ffffff; letter-spacing: 1.5px; line-height: 0.95; margin: 10px 0;}
+.m-sub { font-size: 0.7rem; font-weight: 400; color: #71717a; text-transform: uppercase; letter-spacing: 1px; font-family: 'Space Mono', monospace;}
+
+/* Colores Neón Táctico */
+.c-grn { color: #00ff88; text-shadow: 0 0 10px rgba(0,255,136,0.3); } 
+.c-red { color: #ff3366; text-shadow: 0 0 10px rgba(255,51,102,0.3); } 
+.c-gld { color: #ffd700; } 
 </style>
 """, unsafe_allow_html=True)
 
 # SIDEBAR TÁCTICO
-st.sidebar.markdown("**HOLA, ALEX** 👋")
-if st.sidebar.button("Cerrar Sesión", use_container_width=True):
+st.sidebar.markdown("**ID:** `ALEX_ADMIN`")
+if st.sidebar.button("CERRAR SESIÓN", use_container_width=True):
     st.session_state["user_id"] = None
     st.rerun()
 
@@ -142,41 +160,39 @@ pnl_glob = 120500.20
 ret_glob = 15.4
 salario_inv = 18400.00
 
-# TICKER TAPE (Burbuja Flotante)
-t_html = "<marquee behavior='scroll' direction='left' scrollamount='5' style='font-family: \"Inter\", sans-serif; font-size: 0.9rem; padding: 12px 20px; color:#8e8e93; font-weight:600;'>"
-t_html += f"S&P 500: <span style='color:#ffffff;'>5,120</span> <span style='color:#30d158;'>(+1.2%)</span> &nbsp;&nbsp;🔥&nbsp;&nbsp; NASDAQ: <span style='color:#ffffff;'>16,200</span> <span style='color:#30d158;'>(+1.5%)</span> &nbsp;&nbsp;🚀&nbsp;&nbsp; USD/MXN: <span style='color:#ffffff;'>17.05</span> <span style='color:#ff453a;'>(-0.4%)</span> &nbsp;&nbsp;💎&nbsp;&nbsp; BTC: <span style='color:#ffffff;'>$68K</span> <span style='color:#30d158;'>(+2.1%)</span>"
+# TICKER TAPE (Banda Inferior estilo Película)
+t_html = "<marquee behavior='scroll' direction='left' scrollamount='6' style='font-family: \"Space Mono\", monospace; font-size: 0.75rem; padding: 10px; color:#a1a1aa; font-weight:700; text-transform: uppercase; letter-spacing: 2px;'>"
+t_html += f"SYS_DATA FEED: <span style='color:#ffd700;'>[ ACTIVO ]</span> &nbsp;&nbsp;//&nbsp;&nbsp; SPX: <span style='color:#ffffff;'>5120.40</span> <span style='color:#00ff88;'>(+1.2%)</span> &nbsp;&nbsp;//&nbsp;&nbsp; NDX: <span style='color:#ffffff;'>16200.10</span> <span style='color:#00ff88;'>(+1.5%)</span> &nbsp;&nbsp;//&nbsp;&nbsp; USD/MXN: <span style='color:#ffffff;'>17.05</span> <span style='color:#ff3366;'>(-0.4%)</span> &nbsp;&nbsp;//&nbsp;&nbsp; BTC: <span style='color:#ffffff;'>68400.00</span> <span style='color:#00ff88;'>(+2.1%)</span>"
 t_html += "</marquee>"
-st.markdown(f"<div style='background:#1c1c1e; border-radius:30px; margin-bottom: 25px; margin-top:-20px;'>{t_html}</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='border-bottom:1px solid rgba(255,255,255,0.1); border-top:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.8); margin-bottom: 25px; margin-top:-25px;'>{t_html}</div>", unsafe_allow_html=True)
 
 # TABS NATIVAS
-tab1, tab2, tab3, tab4 = st.tabs(["Cartera", "Radar V5", "Riesgo", "Historial"])
+tab1, tab2, tab3, tab4 = st.tabs(["[ GLOBAL ]", "[ RADAR ]", "[ RIESGO ]", "[ LOGS ]"])
 
 with tab1:
-    # Tarjeta Principal Gigante
     c_pnl = "c-grn" if pnl_glob >= 0 else "c-red"
-    st.markdown(f"<div class='m-card' style='text-align:center;'><div class='m-title'>Balance Total</div><div class='m-val'>${tot_portafolio:,.2f}</div><div class='m-sub {c_pnl}'>+${pnl_glob:,.0f} ({ret_glob}%) Todo el tiempo</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='m-card'><div class='m-title'>CAPITAL NETO</div><div class='m-val'>${tot_portafolio:,.2f}</div><div class='m-sub c-gld'>LIQUIDEZ_DISP:${liquidez_mxn:,.0f}</div></div>", unsafe_allow_html=True)
     
     c1, c2 = st.columns(2)
-    c1.markdown(f"<div class='m-card'><div class='m-title'>Poder de Compra</div><div class='m-val' style='font-size:1.8rem;'>${liquidez_mxn:,.0f}</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='m-card'><div class='m-title'>Ingreso Pasivo</div><div class='m-val c-blu' style='font-size:1.8rem;'>${salario_inv:,.0f}</div></div>", unsafe_allow_html=True)
+    c1.markdown(f"<div class='m-card'><div class='m-title'>P&L ACUM.</div><div class='m-val {c_pnl}' style='font-size:2.4rem;'>${pnl_glob:+,.0f}</div><div class='m-sub {c_pnl}'>ROI: {ret_glob}%</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='m-card'><div class='m-title'>FLUJO PASIVO</div><div class='m-val c-gld' style='font-size:2.4rem;'>${salario_inv:,.0f}</div><div class='m-sub'>YIELD ANUAL</div></div>", unsafe_allow_html=True)
 
-    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:20px; margin-bottom:15px; font-weight:800;'>Tus Movimientos ⚡</h4>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#71717a; font-size:0.65rem; text-transform:uppercase; letter-spacing:3px; margin-top:20px; font-weight:700;'>// ATRIBUCIÓN TÁCTICA</p>", unsafe_allow_html=True)
     ch1, ch2 = st.columns(2)
-    ch1.markdown(f"<div class='m-card'><div class='m-title c-grn'>Top Activo</div><div class='m-val' style='font-size:1.5rem;'>NVDA</div><div class='m-sub c-grn'>+$35,200</div></div>", unsafe_allow_html=True)
-    ch2.markdown(f"<div class='m-card'><div class='m-title c-red'>A la baja</div><div class='m-val' style='font-size:1.5rem;'>TSLA</div><div class='m-sub c-red'>-$4,100</div></div>", unsafe_allow_html=True)
+    ch1.markdown(f"<div class='m-card' style='border-color:rgba(0,255,136,0.3);'><div class='m-title c-grn'>TOP MOVER</div><div class='m-val' style='font-size:2.2rem;'>NVDA</div><div class='m-sub c-grn'>+ $35,200.00</div></div>", unsafe_allow_html=True)
+    ch2.markdown(f"<div class='m-card' style='border-color:rgba(255,51,102,0.3);'><div class='m-title c-red'>UNDERPERFORMER</div><div class='m-val' style='font-size:2.2rem;'>TSLA</div><div class='m-sub c-red'>- $4,100.00</div></div>", unsafe_allow_html=True)
 
 with tab2:
-    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:10px; margin-bottom:15px; font-weight:800;'>Inteligencia Artificial</h4>", unsafe_allow_html=True)
-    sel_as = st.selectbox("Selecciona un activo para analizar:", ["Apple (AAPL)", "Microsoft (MSFT)", "S&P 500 (VOO)"], label_visibility="collapsed")
-    st.markdown(f"<div class='m-card'><div class='m-title'>Veredicto: {sel_as}</div><div class='m-val c-blu' style='font-size:2rem;'>ZONA DE COMPRA <span style='font-size:1.2rem; color:#8e8e93;'>(8/10)</span></div><div class='m-sub' style='color:#ffffff; margin-top:15px;'>El activo presenta una valuación atractiva frente a su media móvil de 200 días. Sugerimos hacer DCA agresivo.</div></div>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#71717a; font-size:0.65rem; text-transform:uppercase; letter-spacing:3px; margin-top:10px; font-weight:700;'>// ALGORITMO V5</p>", unsafe_allow_html=True)
+    sel_as = st.selectbox("IDENTIFICADOR DE ACTIVO:", ["AAPL", "MSFT", "VOO", "BTC"], label_visibility="collapsed")
+    st.markdown(f"<div class='m-card' style='border-left: 4px solid #00ff88;'><div class='m-title'>STATUS: {sel_as}</div><div class='m-val c-grn' style='font-size:2.8rem;'>ZONA DE COMPRA <span style='font-size:1.2rem; color:#71717a; font-family:\"Space Mono\";'>(8/10)</span></div><div class='m-sub' style='color:#d4d4d8; margin-top:10px; line-height: 1.5; text-transform:none;'>Valuación detectada por debajo de la media móvil 200. Riesgo asimétrico favorable para acumulación táctica.</div></div>", unsafe_allow_html=True)
 
 with tab3:
-    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:10px; margin-bottom:15px; font-weight:800;'>Salud del Portafolio</h4>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#71717a; font-size:0.65rem; text-transform:uppercase; letter-spacing:3px; margin-top:10px; font-weight:700;'>// MATRIZ DE RIESGO</p>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    c1.markdown(f"<div class='m-card'><div class='m-title'>Volatilidad</div><div class='m-val c-pur' style='font-size:1.8rem;'>0.85 Beta</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='m-card'><div class='m-title'>Max Riesgo Diario</div><div class='m-val c-red' style='font-size:1.8rem;'>$24,000 VaR</div></div>", unsafe_allow_html=True)
+    c1.markdown(f"<div class='m-card'><div class='m-title'>VOLATILIDAD (BETA)</div><div class='m-val c-gld' style='font-size:2.5rem;'>0.85</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='m-card'><div class='m-title'>MAX DD. (VaR)</div><div class='m-val c-red' style='font-size:2.5rem;'>$24K</div></div>", unsafe_allow_html=True)
 
 with tab4:
-    st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-top:10px; margin-bottom:15px; font-weight:800;'>Actividad Reciente</h4>", unsafe_allow_html=True)
-    st.markdown(f"<div class='m-card' style='padding:15px 24px;'><div style='display:flex; justify-content:space-between;'><div style='font-weight:600; color:#ffffff;'>Compra VOO</div><div class='c-red'>-$6,933.00</div></div><div class='m-sub'>Ayer</div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='m-card' style='padding:15px 24px;'><div style='display:flex; justify-content:space-between;'><div style='font-weight:600; color:#ffffff;'>Dividendo FIBRAMQ</div><div class='c-grn'>+$1,200.00</div></div><div class='m-sub'>Hace 2 días</div></div>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#71717a; font-size:0.65rem; text-transform:uppercase; letter-spacing:3px; margin-top:10px; font-weight:700;'>// HISTORIAL DE EJECUCIÓN</p>", unsafe_allow_html=True)
+    st.markdown(f"<div class='m-card' style='padding:20px;'><div class='m-sub' style='text-transform:none; line-height:1.8; color:#a1a1aa;'>> [24-MAR 10:15] <span style='color:#ffffff;'>EJECUCIÓN: COMPRA VOO</span> <span style='color:#ff3366;'>(-$6,933)</span><br>> [23-MAR 09:00] <span style='color:#ffffff;'>COBRO: DIV. FIBRAMQ</span> <span style='color:#00ff88;'>(+$1,200)</span><br>> [20-MAR 14:30] <span style='color:#ffffff;'>FONDEO: TESORERIA</span> <span style='color:#00ff88;'>(+$10,000)</span></div></div>", unsafe_allow_html=True)
