@@ -11,7 +11,7 @@ from datetime import datetime
 import json
 import re
 import io
-import time  # NUEVO: Importado para el Escudo Anti-Baneo
+import time
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(
@@ -43,10 +43,9 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #e5e7eb; }
 #MainMenu {visibility: hidden;} footer {visibility: hidden;}
 </style>""", unsafe_allow_html=True)
 
-# NUEVO: Escudo Anti-Hackeos Básicos (Regex)
+# Escudo Anti-Hackeos Básicos (Regex)
 def sanitize_ticker(t_str):
     if not t_str: return ""
-    # Solo permite letras mayúsculas, números, guiones, puntos y signos de igual
     return re.sub(r'[^A-Z0-9\-\=\.]', '', str(t_str).upper().strip())
 
 # PROMPT MAESTRO V5
@@ -105,6 +104,14 @@ ASSET_SECTOR = {
     "GOOGL": "Servicios de Comunicación", "MELI": "Comercio Electrónico", "NOW": "Software B2B",
     "ASML": "Semiconductores", "NVO": "Biotecnología / Salud", "MA": "Servicios Financieros", "V": "Servicios Financieros", "BTC": "Criptoactivos"
 }
+
+# FASE 2: Obtenedor de Dólar en Vivo (Caché protegido)
+@st.cache_data(ttl=300, max_entries=50)
+def get_live_usd():
+    try: return float(yf.Ticker("MXN=X").fast_info.last_price)
+    except: return 19.50 # Fallback de seguridad
+
+live_usd_rate = get_live_usd()
 
 # 3. BASE DE DATOS POSTGRESQL (NUBE)
 def get_connection(): 
@@ -205,7 +212,7 @@ if st.sidebar.button("🔒 Cerrar Sesión", use_container_width=True):
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 👁️ Experiencia de Usuario")
-st.sidebar.toggle("🔬 Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, etc).")
+st.sidebar.toggle("🔬 Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
 
 with st.sidebar.expander("⚙️ Estrategia y Perfil", expanded=False):
     st.markdown("<p style='font-size:0.8rem; color:#8b949e;'>Personaliza tu experiencia financiera.</p>", unsafe_allow_html=True)
@@ -311,7 +318,8 @@ if active_client_id == "USR-001":
             f_precio = st.number_input("Precio Unitario", min_value=0.0, value=val_p, format="%.2f", step=1.0)
             f_comision = st.number_input("Comisión", min_value=0.0, format="%.2f")
             f_iva = st.number_input("IVA", min_value=0.0, format="%.3f")
-            f_tc = st.number_input("Tipo de Cambio", min_value=1.0, value=17.60, format="%.2f")
+            # FASE 2 APLICADA: Valor del dólar en vivo
+            f_tc = st.number_input("Tipo de Cambio (Live)", min_value=1.0, value=live_usd_rate, format="%.4f")
             f_fecha = st.date_input("Fecha", value=datetime.today())
             
             if st.form_submit_button("Ejecutar Operación", use_container_width=True):
@@ -385,7 +393,6 @@ def calc_liquidez_real(df_caja):
 
 liquidez_mxn = calc_liquidez_real(cash_df)
 
-# NUEVO: max_entries=50 (Límite de RAM)
 @st.cache_data(ttl=300, max_entries=50)
 def get_prices_and_sparklines(tickers, fallback):
     yf_tickers = []
@@ -468,7 +475,6 @@ if not summary.empty: summary["ponderacion_pct"] = (summary["valor_actual"] / to
 else: summary["ponderacion_pct"] = 0.0
 
 # 6. TICKER TAPE Y MACROECONOMÍA
-# NUEVO: max_entries=50 (Límite de RAM)
 @st.cache_data(ttl=300, max_entries=50)
 def get_market_data():
     symbols = {"S&P 500": "^GSPC", "Nasdaq": "^IXIC", "Dow": "^DJI", "Oro": "GC=F", "Plata": "SI=F", "Petróleo WTI": "CL=F", "USD/MXN": "MXN=X", "EUR/MXN": "EURMXN=X", "BTC/USD": "BTC-USD"}
@@ -733,7 +739,6 @@ if st.session_state.get("modo_pro_toggle", False):
             target_asset = sanitize_ticker(selected_asset)
 
         if target_asset:
-            # NUEVO: max_entries=50 (Límite de RAM)
             @st.cache_data(ttl=3600, max_entries=50)
             def fetch_asset_deep_dive(t):
                 try:
@@ -789,7 +794,6 @@ if st.session_state.get("modo_pro_toggle", False):
 
                 error_api = ""
                 if backend_api_key:
-                    # NUEVO: Semáforo Anti-Baneo de IA
                     current_time = time.time()
                     last_call = st.session_state.get("last_gemini_call", 0)
                     time_left = 30.0 - (current_time - last_call)
@@ -802,10 +806,8 @@ if st.session_state.get("modo_pro_toggle", False):
                         st.session_state["last_gemini_call"] = current_time
                         try:
                             import requests
-                            # 1. Limpiamos la llave
                             clean_key = str(backend_api_key).strip()
                             
-                            # 2. La enviamos por el túnel seguro
                             headers = {
                                 'Content-Type': 'application/json',
                                 'x-goog-api-key': clean_key
@@ -823,7 +825,6 @@ if st.session_state.get("modo_pro_toggle", False):
                                 "generationConfig": {"temperature": 0.2}
                             }
                             
-                            # 3. Llamada al API
                             url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
                             response = requests.post(url, headers=headers, json=payload)
                             
@@ -959,6 +960,96 @@ if st.session_state.get("modo_pro_toggle", False):
                     )
             else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
     else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
+
+    # FASE 3: MÓDULO DE RIESGO INSTITUCIONAL Y STRESS TEST
+    st.markdown("---")
+    st.markdown("<h4 style='color:#8b949e;font-size:0.9rem;' class='notranslate' translate='no'>🛡️ MÓDULO DE GESTIÓN DE RIESGO Y STRESS TEST</h4>", unsafe_allow_html=True)
+    
+    if not summary.empty:
+        @st.cache_data(ttl=86400, max_entries=50) # El Beta no cambia tan rápido, se guarda en caché por 24 hrs
+        def get_portfolio_beta(tickers):
+            betas = {}
+            for t in tickers:
+                try:
+                    yf_sym = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
+                    b = yf.Ticker(yf_sym).info.get('beta', None)
+                    betas[t] = b if b is not None else 1.0
+                except: betas[t] = 1.0
+            return betas
+        
+        asset_betas = get_portfolio_beta(summary["ticker"].tolist())
+        summary["beta"] = summary["ticker"].map(asset_betas)
+        port_beta = (summary["ponderacion_pct"] / 100 * summary["beta"]).sum()
+        
+        col_r1, col_r2 = st.columns([1.2, 2])
+        
+        with col_r1:
+            beta_color = "text-neon-red" if port_beta > 1.2 else ("text-neon-cyan" if port_beta < 0.8 else "text-neon-green")
+            beta_desc = "Alta Volatilidad (Agresivo)" if port_beta > 1.2 else ("Baja Volatilidad (Defensivo)" if port_beta < 0.8 else "Volatilidad de Mercado (Neutral)")
+            st.markdown(
+                f"<div class='metric-card notranslate' translate='no' style='margin-bottom:20px;'>"
+                f"<div class='metric-title'>Beta del Portafolio</div>"
+                f"<div class='metric-value {beta_color}'>{port_beta:.2f}</div>"
+                f"<div class='metric-subtext' style='color:#8b949e;'>{beta_desc} frente al S&P 500</div></div>",
+                unsafe_allow_html=True
+            )
+            
+            st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Simulador de Estrés del Mercado</p>", unsafe_allow_html=True)
+            stress_drop = st.slider("Si el S&P 500 cae...", min_value=-50, max_value=0, value=-20, step=5, format="%d%%")
+            simulated_drop = stress_drop * port_beta
+            simulated_loss = total_portafolio * (simulated_drop / 100)
+            
+            st.markdown(
+                f"<div style='background:#11131c;border:1px solid #ff3366;border-radius:8px;padding:15px;margin-top:10px;'>"
+                f"<p style='color:#8b949e;font-size:0.75rem;margin-bottom:5px;text-transform:uppercase;'>Impacto Matemático Estimado</p>"
+                f"<h3 style='color:#ff3366;margin:0;'>${simulated_loss:,.2f} MXN ({simulated_drop:+.2f}%)</h3>"
+                f"</div>", unsafe_allow_html=True
+            )
+            
+        with col_r2:
+            st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:10px;font-weight:bold;'>Plan de Contingencia Táctica (IA)</p>", unsafe_allow_html=True)
+            if st.button("🧠 Generar Protocolo de Emergencia con Gemini", use_container_width=True):
+                with st.spinner("Calculando exposición al riesgo y redactando plan táctico..."):
+                    backend_api_key = None
+                    try: backend_api_key = st.secrets["GEMINI_API_KEY"]
+                    except Exception: pass
+                    
+                    if backend_api_key:
+                        try:
+                            import requests
+                            clean_key = str(backend_api_key).strip()
+                            headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
+                            
+                            assets_list = ", ".join(summary["ticker"].tolist())
+                            prompt_risk = f"""
+                            Eres el CIO de un Multi-Family Office. El portafolio del cliente tiene un Beta de {port_beta:.2f}.
+                            Activos actuales: {assets_list}.
+                            Escenario de crisis: El índice S&P 500 acaba de caer {stress_drop}%. Por tu nivel de Beta, el portafolio caería un {simulated_drop:.2f}%.
+                            
+                            Instrucción: Genera un 'Plan de Contingencia Táctico' de emergencia. Sé directo, frío y cuantitativo.
+                            
+                            Usa estrictamente este formato (sin usar markdown como asteriscos, usa texto limpio):
+                            DIAGNÓSTICO DE EXPOSICIÓN: [Una línea sobre qué tan fuerte le pega la caída a sus activos actuales]
+                            OPORTUNIDAD DCA: [Qué activos de su lista debería promediar a la baja agresivamente porque están en descuento]
+                            REFUGIO TÁCTICO: [Qué debería hacer con su liquidez para protegerse]
+                            """
+                            
+                            payload = {"contents": [{"parts": [{"text": prompt_risk}]}], "generationConfig": {"temperature": 0.2}}
+                            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 200:
+                                ai_contingency = response.json()['candidates'][0]['content']['parts'][0]['text']
+                                st.success("✅ Protocolo de Crisis Generado.")
+                                st.markdown(f"<div style='background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.2);padding:15px;border-radius:8px;'><p style='color:#e5e7eb;font-size:0.95rem;line-height:1.6;white-space:pre-wrap;'>{ai_contingency}</p></div>", unsafe_allow_html=True)
+                            else:
+                                st.error(f"Error en API: {response.status_code}")
+                        except Exception as e:
+                            st.error(f"Error interno: {e}")
+                    else:
+                        st.warning("No hay API Key configurada para llamar a la Inteligencia Artificial.")
+    else:
+        st.info("💡 Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo (Beta).")
 
     # 11. SMART DCA Y SEMÁFORO DE REBALANCEO
     st.markdown("---")
