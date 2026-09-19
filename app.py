@@ -148,17 +148,20 @@ init_db()
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 if st.session_state["user_id"] is None:
-    # --- CSS EXCLUSIVO PORTADA 2 (Silicon Valley Glass) ---
+    # --- CSS EXCLUSIVO PORTADA 2.1 (Silicon Valley Glass CORREGIDO) ---
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap');
     
-    /* 1. Fondo Degradado Animado (Estilo Silicon Valley Dark) */
-    .stApp {
-        background: linear-gradient(-45deg, #0f172a, #1e293b, #020617, #0f172a) !important;
+    /* 1. Fondo Degradado Animado (Corregido para forzar a Streamlit) */
+    [data-testid="stAppViewContainer"], .stApp {
+        background: linear-gradient(-45deg, #0f172a, #1d4ed8, #4c1d95, #0f172a) !important;
         background-size: 400% 400% !important;
-        animation: gradientBG 15s ease infinite !important;
+        animation: gradientBG 12s ease infinite !important;
     }
+    
+    /* Ocultar elementos por defecto de Streamlit que tapan el fondo */
+    [data-testid="stHeader"] { background: transparent !important; }
     
     @keyframes gradientBG {
         0% { background-position: 0% 50%; }
@@ -170,74 +173,77 @@ if st.session_state["user_id"] is None:
     .portada-title {
         font-family: 'Inter', sans-serif;
         font-weight: 700;
-        font-size: 3.2rem;
+        font-size: 3.5rem;
         letter-spacing: -0.03em;
         text-align: center;
         line-height: 1.1;
         margin-bottom: 5px;
-        color: #f8fafc;
+        color: #ffffff;
+        text-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
 
     .portada-subtitle {
         font-family: 'Inter', sans-serif;
         font-weight: 400;
-        color: #94a3b8;
+        color: #cbd5e1;
         text-align: center;
-        font-size: 1rem;
+        font-size: 1.05rem;
         letter-spacing: 0.05em;
         margin-bottom: 40px;
     }
 
-    /* 3. Tarjeta de Login (Frosted Glass Extremo) */
+    /* 3. Tarjeta de Login (Frosted Glass Real) */
     [data-testid="stForm"] {
-        background: rgba(255, 255, 255, 0.03) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        border-radius: 20px !important;
-        backdrop-filter: blur(25px) !important;
-        -webkit-backdrop-filter: blur(25px) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 24px !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
         padding: 2.5rem !important;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5) !important;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
     }
 
     [data-testid="stForm"] label {
-        color: #cbd5e1 !important;
+        color: #f8fafc !important;
         font-family: 'Inter', sans-serif !important;
         font-weight: 500 !important;
-        font-size: 0.9rem !important;
+        font-size: 0.95rem !important;
     }
 
     [data-testid="stForm"] input {
-        background: rgba(0, 0, 0, 0.2) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        color: #f8fafc !important;
-        border-radius: 8px !important;
+        background: rgba(0, 0, 0, 0.25) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #ffffff !important;
+        border-radius: 12px !important;
         font-family: 'Inter', sans-serif !important;
         transition: all 0.3s ease !important;
-        padding: 0.6rem !important;
+        padding: 0.7rem !important;
     }
     
     [data-testid="stForm"] input:focus {
         border-color: #38bdf8 !important;
-        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2) !important;
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.3) !important;
         background: rgba(0, 0, 0, 0.4) !important;
+        outline: none !important;
     }
 
     /* 4. Botón de Acceso (Blanco Sólido Minimalista) */
     [data-testid="stFormSubmitButton"] button {
-        background: #f8fafc !important;
+        background: #ffffff !important;
         color: #0f172a !important;
-        font-weight: 600 !important;
+        font-weight: 700 !important;
         font-family: 'Inter', sans-serif !important;
         border: none !important;
-        border-radius: 8px !important;
-        padding: 0.7rem !important;
-        margin-top: 20px !important;
+        border-radius: 12px !important;
+        padding: 0.8rem !important;
+        margin-top: 25px !important;
         transition: all 0.2s ease !important;
         letter-spacing: 0.5px !important;
+        font-size: 1rem !important;
     }
     [data-testid="stFormSubmitButton"] button:hover {
-        background: #e2e8f0 !important;
-        transform: scale(1.02) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 10px 25px rgba(255, 255, 255, 0.2) !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -263,7 +269,7 @@ if st.session_state["user_id"] is None:
                     st.session_state["user_id"] = user[0]
                     st.rerun()
                 else: st.error("Credenciales incorrectas.")
-    st.stop()
+st.stop()
 
 # 4. GESTIÓN MULTI-CLIENTE
 user_id = st.session_state["user_id"]
