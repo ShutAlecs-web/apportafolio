@@ -6,7 +6,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import psycopg2 
+from psycopg2 import pool as pg_pool
 import hashlib
+from contextlib import contextmanager
 from datetime import datetime
 import json
 import re
@@ -80,6 +82,11 @@ div[data-testid="stTabs"] button[aria-selected="true"] { background-color: rgba(
 # ==========================================
 # 3. FUNCIONES CORE Y BASE DE DATOS
 # ==========================================
+try:
+    from scipy.optimize import brentq as _brentq   # requiere `scipy` en requirements.txt
+except Exception:
+    _brentq = None                                  # sin scipy se usa la bisección interna (_biseccion)
+
 def sanitize_ticker(t_str):
     if not t_str: return ""
     return re.sub(r'[^A-Z0-9\-\=\.]', '', str(t_str).upper().strip())
@@ -91,24 +98,102 @@ def get_live_usd():
 
 live_usd_rate = get_live_usd()
 
-def get_connection(): return psycopg2.connect(st.secrets["DATABASE_URL"])
+# --- POOL DE CONEXIONES (PostgreSQL / Neon) ---------------------------------
+# Un único pool por proceso, compartido por todas las sesiones de Streamlit.
+# minconn=2 mantiene 2 conexiones tibias; maxconn=10 protege al servidor.
+@st.cache_resource
+def get_pool():
+    return pg_pool.ThreadedConnectionPool(
+        2, 10, dsn=st.secrets["DATABASE_URL"],
+        connect_timeout=10, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5
+    )
+
+def _conexion_valida(conn):
+    """Ping ligero: Neon suspende conexiones inactivas y el pool podría entregar una muerta."""
+    try:
+        if conn.closed: return False
+        conn.rollback()
+        with conn.cursor() as cur: cur.execute("SELECT 1")
+        conn.rollback()
+        return True
+    except Exception:
+        return False
+
+@contextmanager
+def db_conn(autocommit=False):
+    """Entrega una conexión validada del pool. Confirma (commit) al salir sin error,
+    hace rollback si hubo excepción y SIEMPRE devuelve la conexión al pool."""
+    pool = get_pool()
+    conn = None
+    for intento in range(3):
+        try:
+            candidata = pool.getconn()
+        except pg_pool.PoolError:
+            time.sleep(0.3)
+            continue
+        if _conexion_valida(candidata):
+            conn = candidata
+            break
+        try: pool.putconn(candidata, close=True)
+        except Exception: pass
+        if intento == 1:  # el pool completo parece muerto: se recrea
+            try: pool.closeall()
+            except Exception: pass
+            get_pool.clear()
+            pool = get_pool()
+    if conn is None:
+        raise RuntimeError("No fue posible obtener una conexión válida a la base de datos.")
+    try:
+        conn.autocommit = autocommit
+        yield conn
+        if not autocommit: conn.commit()
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        raise
+    finally:
+        try: conn.autocommit = False
+        except Exception: pass
+        try: pool.putconn(conn)
+        except Exception: pass
+
+def read_df(sql, params=None):
+    """SELECT -> DataFrame usando el pool (sin abrir conexiones nuevas)."""
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            columnas = [d[0] for d in cur.description]
+            filas = cur.fetchall()
+    return pd.DataFrame(filas, columns=columnas)
+
+def get_user_profile(uid):
+    """(frecuencia_dca, nombre_meta) del usuario, con valores por defecto si falla."""
+    try:
+        with db_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT dca_frequency, goal_name FROM users WHERE user_id=%s", (uid,))
+            fila = cur.fetchone()
+        return (fila[0] or "MENSUAL", fila[1] or "Libertad Financiera")
+    except Exception:
+        return ("MENSUAL", "Libertad Financiera")
+
 def hash_password(password: str) -> str: return hashlib.sha256(password.encode()).hexdigest()
 
+@st.cache_resource
 def init_db():
-    conn = get_connection(); conn.autocommit = True; cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT);
-        CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, user_id TEXT, timestamp TEXT, fecha TEXT, tipo_operacion TEXT, ticker TEXT, clase TEXT, plataforma TEXT, moneda TEXT, titulos REAL, precio_unitario REAL, comision REAL, iva REAL, tipo_cambio REAL, total_mxn REAL);
-        CREATE TABLE IF NOT EXISTS cash_movements (id TEXT PRIMARY KEY, user_id TEXT, fecha TEXT, tipo TEXT, concepto TEXT, monto_mxn REAL);
-    """)
-    try: cur.execute("ALTER TABLE users ADD COLUMN dca_frequency TEXT DEFAULT 'MENSUAL'")
-    except: pass
-    try: cur.execute("ALTER TABLE users ADD COLUMN goal_name TEXT DEFAULT 'Libertad Financiera'")
-    except: pass
-    try: admin_pwd = st.secrets["admin_password"]
-    except Exception: admin_pwd = os.environ.get("CMA_ADMIN_PASSWORD", "clave_temporal_local")
-    cur.execute("INSERT INTO users (user_id, username, password_hash, dca_frequency, goal_name) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING", ("USR-001", "alex_admin", hash_password(admin_pwd), "MENSUAL", "Fondo Institucional"))
-    cur.close(); conn.close()
+    """Crea tablas/columnas una sola vez por proceso (antes corría en cada interacción)."""
+    with db_conn(autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT);
+                CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, user_id TEXT, timestamp TEXT, fecha TEXT, tipo_operacion TEXT, ticker TEXT, clase TEXT, plataforma TEXT, moneda TEXT, titulos REAL, precio_unitario REAL, comision REAL, iva REAL, tipo_cambio REAL, total_mxn REAL);
+                CREATE TABLE IF NOT EXISTS cash_movements (id TEXT PRIMARY KEY, user_id TEXT, fecha TEXT, tipo TEXT, concepto TEXT, monto_mxn REAL);
+            """)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dca_frequency TEXT DEFAULT 'MENSUAL'")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS goal_name TEXT DEFAULT 'Libertad Financiera'")
+            try: admin_pwd = st.secrets["admin_password"]
+            except Exception: admin_pwd = os.environ.get("CMA_ADMIN_PASSWORD", "clave_temporal_local")
+            cur.execute("INSERT INTO users (user_id, username, password_hash, dca_frequency, goal_name) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING", ("USR-001", "alex_admin", hash_password(admin_pwd), "MENSUAL", "Fondo Institucional"))
+    return True
 
 init_db()
 
@@ -268,9 +353,9 @@ if st.session_state["user_id"] is None:
             usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
             pwd = st.text_input("Contraseña", type="password", placeholder="CLAVE DE ACCESO")
             if st.form_submit_button("ACCEDER", use_container_width=True):
-                conn = get_connection(); cur = conn.cursor()
-                cur.execute("SELECT user_id FROM users WHERE username=%s AND password_hash=%s", (usr, hash_password(pwd)))
-                user = cur.fetchone(); cur.close(); conn.close()
+                with db_conn() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT user_id FROM users WHERE username=%s AND password_hash=%s", (usr, hash_password(pwd)))
+                    user = cur.fetchone()
                 if user: st.session_state["user_id"] = user[0]; st.rerun()
                 else: st.error("Credenciales incorrectas.")
     st.stop()
@@ -279,9 +364,7 @@ if st.session_state["user_id"] is None:
 # 5. GESTIÓN MULTI-CLIENTE Y SIDEBAR
 # ==========================================
 user_id = st.session_state["user_id"]
-conn = get_connection()
-all_users = pd.read_sql("SELECT user_id, username FROM users", conn)
-conn.close()
+all_users = read_df("SELECT user_id, username FROM users")
 
 if user_id == "USR-001":
     st.sidebar.markdown("<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>👑 Panel de Gestor</h3>", unsafe_allow_html=True)
@@ -296,12 +379,11 @@ if user_id == "USR-001":
             new_pwd = st.text_input("Contraseña Temporal", type="password")
             if st.form_submit_button("Crear Perfil"):
                 if new_usr and new_pwd:
-                    conn = get_connection(); cur = conn.cursor()
                     try:
-                        cur.execute("INSERT INTO users (user_id, username, password_hash) VALUES (%s, %s, %s)", (f"USR-{int(datetime.now().timestamp())}", new_usr, hash_password(new_pwd)))
-                        conn.commit(); st.success("Creado con éxito. Recarga la página.")
+                        with db_conn() as conn, conn.cursor() as cur:
+                            cur.execute("INSERT INTO users (user_id, username, password_hash) VALUES (%s, %s, %s)", (f"USR-{int(datetime.now().timestamp())}", new_usr, hash_password(new_pwd)))
+                        st.success("Creado con éxito. Recarga la página.")
                     except: st.error("El usuario ya existe.")
-                    cur.close(); conn.close()
 else:
     active_client_id = user_id
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
@@ -316,12 +398,7 @@ st.sidebar.toggle("🔬 Activar Modo Pro", key="modo_pro_toggle", help="Muestra 
 
 with st.sidebar.expander("⚙️ Estrategia y Perfil", expanded=False):
     st.markdown("<p style='font-size:0.8rem; color:#8b949e;'>Personaliza tu experiencia financiera.</p>", unsafe_allow_html=True)
-    conn = get_connection(); cur = conn.cursor()
-    try:
-        cur.execute("SELECT dca_frequency, goal_name FROM users WHERE user_id=%s", (user_id,))
-        user_data = cur.fetchone(); current_freq, current_goal = user_data[0], user_data[1]
-    except: current_freq, current_goal = "MENSUAL", "Libertad Financiera"
-    cur.close(); conn.close()
+    current_freq, current_goal = get_user_profile(user_id)
 
     with st.form("change_profile_form"):
         f_dca = st.selectbox("Frecuencia de Ahorro", ["SEMANAL", "QUINCENAL", "MENSUAL"], index=["SEMANAL", "QUINCENAL", "MENSUAL"].index(current_freq))
@@ -332,19 +409,19 @@ with st.sidebar.expander("⚙️ Estrategia y Perfil", expanded=False):
         if st.form_submit_button("Guardar Cambios", use_container_width=True):
             if not old_pwd: st.error("⚠️ Ingresa tu clave actual.")
             else:
-                conn = get_connection(); cur = conn.cursor()
-                cur.execute("SELECT password_hash FROM users WHERE user_id=%s", (user_id,))
-                if cur.fetchone()[0] == hash_password(old_pwd):
-                    if new_pwd and len(new_pwd) >= 6: cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password(new_pwd), f_dca, f_goal, user_id))
-                    else: cur.execute("UPDATE users SET dca_frequency=%s, goal_name=%s WHERE user_id=%s", (f_dca, f_goal, user_id))
-                    conn.commit(); st.success("✅ Perfil actualizado.")
+                perfil_ok = False
+                with db_conn() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT password_hash FROM users WHERE user_id=%s", (user_id,))
+                    fila_pwd = cur.fetchone()
+                    if fila_pwd and fila_pwd[0] == hash_password(old_pwd):
+                        if new_pwd and len(new_pwd) >= 6: cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password(new_pwd), f_dca, f_goal, user_id))
+                        else: cur.execute("UPDATE users SET dca_frequency=%s, goal_name=%s WHERE user_id=%s", (f_dca, f_goal, user_id))
+                        perfil_ok = True
+                if perfil_ok: st.success("✅ Perfil actualizado.")
                 else: st.error("❌ Clave incorrecta.")
-                cur.close(); conn.close()
 
 st.sidebar.markdown("### 📥 Reportes Institucionales")
-conn_export = get_connection()
-export_df = pd.read_sql("SELECT * FROM transactions WHERE user_id=%s", conn_export, params=(active_client_id,))
-conn_export.close()
+export_df = read_df("SELECT * FROM transactions WHERE user_id=%s", (active_client_id,))
 
 if not export_df.empty:
     clean_df = export_df.drop(columns=["id", "user_id", "timestamp"], errors="ignore")
@@ -404,10 +481,10 @@ if active_client_id == "USR-001":
                     if f_tipo_op == "COMPRA": total_mxn = valor_bruto_mxn + costos_mxn; imp_caja = -total_mxn; t_fin = f_titulos
                     else: total_mxn = valor_bruto_mxn - costos_mxn; imp_caja = total_mxn; t_fin = -f_titulos
                         
-                    conn = get_connection(); cur = conn.cursor(); ts_id = datetime.now().timestamp()
-                    cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, f_tc, total_mxn))
-                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
-                    conn.commit(); cur.close(); conn.close()
+                    ts_id = datetime.now().timestamp()
+                    with db_conn() as conn, conn.cursor() as cur:   # ambas inserciones en UNA transacción atómica
+                        cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, f_tc, total_mxn))
+                        cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
                     st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0
                     st.success(f"✅ {f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
                 else: st.error("⚠️ Verifica el Ticker, Títulos y Precio.")
@@ -420,17 +497,15 @@ if active_client_id == "USR-001":
             f_dep_fecha = st.date_input("Fecha de Registro", value=datetime.today())
             if st.form_submit_button("Actualizar Tesorería", use_container_width=True):
                 monto_final = f_monto if c_tipo_op == "DEPOSITO" else -f_monto
-                conn = get_connection(); cur = conn.cursor()
-                cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-TES-{datetime.now().timestamp()}", active_client_id, str(f_dep_fecha), c_tipo_op, f_concepto, float(monto_final)))
-                conn.commit(); cur.close(); conn.close(); st.success("Caja actualizada exitosamente."); st.rerun()
+                with db_conn() as conn, conn.cursor() as cur:
+                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-TES-{datetime.now().timestamp()}", active_client_id, str(f_dep_fecha), c_tipo_op, f_concepto, float(monto_final)))
+                st.success("Caja actualizada exitosamente."); st.rerun()
 
 # ==========================================
 # 6. CARGA DE DATOS Y MATEMÁTICAS
 # ==========================================
-conn = get_connection()
-tx_df = pd.read_sql("SELECT * FROM transactions WHERE user_id=%s", conn, params=(active_client_id,))
-cash_df = pd.read_sql("SELECT * FROM cash_movements WHERE user_id=%s", conn, params=(active_client_id,))
-conn.close()
+tx_df = read_df("SELECT * FROM transactions WHERE user_id=%s", (active_client_id,))
+cash_df = read_df("SELECT * FROM cash_movements WHERE user_id=%s", (active_client_id,))
 
 def calc_liquidez_real(df_caja):
     if df_caja.empty: return 0.0
@@ -444,6 +519,57 @@ def calc_liquidez_real(df_caja):
     return max(total, 0.0)
 
 liquidez_mxn = calc_liquidez_real(cash_df)
+
+# --- XIRR ESTABLE (brentq con intervalo acotado; bisección como respaldo) ----
+def _biseccion(f, lo, hi, tol=1e-12, max_iter=300):
+    """Bisección con número máximo de iteraciones: imposible caer en un ciclo infinito."""
+    f_lo, f_hi = f(lo), f(hi)
+    if not (np.isfinite(f_lo) and np.isfinite(f_hi)) or f_lo * f_hi > 0: return None
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        f_mid = f(mid)
+        if not np.isfinite(f_mid): return None
+        if f_mid == 0 or (hi - lo) < tol * max(1.0, abs(mid)): return mid
+        if f_lo * f_mid < 0: hi = mid
+        else: lo, f_lo = mid, f_mid
+    return 0.5 * (lo + hi)
+
+def resolver_xirr(flujos, min_dias=30):
+    """Tasa anual efectiva (fracción) o None. flujos = [(fecha, monto)]:
+    aportes con signo negativo; retiros y valor final del portafolio con signo positivo.
+    Busca un intervalo con cambio de signo en (-99.9999%, +10,000,000%) y resuelve con
+    scipy.optimize.brentq (o bisección si scipy no está instalado). Nunca itera sin límite.
+    Con menos de `min_dias` de historia devuelve None: anualizar ese plazo no tiene sentido."""
+    try:
+        if not flujos or len(flujos) < 2: return None
+        flujos = sorted(flujos, key=lambda x: x[0])
+        t0 = flujos[0][0]
+        dias = np.array([(d - t0).days for d, _ in flujos], dtype=float)
+        montos = np.array([float(a) for _, a in flujos], dtype=float)
+        if dias[-1] < min_dias: return None
+        if not (np.any(montos > 0) and np.any(montos < 0)): return None
+        tiempos = dias / 365.0
+
+        def npv(r):
+            with np.errstate(all="ignore"):
+                return float(np.sum(montos / np.power(1.0 + r, tiempos)))
+
+        lo = -0.999999
+        for hi in (1.0, 10.0, 100.0, 1e3, 1e4, 1e5):
+            f_lo, f_hi = npv(lo), npv(hi)
+            if np.isfinite(f_lo) and np.isfinite(f_hi) and f_lo * f_hi < 0:
+                raiz = None
+                if _brentq is not None:
+                    try: raiz = _brentq(npv, lo, hi, xtol=1e-12, rtol=1e-12, maxiter=300)
+                    except Exception: raiz = None
+                if raiz is None: raiz = _biseccion(npv, lo, hi)
+                if raiz is not None and np.isfinite(raiz): return float(raiz)
+        return None
+    except Exception:
+        return None
+
+@st.cache_data(ttl=300, max_entries=50)
+def _serie_placeholder(): return None  # (reservado)
 
 def _serie_cierre(data, symbol):
     """Serie de cierres limpia para un símbolo; Serie vacía si Yahoo no lo devolvió."""
@@ -521,6 +647,68 @@ def get_asset_yields(tickers):
             yields[t] = float(y)
         except: yields[t] = 0.0
     return yields
+
+# --- RIESGO: BETA LOCAL (regresión vs ^GSPC) Y RETORNOS EN MXN --------------
+def _yf_symbol(t):
+    return "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
+
+@st.cache_data(ttl=86400, max_entries=50)
+def _descargar_cierres_riesgo(simbolos):
+    """UNA sola descarga masiva (activos + ^GSPC + USDMXN=X). Si falla lanza excepción,
+    y Streamlit NO cachea las excepciones (así un fallo de Yahoo no queda guardado 24 h)."""
+    data = yf.download(list(simbolos), period="1y", progress=False)
+    if data is None or data.empty: raise ValueError("Yahoo Finance no devolvió datos.")
+    close = data["Close"]
+    if isinstance(close, pd.Series): close = close.to_frame(name=simbolos[0])
+    close = close.dropna(how="all")
+    if close.empty: raise ValueError("Sin cierres disponibles.")
+    return close
+
+def get_advanced_risk_metrics(tickers):
+    """Devuelve (retornos_usd, retornos_mxn, betas):
+      - retornos_usd: retornos diarios de cada activo en USD (se usan para la matriz de correlación).
+      - retornos_mxn: retornos diarios en MXN = precio USD x USDMXN (incluyen el riesgo cambiario del peso;
+                      se usan para VaR, Sharpe y Max Drawdown).
+      - betas: Beta local = Cov(r_activo, r_S&P500) / Var(r_S&P500), sin llamadas HTTP a `.info`.
+    Calendario común = días de operación del S&P 500 (los demás activos se rellenan hacia adelante)."""
+    vacio = (pd.DataFrame(), pd.DataFrame(), {})
+    try:
+        tickers = list(tickers)
+        if not tickers: return vacio
+        yf_syms = [_yf_symbol(t) for t in tickers]
+        benchmark, fx_sym = "^GSPC", "USDMXN=X"
+        simbolos = tuple(dict.fromkeys(yf_syms + [benchmark, fx_sym]))
+        close = _descargar_cierres_riesgo(simbolos)
+        if benchmark not in close.columns or fx_sym not in close.columns: return vacio
+
+        idx_mercado = close[benchmark].dropna().index
+        close = close.reindex(idx_mercado).ffill()
+
+        mapa = {s: t for s, t in zip(yf_syms, tickers) if s in close.columns}
+        if not mapa: return vacio
+        activos = close[list(mapa.keys())].rename(columns=mapa).dropna(axis=1, how="all")
+        if activos.empty: return vacio
+
+        panel = pd.concat([activos, close[benchmark].rename("__MKT__"), close[fx_sym].rename("__FX__")], axis=1).dropna()
+        if len(panel) < 30: return vacio
+
+        precios_usd = panel[activos.columns]
+        r_usd = precios_usd.pct_change(fill_method=None).dropna()
+        r_mkt = panel["__MKT__"].pct_change(fill_method=None).dropna()
+        precios_mxn = precios_usd.mul(panel["__FX__"], axis=0)
+        r_mxn = precios_mxn.pct_change(fill_method=None).dropna()
+
+        var_m = float(r_mkt.var())
+        betas = {}
+        for t in tickers:
+            b = 1.0
+            if t in r_usd.columns and np.isfinite(var_m) and var_m > 0:
+                b_calc = float(r_usd[t].cov(r_mkt)) / var_m
+                if np.isfinite(b_calc): b = b_calc
+            betas[t] = b
+        return r_usd, r_mxn, betas
+    except Exception:
+        return vacio
 
 if not tx_df.empty:
     summary = tx_df.groupby("ticker").agg(titulos=("titulos", "sum")).reset_index()
@@ -673,14 +861,7 @@ if not cash_df.empty:
 else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
 
 st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
-conn = get_connection()
-cur = conn.cursor()
-try:
-    cur.execute("SELECT dca_frequency, goal_name FROM users WHERE user_id=%s", (active_client_id,))
-    user_data = cur.fetchone()
-    user_freq, meta_nombre = user_data[0], user_data[1]
-except: user_freq, meta_nombre = "MENSUAL", "Libertad Financiera"
-cur.close(); conn.close()
+user_freq, meta_nombre = get_user_profile(active_client_id)
 
 def get_period_index(date_str, freq):
     dt = pd.to_datetime(date_str)
@@ -778,21 +959,13 @@ if st.session_state.get("modo_pro_toggle", False):
             try:
                 cfs = []
                 for _, r in cash_df.iterrows():
-                    if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -float(r["monto_mxn"])))
-                    elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), float(r["monto_mxn"])))
+                    monto = abs(float(r["monto_mxn"]))
+                    if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -monto))   # aporte: sale de tu bolsillo
+                    elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), monto))    # retiro: regresa a tu bolsillo
                 if not cfs: return "N/A"
                 cfs.append((pd.to_datetime(datetime.today().date()), float(total_portafolio)))
-                cfs.sort(key=lambda x: x[0])
-                dates, amounts = [cf[0] for cf in cfs], [cf[1] for cf in cfs]
-                rate = 0.1
-                for _ in range(100):
-                    npv = sum([a / (1 + rate)**((d - dates[0]).days / 365.0) for d, a in zip(dates, amounts)])
-                    df_der = sum([-((d - dates[0]).days / 365.0) * a / (1 + rate)**(((d - dates[0]).days / 365.0) + 1) for d, a in zip(dates, amounts)])
-                    if df_der == 0: return "N/A"
-                    new_rate = rate - npv / df_der
-                    if abs(new_rate - rate) < 1e-5: return f"{new_rate * 100:+.2f}%"
-                    rate = new_rate
-                return f"{rate * 100:+.2f}%"
+                tasa = resolver_xirr(cfs)
+                return f"{tasa * 100:+.2f}%" if tasa is not None else "N/A"
             except: return "N/A"
 
         tt_fric = "Total pagado al bróker en comisiones operativas e impuestos (IVA)."
@@ -1029,42 +1202,22 @@ if st.session_state.get("modo_pro_toggle", False):
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Módulo Cuantitativo de Riesgo y Correlación</h4>", unsafe_allow_html=True)
     if not summary.empty:
-        @st.cache_data(ttl=86400, max_entries=50) 
-        def get_advanced_risk_metrics(tickers):
-            try:
-                yf_tickers = ["BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t) for t in tickers]
-                data = yf.download(yf_tickers, period="1y", progress=False)
-                if 'Close' in data:
-                    close_data = data['Close']
-                    if isinstance(close_data, pd.Series): close_data = pd.DataFrame({tickers[0]: close_data})
-                    else:
-                        name_map = dict(zip(yf_tickers, tickers))
-                        close_data.rename(columns=name_map, inplace=True)
-                    returns = close_data.pct_change().dropna()
-                    
-                    betas = {}
-                    for yf_sym, real_t in zip(yf_tickers, tickers):
-                        try: b = yf.Ticker(yf_sym).info.get('beta', 1.0)
-                        except: b = 1.0
-                        betas[real_t] = b if b is not None else 1.0
-                        
-                    return returns, betas
-                return pd.DataFrame(), {}
-            except: return pd.DataFrame(), {}
-        
         tickers_list = summary["ticker"].tolist()
-        returns_df, asset_betas = get_advanced_risk_metrics(tickers_list)
+        returns_df, returns_mxn_df, asset_betas = get_advanced_risk_metrics(tickers_list)
         
-        if not returns_df.empty:
-            summary["beta"] = summary["ticker"].map(asset_betas)
+        if not returns_df.empty and not returns_mxn_df.empty:
+            summary["beta"] = summary["ticker"].map(asset_betas).fillna(1.0)
             port_beta = (summary["ponderacion_pct"] / 100 * summary["beta"]).sum()
             
             weights = (summary.set_index("ticker")["ponderacion_pct"] / 100).to_dict()
-            port_returns = pd.Series(0.0, index=returns_df.index)
-            for t in returns_df.columns:
-                if t in weights: port_returns += returns_df[t] * weights[t]
+            # VaR, Sharpe y Drawdown se calculan con retornos en MXN (precio USD x USDMXN),
+            # de modo que la volatilidad del peso mexicano queda incluida en el riesgo.
+            port_returns = pd.Series(0.0, index=returns_mxn_df.index)
+            for t in returns_mxn_df.columns:
+                if t in weights: port_returns += returns_mxn_df[t] * weights[t]
             
-            rf = 0.05
+            try: rf = float(st.secrets["RISK_FREE_RATE_MXN"])   # opcional: tasa libre de riesgo en MXN (p. ej. Cetes)
+            except Exception: rf = 0.05
             ann_ret = port_returns.mean() * 252
             ann_vol = port_returns.std() * np.sqrt(252)
             sharpe_ratio = (ann_ret - rf) / ann_vol if ann_vol > 0 else 0
