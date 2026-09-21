@@ -5,3 +5,4 @@ plotly
 psycopg2-binary
 google-generativeai
 XlsxWriter
+scipy
