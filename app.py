@@ -113,12 +113,11 @@ def init_db():
 init_db()
 
 PROMPT_MAESTRO = """
-Eres el 'Motor Algorítmico V5', un analista cuantitativo y macroeconómico de inteligencia artificial, diseñado para operar sin emociones, sin FOMO y con pura frialdad matemática. Tu objetivo es proporcionar una radiografía táctica ('Due Diligence') de un activo financiero.
+Eres el 'Motor Algorítmico V5', un analista cuantitativo y macroeconómico de inteligencia artificial.
 DATOS DEL ACTIVO: Ticker: {ticker} | Precio: {current_price} USD | Rango 52W: {low_52w} - {high_52w} | P/E: {pe_ratio} | EPS: {eps}
 PORTAFOLIO: Costo Promedio: {avg_cost} | Retorno: {net_return_pct}% | Peso: {portfolio_weight}%
 CONTEXTO MACRO: {macro_news_context}
-CALENDARIO FED/IPC: {fed_cpi_events}
-Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido. No uses markdown de código.
+Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido.
 {"verdict": "DCA FUERTE", "rating": 8, "bull_points": ["Punto 1"], "bear_points": ["Punto 1"], "macro_synthesis": "Síntesis de 2 líneas."}
 """
 
@@ -193,7 +192,6 @@ if st.session_state["user_id"] is None:
                 if user: st.session_state["user_id"] = user[0]; st.rerun()
                 else: st.error("Credenciales incorrectas.")
     st.stop()
-
 
 # ==========================================
 # 5. GESTIÓN MULTI-CLIENTE Y SIDEBAR
@@ -463,19 +461,19 @@ retorno_global = (pnl_global / total_invertido) * 100 if total_invertido > 0 els
 summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100 if not summary.empty else 0.0
 
 # ==========================================
-# 7. TICKER TAPE (BUCLE INFINITO CSS - MACRO + TOP ACTIVOS)
+# 7. TICKER TAPE (BUCLE INFINITO CSS - MACRO ONLY)
 # ==========================================
 items_html = ""
 for name, stats in macros.items():
     if name == "^GSPC": display_name = "S&P 500"
     elif name == "^NDX": display_name = "NASDAQ"
-    elif name == "^DJI": display_name = "DOW"
+    elif name == "^DJI": display_name = "DOW JONES"
     elif name == "GC=F": display_name = "ORO"
     elif name == "USDMXN=X": display_name = "USD/MXN"
     elif name == "EURMXN=X": display_name = "EUR/MXN"
     elif name == "GBPMXN=X": display_name = "GBP/MXN"
     elif name == "BTC-USD": display_name = "BTC/USD"
-    else: display_name = name
+    else: continue
 
     pct_val = stats.get('pct', 0.0)
     p_val = stats.get('p', 0.0)
@@ -492,20 +490,12 @@ for name, stats in macros.items():
         
     items_html += f"<b>{display_name}:</b> <span style='color: white;'>{price_str}</span> <span style='color: {color};'>({sign}{pct_val:.2f}%)</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
 
-if not summary.empty:
-    top_assets = summary.sort_values("valor_actual", ascending=False).head(5)
-    for _, row in top_assets.iterrows():
-        t = row["ticker"]
-        if t not in ["BTC"]:
-            price_str = f"${row['precio_mercado']:,.2f}"
-            items_html += f"<b>{t}:</b> <span style='color: white;'>{price_str}</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
-
 ticker_content = items_html * 4
 
 ticker_html_css = f"""
 <style>
 .marquee-wrapper {{ overflow: hidden; white-space: nowrap; padding: 12px 20px; background: rgba(8, 11, 19, 0.8); border: 1px solid rgba(212, 175, 55, 0.2); border-radius: 30px; margin-bottom: 25px; margin-top: -20px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }}
-.marquee-content {{ display: inline-block; animation: marquee-anim 40s linear infinite; font-family: 'Inter', sans-serif; font-size: 0.95rem; color:#8b949e; font-weight:400; letter-spacing: 1px;}}
+.marquee-content {{ display: inline-block; animation: marquee-anim 80s linear infinite; font-family: 'Inter', sans-serif; font-size: 0.95rem; color:#8b949e; font-weight:400; letter-spacing: 1px;}}
 @keyframes marquee-anim {{ 0% {{ transform: translateX(0); }} 100% {{ transform: translateX(-50%); }} }}
 </style>
 <div class="marquee-wrapper">
@@ -786,11 +776,11 @@ if st.session_state.get("modo_pro_toggle", False):
 
                 mem_data = st.session_state["ai_memory"].get(target_asset)
                 if mem_data:
-                    ai_verdict = mem_data.get("verdict", "HOLD")
-                    ai_rating = mem_data.get("rating", 5)
-                    ai_bulls = mem_data.get("bulls", [])
-                    ai_bears = mem_data.get("bears", [])
-                    ai_macro = mem_data.get("macro", "")
+                    ai_verdict = mem_data.get("v", "HOLD")
+                    ai_rating = mem_data.get("r", 5)
+                    ai_bulls = mem_data.get("bl", [])
+                    ai_bears = mem_data.get("br", [])
+                    ai_macro = mem_data.get("m", "")
                 else:
                     ai_verdict, ai_rating, ai_bulls, ai_bears = "N/A", 5, [], []
                     ai_macro = "Motor matemático local activo. Evaluando métricas estándar."
@@ -814,20 +804,18 @@ if st.session_state.get("modo_pro_toggle", False):
                                 clean_key = str(backend_api_key).strip()
                                 headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
                                 prompt_filled = PROMPT_MAESTRO.format(ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2), pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2), portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo.")
-                                payload = {"contents": [{"parts": [{"text": prompt_filled}]}], "generationConfig": {"temperature": 0.2}}
-                                response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent", headers=headers, json=payload)
+                                payload = {"contents": [{"parts": [{"text": prompt_filled}]}], "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}}
+                                response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", headers=headers, json=payload)
                                 if response.status_code == 200:
                                     try:
                                         ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                                        match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-                                        clean_json = match.group(0) if match else ai_response.replace('```json', '').replace('```', '').strip()
-                                        parsed_response = json.loads(clean_json)
+                                        parsed_response = json.loads(ai_response)
                                         ai_verdict = parsed_response.get("verdict", "HOLD")
                                         ai_rating = int(parsed_response.get("rating", 5))
                                         ai_bulls = parsed_response.get("bull_points", ["Puntos fuertes en evaluación."])
                                         ai_bears = parsed_response.get("bear_points", ["Riesgos en evaluación."])
                                         ai_macro = parsed_response.get("macro_synthesis", "Evaluación macro en proceso.")
-                                        st.session_state["ai_memory"][target_asset] = {"verdict": ai_verdict, "rating": ai_rating, "bulls": ai_bulls, "bears": ai_bears, "macro": ai_macro}
+                                        st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro}
                                     except Exception as e:
                                         ai_verdict, error_api = "ERROR PARSEO", f"Error al leer JSON: {str(e)}"
                                 else:
@@ -1054,7 +1042,7 @@ if st.session_state.get("modo_pro_toggle", False):
                         """
                         
                         payload = {"contents": [{"parts": [{"text": prompt_cio}]}], "generationConfig": {"temperature": 0.3}}
-                        response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent", headers=headers, json=payload)
+                        response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", headers=headers, json=payload)
                         if response.status_code == 200:
                             try:
                                 st.session_state["cio_report"] = response.json()['candidates'][0]['content']['parts'][0]['text']
