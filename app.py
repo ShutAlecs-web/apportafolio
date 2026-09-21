@@ -194,7 +194,6 @@ if st.session_state["user_id"] is None:
                 else: st.error("Credenciales incorrectas.")
     st.stop()
 
-
 # ==========================================
 # 5. GESTIÓN MULTI-CLIENTE Y SIDEBAR
 # ==========================================
@@ -321,23 +320,14 @@ if active_client_id == "USR-001":
                 if f_ticker_clean and f_titulos > 0 and f_precio > 0:
                     valor_bruto_mxn = (f_titulos * f_precio) * f_tc
                     costos_mxn = (f_comision + f_iva) * f_tc
-                    
-                    if f_tipo_op == "COMPRA":
-                        total_op_mxn = valor_bruto_mxn + costos_mxn
-                        impacto_caja = -total_op_mxn
-                        titulos_final = f_titulos
-                    else:
-                        total_op_mxn = valor_bruto_mxn - costos_mxn
-                        impacto_caja = total_op_mxn
-                        titulos_final = -f_titulos
+                    if f_tipo_op == "COMPRA": total_mxn = valor_bruto_mxn + costos_mxn; imp_caja = -total_mxn; t_fin = f_titulos
+                    else: total_mxn = valor_bruto_mxn - costos_mxn; imp_caja = total_mxn; t_fin = -f_titulos
                         
                     conn = get_connection(); cur = conn.cursor(); ts_id = datetime.now().timestamp()
-                    cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, titulos_final, f_precio, f_comision, f_iva, f_tc, total_op_mxn))
-                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", impacto_caja))
+                    cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, f_tc, total_mxn))
+                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
                     conn.commit(); cur.close(); conn.close()
-                    
-                    st.session_state["val_ticker"] = ""
-                    st.session_state["val_price"] = 0.0
+                    st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0
                     st.success(f"✅ {f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
                 else: st.error("⚠️ Verifica el Ticker, Títulos y Precio.")
 
@@ -352,7 +342,6 @@ if active_client_id == "USR-001":
                 conn = get_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-TES-{datetime.now().timestamp()}", active_client_id, str(f_dep_fecha), c_tipo_op, f_concepto, float(monto_final)))
                 conn.commit(); cur.close(); conn.close(); st.success("Caja actualizada exitosamente."); st.rerun()
-
 
 # ==========================================
 # 6. CARGA DE DATOS Y MATEMÁTICAS
@@ -469,9 +458,8 @@ pnl_global = total_activos - total_invertido
 retorno_global = (pnl_global / total_invertido) * 100 if total_invertido > 0 else 0.0
 summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100 if not summary.empty else 0.0
 
-
 # ==========================================
-# 7. TICKER TAPE (BUCLE INFINITO CSS)
+# 7. TICKER TAPE (BUCLE INFINITO CSS - MACRO ONLY)
 # ==========================================
 items_html = ""
 for name, stats in macros.items():
@@ -483,129 +471,242 @@ for name, stats in macros.items():
     if name == "BTC-USD": price_str = f"${p_val:,.0f}"
     items_html += f"<b>{display_name}:</b> <span style='color: white;'>{price_str}</span> <span style='color: {color};'>({sign}{stats.get('pct',0):.2f}%)</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
 
-if not summary.empty:
-    top_assets = summary.sort_values("valor_actual", ascending=False).head(5)
-    for _, row in top_assets.iterrows():
-        t = row["ticker"]
-        if t not in ["BTC"]:
-            price_str = f"${row['precio_mercado']:,.2f}"
-            items_html += f"<b>{t}:</b> <span style='color: white;'>{price_str}</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+# Multiplicar el contenido para evitar espacios negros
+ticker_content = items_html * 4
 
-ticker_html = f"""
+ticker_html_css = f"""
 <style>
 .marquee-wrapper {{ overflow: hidden; white-space: nowrap; padding: 12px 20px; background: rgba(8, 11, 19, 0.8); border: 1px solid rgba(212, 175, 55, 0.2); border-radius: 30px; margin-bottom: 25px; margin-top: -20px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }}
-.marquee-content {{ display: inline-block; animation: marquee-anim 35s linear infinite; font-family: 'Inter', sans-serif; font-size: 0.95rem; color:#8b949e; font-weight:400; letter-spacing: 1px;}}
+.marquee-content {{ display: inline-block; animation: marquee-anim 40s linear infinite; font-family: 'Inter', sans-serif; font-size: 0.95rem; color:#8b949e; font-weight:400; letter-spacing: 1px;}}
 @keyframes marquee-anim {{ 0% {{ transform: translateX(0); }} 100% {{ transform: translateX(-50%); }} }}
 </style>
 <div class="marquee-wrapper">
-    <div class="marquee-content">{items_html} {items_html}</div>
+    <div class="marquee-content">{ticker_content}</div>
 </div>
 """
-st.markdown(ticker_html, unsafe_allow_html=True)
-
+st.markdown(ticker_html_css, unsafe_allow_html=True)
 
 # ==========================================
-# 8. PESTAÑAS NATIVAS E INTERFAZ
+# 8. DASHBOARD: ESTRUCTURA LINEAL ORIGINAL
 # ==========================================
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Cartera & Radiografía", "Radar V5 (IA)", "Riesgo & Smart DCA", "Bola de Nieve", "Historial & Caja"])
-
 tt_pat = "Todo el dinero que tienes actualmente, sumando tus ganancias y tu efectivo."
 tt_cap = "El dinero exacto que ha salido de tu bolsillo hacia la aplicación."
 tt_liq = "Dinero en efectivo listo para aprovechar oportunidades en el mercado."
 tt_pnl = "Profit & Loss (Pérdidas o Ganancias Totales de tus inversiones)."
 
-with tab1: # CARTERA Y RADIOGRAFÍA
-    k1, k2, k3, k4 = st.columns(4)
-    k1.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
-    k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Capital Invertido <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
+k1, k2, k3, k4 = st.columns(4)
+k1.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
+k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Capital Invertido <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
 
-    if st.session_state.get("modo_pro_toggle", False):
-        k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Liquidez Disponible <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
-        c_pnl = "text-neon-green" if pnl_global >= 0 else "text-neon-red"
-        k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>P&L Neto Acumulado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pnl}</span></span></div><div class='metric-value {c_pnl}'>${pnl_global:+,.2f}</div><div class='metric-subtext {c_pnl}'>{retorno_global:+.2f}%</div></div>", unsafe_allow_html=True)
-    else:
-        ganancia_neta = pnl_global
-        c_gan = "text-neon-green" if ganancia_neta >= 0 else "text-neon-red"
-        texto_simple = "Ganancia Generada" if ganancia_neta >= 0 else "Pérdida Temporal"
-        k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Dinero en Efectivo <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
-        k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div></div>", unsafe_allow_html=True)
+if st.session_state.get("modo_pro_toggle", False):
+    k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Liquidez Disponible <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
+    c_pnl = "text-neon-green" if pnl_global >= 0 else "text-neon-red"
+    k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>P&L Neto Acumulado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pnl}</span></span></div><div class='metric-value {c_pnl}'>${pnl_global:+,.2f}</div><div class='metric-subtext {c_pnl}'>{retorno_global:+.2f}%</div></div>", unsafe_allow_html=True)
+else:
+    ganancia_neta = pnl_global
+    c_gan = "text-neon-green" if ganancia_neta >= 0 else "text-neon-red"
+    texto_simple = "Ganancia Generada" if ganancia_neta >= 0 else "Pérdida Temporal"
+    k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Dinero en Efectivo <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
+    k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div></div>", unsafe_allow_html=True)
 
-    if not summary.empty:
-        if not st.session_state.get("modo_pro_toggle", False):
-            st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Tu Portafolio Simplificado</h4>", unsafe_allow_html=True)
-            best_idx, worst_idx = summary['pnl'].idxmax(), summary['pnl'].idxmin()
-            best_row, worst_row = summary.loc[best_idx], summary.loc[worst_idx]
-            col_easy1, col_easy2, col_easy3 = st.columns(3)
-            with col_easy1:
-                st.markdown(f"<div class='metric-card' style='border-color:rgba(52, 211, 153, 0.3) !important;'><div class='metric-title' style='color:#34d399 !important;'>El Salario Invisible</div><div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>${salario_invisible:,.2f} <span style='font-size:1rem;color:#8b949e;font-family:\"Inter\";'>MXN / año</span></div><div class='metric-subtext'>Ingreso pasivo estimado por dividendos. (Tus criptos y oro no pagan renta, ¡pero crecen!)</div></div>", unsafe_allow_html=True)
-            with col_easy2:
-                c_best = "text-neon-green" if best_row['pnl'] >= 0 else "text-neon-red"
-                st.markdown(f"<div class='metric-card'><div class='metric-title' style='color:#d4af37 !important;'>Tu Empleado del Mes (MVP)</div><div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{best_row['ticker']} <span class='{c_best}' style='font-size:1.2rem;font-family:\"Inter\";'>({best_row['pnl']:+,.2f} MXN)</span></div><div class='metric-subtext'>Este activo está cargando con el rendimiento de tu portafolio actual.</div></div>", unsafe_allow_html=True)
-            with col_easy3:
-                c_worst = "text-neon-green" if worst_row['pnl'] >= 0 else "text-neon-red"
-                st.markdown(f"<div class='metric-card'><div class='metric-title' style='color:#fb7185 !important;'>En Recuperación</div><div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{worst_row['ticker']} <span class='{c_worst}' style='font-size:1.2rem;font-family:\"Inter\";'>({worst_row['pnl']:+,.2f} MXN)</span></div><div class='metric-subtext'>Está tropezando temporalmente, pero el mercado da revanchas.</div></div>", unsafe_allow_html=True)
-            st.markdown("<p style='font-size:0.75rem; color:#64748b; font-style:italic; text-align:center; margin-top:10px;'>* Nota legal: Las ganancias o pérdidas de tus activos son <b>NO REALIZADAS</b>. No has ganado ni perdido este dinero realmente hasta que decidas vender.</p>", unsafe_allow_html=True)
+# 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN (Visibles en ambos modos)
+st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📈 La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
+if not cash_df.empty:
+    df_hist = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
+    if not df_hist.empty:
+        df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
+        df_hist = df_hist.sort_values("fecha")
+        def calc_flujo(row):
+            val = abs(float(row["monto_mxn"]))
+            return val if row["tipo"] == "DEPOSITO" else -val
             
-            st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; text-align:center;' class='notranslate' translate='no'>Radiografía Visual de tu Dinero</h4>", unsafe_allow_html=True)
-            st.markdown("<p style='color:#64748b;font-size:0.8rem;text-align:center;'>Haz clic en el centro o en las categorías para navegar por tu portafolio.</p>", unsafe_allow_html=True)
-            sum_plot = summary.copy()
-            sum_plot['Clase'] = sum_plot['Clase'].fillna('Otro'); sum_plot['Sector'] = sum_plot['Sector'].fillna('Desconocido')
-            fig_sun = px.sunburst(sum_plot, path=['Clase', 'Sector', 'ticker'], values='valor_actual', color='retorno_pct', color_continuous_scale='RdYlGn', color_continuous_midpoint=0)
-            fig_sun.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=20, b=20, l=10, r=10), height=550)
-            st.plotly_chart(fig_sun, use_container_width=True, config=plotly_config)
+        df_hist["flujo_neto"] = df_hist.apply(calc_flujo, axis=1)
+        df_hist["capital_acumulado"] = df_hist["flujo_neto"].cumsum()
+        
+        df_hoy = pd.DataFrame({"fecha": [pd.to_datetime(datetime.today().date())], "capital_acumulado": [df_hist["capital_acumulado"].iloc[-1]]})
+        df_hist = pd.concat([df_hist, df_hoy], ignore_index=True)
 
-        if st.session_state.get("modo_pro_toggle", False):
-            st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Análisis de Rendimiento y Atribución Global</h4>", unsafe_allow_html=True)
-            perf_col1, perf_col2 = st.columns([1, 2.5])
-            with perf_col1:
-                total_friccion = (tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum() if not tx_df.empty else 0.0
-                def calc_xirr():
-                    if cash_df.empty: return "N/A"
-                    try:
-                        cfs = []
-                        for _, r in cash_df.iterrows():
-                            if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -float(r["monto_mxn"])))
-                            elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), float(r["monto_mxn"])))
-                        if not cfs: return "N/A"
-                        cfs.append((pd.to_datetime(datetime.today().date()), float(total_portafolio)))
-                        cfs.sort(key=lambda x: x[0])
-                        dates, amounts = [cf[0] for cf in cfs], [cf[1] for cf in cfs]
-                        rate = 0.1
-                        for _ in range(100):
-                            npv = sum([a / (1 + rate)**((d - dates[0]).days / 365.0) for d, a in zip(dates, amounts)])
-                            df_der = sum([-((d - dates[0]).days / 365.0) * a / (1 + rate)**(((d - dates[0]).days / 365.0) + 1) for d, a in zip(dates, amounts)])
-                            if df_der == 0: return "N/A"
-                            new_rate = rate - npv / df_der
-                            if abs(new_rate - rate) < 1e-5: return f"{new_rate * 100:+.2f}%"
-                            rate = new_rate
-                        return f"{rate * 100:+.2f}%"
-                    except: return "N/A"
+        fig_snow = go.Figure()
+        fig_snow.add_trace(go.Scatter(
+            x=df_hist["fecha"], y=df_hist["capital_acumulado"], fill='tozeroy', mode='lines+markers',
+            line=dict(color="#d4af37", width=3), marker=dict(size=6, color="#d4af37", symbol="circle"),
+            fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
+        ))
+        
+        color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#fb7185"
+        fig_snow.add_trace(go.Scatter(
+            x=[df_hist["fecha"].iloc[0], df_hist["fecha"].iloc[-1]], y=[total_portafolio, total_portafolio],
+            mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
+        ))
+
+        fig_snow.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10, b=10, l=10, r=10), height=320, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
+        fig_snow.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
+        fig_snow.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
+        st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
+    else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
+else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
+
+st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>🏆 Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
+conn = get_connection()
+cur = conn.cursor()
+try:
+    cur.execute("SELECT dca_frequency, goal_name FROM users WHERE user_id=%s", (active_client_id,))
+    user_data = cur.fetchone()
+    user_freq, meta_nombre = user_data[0], user_data[1]
+except: user_freq, meta_nombre = "MENSUAL", "Libertad Financiera"
+cur.close(); conn.close()
+
+def get_period_index(date_str, freq):
+    dt = pd.to_datetime(date_str)
+    if freq == "SEMANAL": return int(dt.timestamp() // (7 * 86400))
+    elif freq == "QUINCENAL": return dt.year * 24 + dt.month * 2 + (0 if dt.day <= 15 else 1)
+    else: return dt.year * 12 + dt.month
+
+racha_actual, racha_maxima, ahorro_racha = 0, 0, 0.0
+txt_frecuencia = "Semanas" if user_freq == "SEMANAL" else ("Quincenas" if user_freq == "QUINCENAL" else "Meses")
+
+if not cash_df.empty:
+    dep_df = cash_df[cash_df["tipo"] == "DEPOSITO"].copy()
+    if not dep_df.empty:
+        dep_df["period_idx"] = dep_df["fecha"].apply(lambda x: get_period_index(x, user_freq))
+        dep_idx = dep_df.groupby("period_idx")["monto_mxn"].sum().reset_index()
+        periodos = sorted(dep_idx["period_idx"].tolist(), reverse=True)
+        p_eval = get_period_index(datetime.today(), user_freq)
+        if periodos and periodos[0] < p_eval: p_eval -= 1
+            
+        for p in periodos:
+            if p == p_eval:
+                racha_actual += 1
+                ahorro_racha += float(dep_idx[dep_idx["period_idx"] == p]["monto_mxn"].iloc[0])
+                p_eval -= 1
+            elif p > p_eval: continue
+            else: break
                 
-                tt_fric = "Total pagado al bróker en comisiones operativas e impuestos (IVA)."
-                tt_xirr = "Tasa Interna de Retorno. Mide el rendimiento real anualizado tomando en cuenta las fechas exactas de tus depósitos y retiros."
-                st.markdown(
-                    (
-                        f"<div class='pos-box notranslate' translate='no'><p class='metric-title'>Fricción Financiera <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fric}</span></span></p><p style='color:#fb7185;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>${total_friccion:,.2f} MXN</p></div>"
-                        f"<div class='pos-box notranslate' translate='no'><p class='metric-title'>Rentabilidad Ponderada (XIRR) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p><p style='color:#00f0ff;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>{calc_xirr()}</p></div>"
-                    ), unsafe_allow_html=True
-                )
-            with perf_col2:
-                attr_df = summary[summary["pnl"] != 0].copy()
-                if not attr_df.empty:
-                    attr_df.sort_values("pnl", ascending=True, inplace=True)
-                    attr_df["color_pnl"] = attr_df["pnl"].apply(lambda x: "#34d399" if x >= 0 else "#fb7185")
-                    fig_attr = go.Figure()
-                    fig_attr.add_trace(go.Bar(y=attr_df["ticker"], x=attr_df["pnl"], orientation="h", marker_color=attr_df["color_pnl"], text=attr_df["pnl"].apply(lambda x: f"${x:+,.0f}"), textposition="outside"))
-                    fig_attr.update_layout(title=dict(text="Atribución Neta por Activo (MXN)", font=dict(size=14, color="#8b949e")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=30, b=0, l=10, r=10), showlegend=False, xaxis_title="", yaxis_title="", height=280)
-                    fig_attr.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937")
-                    st.plotly_chart(fig_attr, use_container_width=True, config=plotly_config)
-                else: st.info("Aún no hay P&L registrado.")
-    else: st.info("La bóveda está vacía. Registra activos para iniciar.")
+        p_asc = sorted(dep_idx["period_idx"].tolist())
+        curr_strk = 1 if p_asc else 0
+        max_strk = curr_strk
+        if p_asc:
+            for i in range(1, len(p_asc)):
+                if p_asc[i] == p_asc[i-1] + 1: curr_strk += 1
+                else: curr_strk = 1
+                if curr_strk > max_strk: max_strk = curr_strk
+        racha_maxima = max_strk
 
-with tab2: # RADAR V5 Y GEMINI
+if racha_actual == 0: color_racha, emoji_racha, rango_txt = "#64748b", "❄️", "Inactivo"
+elif racha_actual <= 2: color_racha, emoji_racha, rango_txt = "#fbbf24", "✨", "Iniciador"
+elif racha_actual <= 5: color_racha, emoji_racha, rango_txt = "#f97316", "🔥", "Constante"
+elif racha_actual <= 11: color_racha, emoji_racha, rango_txt = "#00f0ff", "⚡", "Pro"
+else: color_racha, emoji_racha, rango_txt = "#d4af37", "👑", "Leyenda"
+
+hitos = [10000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000]
+meta_actual = next((h for h in hitos if h > total_portafolio), hitos[-1])
+progreso_meta = min((total_portafolio / meta_actual) * 100, 100)
+faltante = max(0, meta_actual - total_portafolio)
+tasa_anual = 0.10
+aportacion_promedio = (ahorro_racha / racha_actual) if racha_actual > 0 else 0
+if user_freq == "SEMANAL": pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 52, tasa_anual / 52
+elif user_freq == "QUINCENAL": pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 24, tasa_anual / 24
+else: pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 12, tasa_anual / 12
+
+proyeccion_5a = (total_portafolio * ((1 + r_periodo)**n_periodos)) + (pmt * (((1 + r_periodo)**n_periodos - 1) / r_periodo)) if pmt > 0 else total_portafolio
+
+col_g1, col_g2, col_g3 = st.columns([1.2, 1.5, 1.2])
+with col_g1:
+    st.markdown(
+        f"<div class='metric-card notranslate' translate='no' style='text-align:center; border-color:{color_racha}40;'>"
+        f"<div class='metric-title'>Nivel DCA: <span style='color:{color_racha};'>{rango_txt}</span></div>"
+        f"<div style='font-family:\"Playfair Display\", serif; font-size:2.8rem; font-weight:400; color:{color_racha}; margin:5px 0;'>{racha_actual} {emoji_racha}</div>"
+        f"<div class='metric-subtext' style='margin-bottom:8px;'>{txt_frecuencia} seguidas • Récord: <b style='color:white;'>{max(racha_actual, racha_maxima)}</b></div>"
+        f"<div style='font-size:0.75rem; color:#34d399; background:rgba(52, 211, 153, 0.05); padding:6px; border-radius:6px; border:1px solid rgba(52, 211, 153, 0.2);'>"
+        f"Ahorro en racha: <b>${ahorro_racha:,.2f}</b></div></div>", unsafe_allow_html=True
+    )
+with col_g2:
+    st.markdown(
+        f"<div class='metric-card notranslate' translate='no' style='display:flex; flex-direction:column; justify-content:center;'>"
+        f"<div class='metric-title' style='color:#d4af37 !important;'>{meta_nombre}</div>"
+        f"<div class='metric-value' style='font-size:1.1rem;'>Hito: ${meta_actual:,.2f} MXN</div>"
+        f"<div style='width:100%;background-color:#1f2937;border-radius:12px;height:22px;position:relative; overflow:hidden; border: 1px solid #374151; margin-top:8px;'>"
+        f"<div style='width:{progreso_meta}%;background:linear-gradient(90deg, #d4af37 0%, #fcf6ba 100%);height:100%; border-radius:12px;'></div>"
+        f"</div><div class='metric-subtext' style='margin-top:12px;'>Faltan <b style='color:#e5e7eb;'>${faltante:,.2f} MXN</b></div></div>", unsafe_allow_html=True
+    )
+with col_g3:
+    st.markdown(
+        f"<div class='metric-card notranslate' translate='no' style='border-color:#c084fc40; background:rgba(192, 132, 252, 0.02) !important;'>"
+        f"<div class='metric-title' style='color:#c084fc !important;'>Tu Futuro en 5 Años</div>"
+        f"<div style='font-family:\"Playfair Display\", serif; font-size:1.6rem; font-weight:400; color:white; margin:10px 0;'>${proyeccion_5a:,.2f}</div>"
+        f"<div class='metric-subtext'>Si mantienes tu racha {txt_frecuencia.lower()} de <b>${aportacion_promedio:,.0f}</b> a una tasa del 10% anual.</div></div>", unsafe_allow_html=True
+    )
+st.markdown("---")
+
+# ==========================================
+# RAMIFICACIÓN MODO PRO vs MODO FÁCIL
+# ==========================================
+if st.session_state.get("modo_pro_toggle", False):
+    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Análisis de Rendimiento y Atribución Global</h4>", unsafe_allow_html=True)
+    perf_col1, perf_col2 = st.columns([1, 2.5])
+
+    with perf_col1:
+        total_friccion = (tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum() if not tx_df.empty else 0.0
+        def calc_xirr():
+            if cash_df.empty: return "N/A"
+            try:
+                cfs = []
+                for _, r in cash_df.iterrows():
+                    if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -float(r["monto_mxn"])))
+                    elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), float(r["monto_mxn"])))
+                if not cfs: return "N/A"
+                cfs.append((pd.to_datetime(datetime.today().date()), float(total_portafolio)))
+                cfs.sort(key=lambda x: x[0])
+                dates, amounts = [cf[0] for cf in cfs], [cf[1] for cf in cfs]
+                rate = 0.1
+                for _ in range(100):
+                    npv = sum([a / (1 + rate)**((d - dates[0]).days / 365.0) for d, a in zip(dates, amounts)])
+                    df_der = sum([-((d - dates[0]).days / 365.0) * a / (1 + rate)**(((d - dates[0]).days / 365.0) + 1) for d, a in zip(dates, amounts)])
+                    if df_der == 0: return "N/A"
+                    new_rate = rate - npv / df_der
+                    if abs(new_rate - rate) < 1e-5: return f"{new_rate * 100:+.2f}%"
+                    rate = new_rate
+                return f"{rate * 100:+.2f}%"
+            except: return "N/A"
+
+        tt_fric = "Total pagado al bróker en comisiones operativas e impuestos (IVA)."
+        tt_xirr = "Tasa Interna de Retorno. Mide el rendimiento real anualizado tomando en cuenta las fechas exactas de tus depósitos y retiros."
+        st.markdown(
+            (
+                f"<div class='pos-box notranslate' translate='no'>"
+                f"<p class='metric-title'>Fricción Financiera <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fric}</span></span></p>"
+                f"<p style='color:#fb7185;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>${total_friccion:,.2f} MXN</p></div>"
+                f"<div class='pos-box notranslate' translate='no'>"
+                f"<p class='metric-title'>Rentabilidad Ponderada (XIRR) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p>"
+                f"<p style='color:#00f0ff;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>{calc_xirr()}</p></div>"
+            ),
+            unsafe_allow_html=True
+        )
+
+    with perf_col2:
+        if not summary.empty:
+            attr_df = summary[summary["pnl"] != 0].copy()
+            if not attr_df.empty:
+                attr_df.sort_values("pnl", ascending=True, inplace=True)
+                attr_df["color_pnl"] = attr_df["pnl"].apply(lambda x: "#34d399" if x >= 0 else "#fb7185")
+                fig_attr = go.Figure()
+                fig_attr.add_trace(go.Bar(
+                    y=attr_df["ticker"], x=attr_df["pnl"], orientation="h", marker_color=attr_df["color_pnl"],
+                    text=attr_df["pnl"].apply(lambda x: f"${x:+,.0f}"), textposition="outside"
+                ))
+                fig_attr.update_layout(title=dict(text="Atribución Neta por Activo (MXN)", font=dict(size=14, color="#8b949e")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=30, b=0, l=10, r=10), showlegend=False, xaxis_title="", yaxis_title="", height=280)
+                fig_attr.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937")
+                st.plotly_chart(fig_attr, use_container_width=True, config=plotly_config)
+            else: st.info("Aún no hay P&L registrado.")
+        else: st.info("Adquiere activos para medir atribución.")
+
+    st.markdown("---")
+
+    if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
+
+    # RADIOGRAFÍA INDIVIDUAL V5
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Radiografía Individual y Rating de Compra (Motor V5)</h4>", unsafe_allow_html=True)
     if not summary.empty:
-        if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
         selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para análisis a profundidad:", sorted(summary["ticker"].tolist()) + ["🔍 Buscar nuevo ticker (Ej: AAPL, SPY)"], label_visibility="collapsed")
         if selected_asset.startswith("🔍"):
             search_ticker = st.text_input("Ingresa el Ticker de Yahoo Finance a analizar (Ej: NVDA, URA, SCHD):").upper()
@@ -648,6 +749,7 @@ with tab2: # RADAR V5 Y GEMINI
                 start_price = hist_data['Close'].iloc[0]
                 pct_change_1y = ((current_price - start_price) / start_price) * 100
                 color_line = "#34d399" if pct_change_1y >= 0 else "#fb7185"
+                
                 pe_ratio = asset_info.get("trailingPE", "N/A")
                 eps = asset_info.get("trailingEps", "N/A")
                 high_52 = asset_info.get("fiftyTwoWeekHigh", current_price * 1.1)
@@ -655,11 +757,17 @@ with tab2: # RADAR V5 Y GEMINI
                 noticias_texto = "\n".join([f"- {n['title']}" for n in asset_news]) if asset_news else "Sin noticias relevantes recientes."
 
                 mem_data = st.session_state["ai_memory"].get(target_asset)
-                if mem_data: ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = mem_data["verdict"], mem_data["rating"], mem_data["bulls"], mem_data["bears"], mem_data["macro"]
+                if mem_data:
+                    ai_verdict = mem_data.get("v", "HOLD")
+                    ai_rating = mem_data.get("r", 5)
+                    ai_bulls = mem_data.get("bl", [])
+                    ai_bears = mem_data.get("br", [])
+                    ai_macro = mem_data.get("m", "")
                 else:
                     ai_verdict, ai_rating, ai_bulls, ai_bears = "N/A", 5, [], []
                     ai_macro = "Motor matemático local activo. Evaluando métricas estándar."
-                    error_api, backend_api_key = "", None
+                    error_api = ""
+                    backend_api_key = None
                     try: backend_api_key = st.secrets["GEMINI_API_KEY"]
                     except Exception: pass
 
@@ -682,20 +790,24 @@ with tab2: # RADAR V5 Y GEMINI
                                 response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", headers=headers, json=payload)
                                 if response.status_code == 200:
                                     ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                                    clean_json = ai_response.replace(chr(96)*3 + "json", "").replace(chr(96)*3, "").strip()
+                                    match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+                                    clean_json = match.group(0) if match else ai_response.replace('```json', '').replace('```', '').strip()
                                     parsed_response = json.loads(clean_json)
                                     ai_verdict = parsed_response.get("verdict", "HOLD")
                                     ai_rating = int(parsed_response.get("rating", 5))
                                     ai_bulls = parsed_response.get("bull_points", [])
                                     ai_bears = parsed_response.get("bear_points", [])
                                     ai_macro = parsed_response.get("macro_synthesis", "")
-                                    st.session_state["ai_memory"][target_asset] = {"verdict": ai_verdict, "rating": ai_rating, "bulls": ai_bulls, "bears": ai_bears, "macro": ai_macro}
+                                    st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro}
                                 else:
                                     ai_verdict, error_api = "ERROR API", f"Error {response.status_code}: {response.text}"
-                            except Exception as e: ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
+                            except Exception as e:
+                                ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
                     
                     if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
-                        score, ma50, ma200 = 5.0, hist_data['Close'].tail(50).mean(), hist_data['Close'].mean()
+                        score = 5.0
+                        ma50 = hist_data['Close'].tail(50).mean()
+                        ma200 = hist_data['Close'].mean()
                         if current_price < ma50 and current_price > ma200: score += 2.0; ai_bulls.append("Corrección saludable a corto plazo.")
                         elif current_price < ma200: score += 3.0; ai_bulls.append("Cotiza bajo su MA200. Descuento profundo.")
                         elif current_price > ma50 * 1.15: score -= 2.0; ai_bears.append("Sobrecomprado (>15% arriba de la MA50).")
@@ -718,6 +830,7 @@ with tab2: # RADAR V5 Y GEMINI
                     fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
                     fig_deep.update_layout(title=dict(text=f"{target_asset} | Análisis de 1 Año", font=dict(family="Playfair Display", size=18, color="#cbd5e1")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=40,b=10,l=10,r=10), showlegend=False, xaxis2=dict(showgrid=False), yaxis=dict(gridcolor="#1f2937"), yaxis2=dict(showgrid=False, showticklabels=False))
                     st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
+                    
                     bulls_html = "".join([f"<li style='margin-bottom:4px;'>{r}</li>" for r in ai_bulls])
                     bears_html = "".join([f"<li style='margin-bottom:4px;'>{r}</li>" for r in ai_bears])
                     st.markdown(
@@ -741,9 +854,6 @@ with tab2: # RADAR V5 Y GEMINI
                         ),
                         unsafe_allow_html=True
                     )
-                    if asset_news:
-                        news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{n['link']}' target='_blank' style='color:#d4af37; text-decoration:none;'>{n['title']}</a></li>" for n in asset_news])
-                        st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
                     
                 with col_stats:
                     if is_owned:
@@ -790,9 +900,10 @@ with tab2: # RADAR V5 Y GEMINI
             else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
     else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
 
-with tab3: # RIESGO & SMART DCA
+    # MÓDULO CUANTITATIVO DE RIESGO
+    st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Módulo Cuantitativo de Riesgo y Correlación</h4>", unsafe_allow_html=True)
-    if st.session_state.get("modo_pro_toggle", False) and not summary.empty:
+    if not summary.empty:
         @st.cache_data(ttl=86400, max_entries=50) 
         def get_advanced_risk_metrics(tickers):
             try:
@@ -875,6 +986,52 @@ with tab3: # RIESGO & SMART DCA
                 else: st.info("Necesitas al menos 2 activos en tu portafolio para generar el mapa de calor de correlación.")
     else: st.info("💡 Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
 
+    # CIO VIRTUAL (EARNINGS)
+    st.markdown("---")
+    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:5px; letter-spacing:1px;' class='notranslate' translate='no'>CIO Virtual: Reportes y Earnings</h4>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Cruza datos de dividendos y reportes trimestrales con el entorno macroeconómico para generar tu informe ejecutivo semanal.</p>", unsafe_allow_html=True)
+    
+    if not summary.empty:
+        if st.button("Generar Reporte de Earnings & Macro", use_container_width=True):
+            with st.spinner("Recopilando calendarios de reportes y redactando informe del CIO..."):
+                backend_api_key = None
+                try: backend_api_key = st.secrets["GEMINI_API_KEY"]
+                except: pass
+                
+                if backend_api_key:
+                    try:
+                        import requests
+                        clean_key = str(backend_api_key).strip()
+                        headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
+                        assets_list = ", ".join(summary["ticker"].tolist())
+                        
+                        prompt_cio = f"""
+                        Eres el 'CIO Virtual' (Chief Investment Officer) de un Multi-Family Office. 
+                        El portafolio tiene exposición a estos activos: {assets_list}.
+                        
+                        Instrucción: Escribe un 'Resumen Ejecutivo Semanal' enfocado en Earnings (Reportes Trimestrales) y Dividendos de estos activos.
+                        Cruza esta información con los eventos macroeconómicos más relevantes del momento para anticipar movimientos del mercado. 
+                        Mantén un tono institucional, claro y directo. Usa viñetas para la legibilidad.
+                        
+                        Estructura estricta (sin usar asteriscos de markdown):
+                        RESUMEN MACROECONÓMICO: [1 párrafo del panorama global actual]
+                        EXPECTATIVAS DE EARNINGS: [Menciona 2 o 3 activos clave del portafolio que deban vigilarse pronto]
+                        ESTRATEGIA DE DIVIDENDOS E IMPUESTOS: [Cómo preparar estos ingresos pasivos para la próxima etapa contable]
+                        """
+                        
+                        payload = {"contents": [{"parts": [{"text": prompt_cio}]}], "generationConfig": {"temperature": 0.3}}
+                        response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", headers=headers, json=payload)
+                        if response.status_code == 200:
+                            st.session_state["cio_report"] = response.json()['candidates'][0]['content']['parts'][0]['text']
+                        else: st.error("Error al generar el reporte de la IA.")
+                    except Exception as e: st.error(f"Error de conexión: {e}")
+                else: st.warning("Configura tu API Key de Gemini para activar al CIO Virtual.")
+                    
+        if st.session_state.get("cio_report"):
+            st.markdown(f"<div class='pos-box'><p style='color:#e5e7eb; font-size:0.95rem; line-height:1.6; white-space:pre-wrap;'>{st.session_state['cio_report']}</p></div>", unsafe_allow_html=True)
+
+    # SMART DCA
+    st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA (Rebalanceo)</h4>", unsafe_allow_html=True)
     if not summary.empty:
         c_tgt1, c_tgt2, c_tgt3, c_dca = st.columns(4)
@@ -897,164 +1054,110 @@ with tab3: # RIESGO & SMART DCA
             st.markdown(f"<div class='m-card'><div class='m-title'>Ruta Óptima de Capital</div><div class='pos-row'><span class='pos-label'>ETF:</span><span class='pos-val c-grn'>${comp_sug['ETF']:,.2f}</span></div><div class='pos-row'><span class='pos-label'>Acciones:</span><span class='pos-val c-grn'>${comp_sug['Acción']:,.2f}</span></div><div class='pos-row'><span class='pos-label'>Cripto:</span><span class='pos-val c-grn'>${comp_sug['Cripto']:,.2f}</span></div></div>", unsafe_allow_html=True)
         else: st.warning("Los objetivos deben sumar 100%.")
 
-with tab4: # BOLA DE NIEVE Y CIO VIRTUAL
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📈 La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
-    if not cash_df.empty:
-        df_hist = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
-        if not df_hist.empty:
-            df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
-            df_hist = df_hist.sort_values("fecha")
-            def calc_flujo(row):
-                val = abs(float(row["monto_mxn"]))
-                return val if row["tipo"] == "DEPOSITO" else -val
-                
-            df_hist["flujo_neto"] = df_hist.apply(calc_flujo, axis=1)
-            df_hist["capital_acumulado"] = df_hist["flujo_neto"].cumsum()
-            
-            df_hoy = pd.DataFrame({"fecha": [pd.to_datetime(datetime.today().date())], "capital_acumulado": [df_hist["capital_acumulado"].iloc[-1]]})
-            df_hist = pd.concat([df_hist, df_hoy], ignore_index=True)
-
-            fig_snow = go.Figure()
-            fig_snow.add_trace(go.Scatter(
-                x=df_hist["fecha"], y=df_hist["capital_acumulado"], fill='tozeroy', mode='lines+markers',
-                line=dict(color="#d4af37", width=3), marker=dict(size=6, color="#d4af37", symbol="circle"),
-                fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
-            ))
-            
-            color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#fb7185"
-            fig_snow.add_trace(go.Scatter(
-                x=[df_hist["fecha"].iloc[0], df_hist["fecha"].iloc[-1]], y=[total_portafolio, total_portafolio],
-                mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
-            ))
-
-            fig_snow.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10, b=10, l=10, r=10), height=320, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
-            fig_snow.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
-            fig_snow.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
-            st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
-        else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
-    else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
-
-    st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT dca_frequency, goal_name FROM users WHERE user_id=%s", (active_client_id,))
-        user_data = cur.fetchone()
-        user_freq, meta_nombre = user_data[0], user_data[1]
-    except: user_freq, meta_nombre = "MENSUAL", "Libertad Financiera"
-    cur.close(); conn.close()
-
-    def get_period_index(date_str, freq):
-        dt = pd.to_datetime(date_str)
-        if freq == "SEMANAL": return int(dt.timestamp() // (7 * 86400))
-        elif freq == "QUINCENAL": return dt.year * 24 + dt.month * 2 + (0 if dt.day <= 15 else 1)
-        else: return dt.year * 12 + dt.month
-
-    racha_actual, racha_maxima, ahorro_racha = 0, 0, 0.0
-    txt_frecuencia = "Semanas" if user_freq == "SEMANAL" else ("Quincenas" if user_freq == "QUINCENAL" else "Meses")
-
-    if not cash_df.empty:
-        dep_df = cash_df[cash_df["tipo"] == "DEPOSITO"].copy()
-        if not dep_df.empty:
-            dep_df["period_idx"] = dep_df["fecha"].apply(lambda x: get_period_index(x, user_freq))
-            dep_idx = dep_df.groupby("period_idx")["monto_mxn"].sum().reset_index()
-            periodos = sorted(dep_idx["period_idx"].tolist(), reverse=True)
-            p_eval = get_period_index(datetime.today(), user_freq)
-            if periodos and periodos[0] < p_eval: p_eval -= 1
-                
-            for p in periodos:
-                if p == p_eval:
-                    racha_actual += 1
-                    ahorro_racha += float(dep_idx[dep_idx["period_idx"] == p]["monto_mxn"].iloc[0])
-                    p_eval -= 1
-                elif p > p_eval: continue
-                else: break
-                    
-            p_asc = sorted(dep_idx["period_idx"].tolist())
-            curr_strk = 1 if p_asc else 0
-            max_strk = curr_strk
-            if p_asc:
-                for i in range(1, len(p_asc)):
-                    if p_asc[i] == p_asc[i-1] + 1: curr_strk += 1
-                    else: curr_strk = 1
-                    if curr_strk > max_strk: max_strk = curr_strk
-            racha_maxima = max_strk
-
-    if racha_actual == 0: color_racha, emoji_racha, rango_txt = "#64748b", "❄️", "Inactivo"
-    elif racha_actual <= 2: color_racha, emoji_racha, rango_txt = "#fbbf24", "✨", "Iniciador"
-    elif racha_actual <= 5: color_racha, emoji_racha, rango_txt = "#f97316", "🔥", "Constante"
-    elif racha_actual <= 11: color_racha, emoji_racha, rango_txt = "#00f0ff", "⚡", "Pro"
-    else: color_racha, emoji_racha, rango_txt = "#d4af37", "👑", "Leyenda"
-
-    hitos = [10000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000]
-    meta_actual = next((h for h in hitos if h > total_portafolio), hitos[-1])
-    progreso_meta = min((total_portafolio / meta_actual) * 100, 100)
-    faltante = max(0, meta_actual - total_portafolio)
-    tasa_anual = 0.10
-    aportacion_promedio = (ahorro_racha / racha_actual) if racha_actual > 0 else 0
-    if user_freq == "SEMANAL": pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 52, tasa_anual / 52
-    elif user_freq == "QUINCENAL": pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 24, tasa_anual / 24
-    else: pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 12, tasa_anual / 12
-
-    proyeccion_5a = (total_portafolio * ((1 + r_periodo)**n_periodos)) + (pmt * (((1 + r_periodo)**n_periodos - 1) / r_periodo)) if pmt > 0 else total_portafolio
-
-    col_g1, col_g2, col_g3 = st.columns([1.2, 1.5, 1.2])
-    with col_g1:
-        st.markdown(
-            f"<div class='metric-card notranslate' translate='no' style='text-align:center; border-color:{color_racha}40;'>"
-            f"<div class='metric-title'>Nivel DCA: <span style='color:{color_racha};'>{rango_txt}</span></div>"
-            f"<div style='font-family:\"Playfair Display\", serif; font-size:2.8rem; font-weight:400; color:{color_racha}; margin:5px 0;'>{racha_actual} {emoji_racha}</div>"
-            f"<div class='metric-subtext' style='margin-bottom:8px;'>{txt_frecuencia} seguidas • Récord: <b style='color:white;'>{max(racha_actual, racha_maxima)}</b></div>"
-            f"<div style='font-size:0.75rem; color:#34d399; background:rgba(52, 211, 153, 0.05); padding:6px; border-radius:6px; border:1px solid rgba(52, 211, 153, 0.2);'>"
-            f"Ahorro en racha: <b>${ahorro_racha:,.2f}</b></div></div>", unsafe_allow_html=True
-        )
-    with col_g2:
-        st.markdown(
-            f"<div class='metric-card notranslate' translate='no' style='display:flex; flex-direction:column; justify-content:center;'>"
-            f"<div class='metric-title' style='color:#d4af37 !important;'>{meta_nombre}</div>"
-            f"<div class='metric-value' style='font-size:1.1rem;'>Hito: ${meta_actual:,.2f} MXN</div>"
-            f"<div style='width:100%;background-color:#1f2937;border-radius:12px;height:22px;position:relative; overflow:hidden; border: 1px solid #374151; margin-top:8px;'>"
-            f"<div style='width:{progreso_meta}%;background:linear-gradient(90deg, #d4af37 0%, #fcf6ba 100%);height:100%; border-radius:12px;'></div>"
-            f"</div><div class='metric-subtext' style='margin-top:12px;'>Faltan <b style='color:#e5e7eb;'>${faltante:,.2f} MXN</b></div></div>", unsafe_allow_html=True
-        )
-    with col_g3:
-        st.markdown(
-            f"<div class='metric-card notranslate' translate='no' style='border-color:#c084fc40; background:rgba(192, 132, 252, 0.02) !important;'>"
-            f"<div class='metric-title' style='color:#c084fc !important;'>Tu Futuro en 5 Años</div>"
-            f"<div style='font-family:\"Playfair Display\", serif; font-size:1.6rem; font-weight:400; color:white; margin:10px 0;'>${proyeccion_5a:,.2f}</div>"
-            f"<div class='metric-subtext'>Si mantienes tu racha {txt_frecuencia.lower()} de <b>${aportacion_promedio:,.0f}</b> a una tasa del 10% anual.</div></div>", unsafe_allow_html=True
-        )
-
-with tab5: # HISTORIAL Y CAJA
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📊 Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
-    tab_ops, tab_caja = st.tabs(["Historial de Transacciones", "Flujo de Caja"])
-
-    with tab_ops:
-        if not tx_df.empty:
-            col_f1, col_f2 = st.columns([1, 3])
-            with col_f1:
-                tickers_disp = ["Todos"] + sorted(tx_df["ticker"].unique().tolist())
-                filtro_t = st.selectbox("Filtrar por Activo", tickers_disp, key="filtro_ticker_hist")
-            df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
-            st.dataframe(
-                df_mostrar_tx[["fecha", "tipo_operacion", "ticker", "clase", "titulos", "precio_unitario", "tipo_cambio", "total_mxn"]].rename(
-                    columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Ticker", "clase": "Clase", "titulos": "Títulos", "precio_unitario": "Precio U.", "tipo_cambio": "T.C.", "total_mxn": "Total MXN"}
-                ).style.format({"Títulos": "{:.5f}", "Precio U.": "${:,.2f}", "T.C.": "${:,.2f}", "Total MXN": "${:,.2f}"}), 
-                hide_index=True, use_container_width=True, height=280
+# ==========================================
+# 9. MÓDULO FÁCIL: PORTAFOLIO SIMPLIFICADO
+# ==========================================
+else:
+    st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Tu Portafolio Simplificado</h4>", unsafe_allow_html=True)
+    
+    if not summary.empty:
+        best_idx = summary['pnl'].idxmax()
+        worst_idx = summary['pnl'].idxmin()
+        best_row = summary.loc[best_idx]
+        worst_row = summary.loc[worst_idx]
+        
+        col_easy1, col_easy2, col_easy3 = st.columns(3)
+        with col_easy1:
+            st.markdown(
+                f"<div class='metric-card' style='border-color:rgba(52, 211, 153, 0.3) !important;'>"
+                f"<div class='metric-title' style='color:#34d399 !important;'>El Salario Invisible</div>"
+                f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>${salario_invisible:,.2f} <span style='font-size:1rem;color:#8b949e;font-family:\"Inter\";'>MXN / año</span></div>"
+                f"<div class='metric-subtext'>Ingreso pasivo estimado por dividendos. (Tus criptos y oro no pagan renta, ¡pero crecen!)</div></div>", 
+                unsafe_allow_html=True
             )
-        else: st.caption("Aún no tienes transacciones registradas.")
-
-    with tab_caja:
-        if not cash_df.empty:
-            col_c1, col_c2 = st.columns([1, 3])
-            with col_c1:
-                tipos_disp = ["Todos"] + sorted(cash_df["tipo"].unique().tolist())
-                filtro_c = st.selectbox("Filtrar por Tipo", tipos_disp, key="filtro_tipo_caja")
-            df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
-            st.dataframe(
-                df_mostrar_cash[["fecha", "tipo", "concepto", "monto_mxn"]].rename(
-                    columns={"fecha": "Fecha", "tipo": "Tipo", "concepto": "Concepto", "monto_mxn": "Monto MXN"}
-                ).style.format({"Monto MXN": "${:+,.2f}"}), 
-                hide_index=True, use_container_width=True, height=280
+            
+        with col_easy2:
+            c_best = "text-neon-green" if best_row['pnl'] >= 0 else "text-neon-red"
+            st.markdown(
+                f"<div class='metric-card'>"
+                f"<div class='metric-title' style='color:#d4af37 !important;'>Tu Empleado del Mes (MVP)</div>"
+                f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{best_row['ticker']} <span class='{c_best}' style='font-size:1.2rem;font-family:\"Inter\";'>({best_row['pnl']:+,.2f} MXN)</span></div>"
+                f"<div class='metric-subtext'>Este activo está cargando con el rendimiento de tu portafolio actual.</div></div>", 
+                unsafe_allow_html=True
             )
-        else: st.caption("Aún no tienes movimientos de caja registrados.")
+            
+        with col_easy3:
+            c_worst = "text-neon-green" if worst_row['pnl'] >= 0 else "text-neon-red"
+            st.markdown(
+                f"<div class='metric-card'>"
+                f"<div class='metric-title' style='color:#fb7185 !important;'>En Recuperación</div>"
+                f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{worst_row['ticker']} <span class='{c_worst}' style='font-size:1.2rem;font-family:\"Inter\";'>({worst_row['pnl']:+,.2f} MXN)</span></div>"
+                f"<div class='metric-subtext'>Está tropezando temporalmente, pero el mercado da revanchas.</div></div>", 
+                unsafe_allow_html=True
+            )
+            
+        st.markdown("<p style='font-size:0.75rem; color:#64748b; font-style:italic; text-align:center; margin-top:10px;'>* Nota legal: Las ganancias o pérdidas de tus activos son <b>NO REALIZADAS</b>. No has ganado ni perdido este dinero realmente hasta que decidas vender. Es solo una radiografía de hoy.</p>", unsafe_allow_html=True)
+        
+        st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; text-align:center;' class='notranslate' translate='no'>Radiografía Visual de tu Dinero</h4>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#64748b;font-size:0.8rem;text-align:center;'>Haz clic en el centro o en las categorías para navegar por tu portafolio.</p>", unsafe_allow_html=True)
+        
+        summary_plot = summary.copy()
+        summary_plot['Clase'] = summary_plot['Clase'].fillna('Otro')
+        summary_plot['Sector'] = summary_plot['Sector'].fillna('Desconocido')
+        
+        fig_sun = px.sunburst(
+            summary_plot, 
+            path=['Clase', 'Sector', 'ticker'], 
+            values='valor_actual',
+            color='retorno_pct', 
+            color_continuous_scale='RdYlGn',
+            color_continuous_midpoint=0
+        )
+        fig_sun.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=20, b=20, l=10, r=10), height=550)
+        st.plotly_chart(fig_sun, use_container_width=True, config=plotly_config)
+        
+    else:
+        st.info("💡 **Modo Simple Activo:** Aún no tienes activos en tu portafolio. Registra tus primeras compras en el panel lateral para ver tu Salario Invisible y tu Radiografía de inversiones.")
+    st.markdown("---")
+
+# ==========================================
+# 10. HISTORIAL CONTABLE Y CAJA
+# ==========================================
+st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📚 Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
+tab_ops, tab_caja = st.tabs(["📊 Historial de Transacciones", "🏦 Flujo de Caja"])
+
+with tab_ops:
+    if not tx_df.empty:
+        col_f1, col_f2 = st.columns([1, 3])
+        with col_f1:
+            tickers_disp = ["Todos"] + sorted(tx_df["ticker"].unique().tolist())
+            filtro_t = st.selectbox("Filtrar por Activo", tickers_disp, key="filtro_ticker_hist")
+        
+        df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
+        
+        st.dataframe(
+            df_mostrar_tx[["fecha", "tipo_operacion", "ticker", "clase", "titulos", "precio_unitario", "tipo_cambio", "total_mxn"]].rename(
+                columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Ticker", "clase": "Clase", "titulos": "Títulos", "precio_unitario": "Precio U.", "tipo_cambio": "T.C.", "total_mxn": "Total MXN"}
+            ).style.format({"Títulos": "{:.5f}", "Precio U.": "${:,.2f}", "T.C.": "${:,.2f}", "Total MXN": "${:,.2f}"}), 
+            hide_index=True, use_container_width=True, height=280
+        )
+    else: 
+        st.caption("Aún no tienes transacciones registradas.")
+
+with tab_caja:
+    if not cash_df.empty:
+        col_c1, col_c2 = st.columns([1, 3])
+        with col_c1:
+            tipos_disp = ["Todos"] + sorted(cash_df["tipo"].unique().tolist())
+            filtro_c = st.selectbox("Filtrar por Tipo", tipos_disp, key="filtro_tipo_caja")
+            
+        df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
+        
+        st.dataframe(
+            df_mostrar_cash[["fecha", "tipo", "concepto", "monto_mxn"]].rename(
+                columns={"fecha": "Fecha", "tipo": "Tipo", "concepto": "Concepto", "monto_mxn": "Monto MXN"}
+            ).style.format({"Monto MXN": "${:+,.2f}"}), 
+            hide_index=True, use_container_width=True, height=280
+        )
+    else: 
+        st.caption("Aún no tienes movimientos de caja registrados.")
