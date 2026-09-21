@@ -112,17 +112,99 @@ def init_db():
 
 init_db()
 
+# NOTA: las llaves literales del JSON de ejemplo van ESCAPADAS ({{ }}) porque este
+# prompt se rellena con .format(). Sin escapar, .format() interpreta {"verdict": ...}
+# como un campo y lanza KeyError -> "Error interno: 'verdict'".
 PROMPT_MAESTRO = """
 Eres el 'Motor Algorítmico V5', un analista cuantitativo y macroeconómico de inteligencia artificial.
 DATOS DEL ACTIVO: Ticker: {ticker} | Precio: {current_price} USD | Rango 52W: {low_52w} - {high_52w} | P/E: {pe_ratio} | EPS: {eps}
 PORTAFOLIO: Costo Promedio: {avg_cost} | Retorno: {net_return_pct}% | Peso: {portfolio_weight}%
 CONTEXTO MACRO: {macro_news_context}
 Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido.
-{"verdict": "DCA FUERTE", "rating": 8, "bull_points": ["Punto 1"], "bear_points": ["Punto 1"], "macro_synthesis": "Síntesis de 2 líneas."}
+{{"verdict": "DCA FUERTE", "rating": 8, "bull_points": ["Punto 1"], "bear_points": ["Punto 1"], "macro_synthesis": "Síntesis de 2 líneas."}}
 """
 
 ASSET_CLASS = {"ISAC": "ETF", "XNAS": "ETF", "XDWH": "ETF", "EIMI": "ETF", "NUCL": "ETF", "GOOGL": "Acción", "MELI": "Acción", "NOW": "Acción", "ASML": "Acción", "NVO": "Acción", "MA": "Acción", "V": "Acción", "BTC": "Cripto"}
 ASSET_SECTOR = {"ISAC": "Renta Variable Global", "XNAS": "Tecnología (Índice)", "XDWH": "Salud Global", "EIMI": "Mercados Emergentes", "NUCL": "Energía/Utilities", "GOOGL": "Servicios de Comunicación", "MELI": "Comercio Electrónico", "NOW": "Software B2B", "ASML": "Semiconductores", "NVO": "Biotecnología / Salud", "MA": "Servicios Financieros", "V": "Servicios Financieros", "BTC": "Criptoactivos"}
+
+# ==========================================
+# 3.1 GEMINI: MODELOS Y HELPERS ROBUSTOS
+# ==========================================
+# Los modelos Gemini 1.5 ya están apagados (responden 404) y gemini-2.5-flash se retira
+# el 16-oct-2026. Se usa una cadena de modelos: si uno responde 404 se prueba el siguiente.
+# Puedes forzar uno propio agregando GEMINI_MODEL = "nombre-del-modelo" en secrets.toml.
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_MODELOS_DEFAULT = ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"]
+
+def _cadena_modelos_gemini():
+    cadena = []
+    try:
+        override = st.secrets["GEMINI_MODEL"]
+        if override: cadena.append(str(override).strip())
+    except Exception: pass
+    for m in GEMINI_MODELOS_DEFAULT:
+        if m not in cadena: cadena.append(m)
+    return cadena
+
+def llamar_gemini(prompt, api_key, temperature=0.2, json_mode=False, timeout=45):
+    """Llama a la API de Gemini probando la cadena de modelos ante un 404.
+    Devuelve (texto, mensaje_error). Si todo va bien, mensaje_error == ''."""
+    import requests
+    headers = {'Content-Type': 'application/json', 'x-goog-api-key': str(api_key).strip()}
+    gen_cfg = {"temperature": temperature}
+    if json_mode: gen_cfg["responseMimeType"] = "application/json"
+    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
+    ultimo_error = "Sin respuesta de la API."
+    for modelo in _cadena_modelos_gemini():
+        url = f"{GEMINI_API_BASE}/{modelo}:generateContent"
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        except Exception as e:
+            ultimo_error = f"Fallo de conexión con {modelo}: {str(e)}"
+            break
+        if resp.status_code == 200:
+            try:
+                partes = resp.json()["candidates"][0]["content"]["parts"]
+                texto = "".join(p.get("text", "") for p in partes if isinstance(p, dict) and not p.get("thought"))
+                if texto.strip(): return texto, ""
+                ultimo_error = f"{modelo}: respuesta vacía (posible bloqueo de seguridad)."
+            except Exception as e:
+                ultimo_error = f"{modelo}: estructura de respuesta inesperada ({str(e)})."
+            break
+        elif resp.status_code == 404:
+            ultimo_error = f"Error 404: el modelo '{modelo}' no está disponible."
+            continue
+        else:
+            ultimo_error = f"Error {resp.status_code}: {resp.text[:300]}"
+            break
+    return None, ultimo_error
+
+def extraer_json_robusto(texto):
+    """Aísla el bloque {...} aunque venga envuelto en markdown o con texto extra."""
+    if not texto: return {}
+    limpio = re.sub(r"```(?:json)?", "", str(texto), flags=re.IGNORECASE).strip()
+    m = re.search(r"\{.*\}", limpio, flags=re.DOTALL)
+    candidato = m.group(0) if m else limpio
+    for intento in (candidato, re.sub(r",\s*([}\]])", r"\1", candidato)):
+        try:
+            data = json.loads(intento)
+            if isinstance(data, dict): return data
+        except Exception: continue
+    return {}
+
+def _rating_seguro(valor, default=5):
+    try:
+        m = re.search(r"\d+(?:\.\d+)?", str(valor))
+        n = int(round(float(m.group(0)))) if m else default
+    except Exception: n = default
+    return max(1, min(10, n))
+
+def _como_lista(valor, default):
+    if isinstance(valor, str) and valor.strip(): return [valor.strip()]
+    if isinstance(valor, (list, tuple)):
+        out = [str(x).strip() for x in valor if str(x).strip()]
+        if out: return out
+    return default
 
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
@@ -363,6 +445,14 @@ def calc_liquidez_real(df_caja):
 
 liquidez_mxn = calc_liquidez_real(cash_df)
 
+def _serie_cierre(data, symbol):
+    """Serie de cierres limpia para un símbolo; Serie vacía si Yahoo no lo devolvió."""
+    try:
+        s = data["Close"][symbol]
+        return s.dropna()
+    except Exception:
+        return pd.Series(dtype=float)
+
 @st.cache_data(ttl=300, max_entries=50)
 def get_prices_and_sparklines(tickers, fallback):
     yf_tickers = []
@@ -374,17 +464,15 @@ def get_prices_and_sparklines(tickers, fallback):
     
     macro_tickers = ["USDMXN=X", "EURMXN=X", "GBPMXN=X", "^GSPC", "^NDX", "^DJI", "GC=F", "BTC-USD"]
     download_list = list(set(yf_tickers + macro_tickers))
-    data = yf.download(download_list, period="1mo", progress=False)
+    try:
+        data = yf.download(download_list, period="1mo", progress=False)
+    except Exception:
+        data = pd.DataFrame()
     
     def get_latest(symbol):
-        try: return float(data["Close"][symbol].dropna().iloc[-1])
-        except: return 0.0
-        
-    def get_chg(symbol):
-        try: 
-            s = data["Close"][symbol].dropna()
-            return ((float(s.iloc[-1]) - float(s.iloc[-2])) / float(s.iloc[-2])) * 100
-        except: return 0.0
+        s = _serie_cierre(data, symbol)
+        try: return float(s.iloc[-1]) if not s.empty else 0.0
+        except Exception: return 0.0
 
     usd = get_latest("USDMXN=X") or 18.50
     pxs_mxn, pxs_usd, spark_data = {}, {}, {}
@@ -392,21 +480,33 @@ def get_prices_and_sparklines(tickers, fallback):
         for t in tickers:
             try:
                 yf_symbol = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
-                raw_usd_series = data["Close"][yf_symbol].dropna()
+                raw_usd_series = _serie_cierre(data, yf_symbol)
+                if raw_usd_series.empty:
+                    pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
+                    continue
                 hist_prices_mxn = (raw_usd_series * usd).tolist()
                 spark_data[t] = hist_prices_mxn
-                pxs_usd[t] = raw_usd_series.iloc[-1] if not raw_usd_series.empty else 0.0
+                pxs_usd[t] = raw_usd_series.iloc[-1]
                 pxs_mxn[t] = hist_prices_mxn[-1] if hist_prices_mxn else fallback.get(t, 0.0)
             except Exception: 
                 pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
                 
+    # Cada símbolo macro SIEMPRE devuelve las llaves 'price', 'p' y 'pct' (aunque Yahoo falle),
+    # así el Ticker Tape nunca lanza KeyError.
     macro_data = {}
     for m in macro_tickers:
-        try: 
-            s = data["Close"][m].dropna()
-            macro_data[m] = {"p": float(s.iloc[-1]), "pct": float(((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2]) * 100)}
-        except: 
-            macro_data[m] = {"p": 0.0, "pct": 0.0}
+        macro_data[m] = {"price": 0.0, "p": 0.0, "pct": 0.0}
+        try:
+            s = _serie_cierre(data, m)
+            if not s.empty:
+                last_px = float(s.iloc[-1])
+                pct = 0.0
+                if len(s) >= 2 and float(s.iloc[-2]) != 0:
+                    pct = float(((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2]) * 100)
+                if np.isfinite(last_px):
+                    macro_data[m] = {"price": last_px, "p": last_px, "pct": pct if np.isfinite(pct) else 0.0}
+        except Exception:
+            pass
         
     return pxs_mxn, pxs_usd, spark_data, usd, macro_data
 
@@ -475,8 +575,16 @@ for name, stats in macros.items():
     elif name == "BTC-USD": display_name = "BTC/USD"
     else: continue
 
-    pct_val = stats.get('pct', 0.0)
-    p_val = stats.get('p', 0.0)
+    # Lectura defensiva: nunca se asume que existan las llaves 'price' / 'pct'.
+    stats = stats if isinstance(stats, dict) else {}
+    try: pct_val = float(stats.get('pct', 0.0) or 0.0)
+    except Exception: pct_val = 0.0
+    try: p_val = float(stats.get('price', stats.get('p', 0.0)) or 0.0)
+    except Exception: p_val = 0.0
+
+    if p_val <= 0:
+        items_html += f"<b>{display_name}:</b> <span style='color: #64748b;'>N/D</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+        continue
     
     color = "#34d399" if pct_val >= 0 else "#fb7185"
     sign = "+" if pct_val >= 0 else ""
@@ -770,8 +878,8 @@ if st.session_state.get("modo_pro_toggle", False):
                 
                 pe_ratio = asset_info.get("trailingPE", "N/A")
                 eps = asset_info.get("trailingEps", "N/A")
-                high_52 = asset_info.get("fiftyTwoWeekHigh", current_price * 1.1)
-                low_52 = asset_info.get("fiftyTwoWeekLow", current_price * 0.9)
+                high_52 = asset_info.get("fiftyTwoWeekHigh") or current_price * 1.1
+                low_52 = asset_info.get("fiftyTwoWeekLow") or current_price * 0.9
                 noticias_texto = "\n".join([f"- {n['title']}" for n in asset_news]) if asset_news else "Sin noticias relevantes recientes."
 
                 mem_data = st.session_state["ai_memory"].get(target_asset)
@@ -800,26 +908,21 @@ if st.session_state.get("modo_pro_toggle", False):
                         else:
                             st.session_state["last_gemini_call"] = current_time
                             try:
-                                import requests
-                                clean_key = str(backend_api_key).strip()
-                                headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
                                 prompt_filled = PROMPT_MAESTRO.format(ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2), pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2), portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo.")
-                                payload = {"contents": [{"parts": [{"text": prompt_filled}]}], "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}}
-                                response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", headers=headers, json=payload)
-                                if response.status_code == 200:
-                                    try:
-                                        ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                                        parsed_response = json.loads(ai_response)
-                                        ai_verdict = parsed_response.get("verdict", "HOLD")
-                                        ai_rating = int(parsed_response.get("rating", 5))
-                                        ai_bulls = parsed_response.get("bull_points", ["Puntos fuertes en evaluación."])
-                                        ai_bears = parsed_response.get("bear_points", ["Riesgos en evaluación."])
-                                        ai_macro = parsed_response.get("macro_synthesis", "Evaluación macro en proceso.")
+                                texto_ia, err_ia = llamar_gemini(prompt_filled, backend_api_key, temperature=0.2, json_mode=True)
+                                if texto_ia:
+                                    parsed_response = extraer_json_robusto(texto_ia)
+                                    if parsed_response:
+                                        ai_verdict = str(parsed_response.get("verdict") or "HOLD").strip()
+                                        ai_rating = _rating_seguro(parsed_response.get("rating", 5))
+                                        ai_bulls = _como_lista(parsed_response.get("bull_points"), ["Puntos fuertes en evaluación."])
+                                        ai_bears = _como_lista(parsed_response.get("bear_points"), ["Riesgos en evaluación."])
+                                        ai_macro = str(parsed_response.get("macro_synthesis") or "Evaluación macro en proceso.").strip()
                                         st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro}
-                                    except Exception as e:
-                                        ai_verdict, error_api = "ERROR PARSEO", f"Error al leer JSON: {str(e)}"
+                                    else:
+                                        ai_verdict, error_api = "ERROR PARSEO", "La IA no devolvió un JSON legible."
                                 else:
-                                    ai_verdict, error_api = "ERROR API", f"Error {response.status_code}: {response.text}"
+                                    ai_verdict, error_api = "ERROR API", err_ia
                             except Exception as e:
                                 ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
                     
@@ -1022,9 +1125,6 @@ if st.session_state.get("modo_pro_toggle", False):
                 
                 if backend_api_key:
                     try:
-                        import requests
-                        clean_key = str(backend_api_key).strip()
-                        headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
                         assets_list = ", ".join(summary["ticker"].tolist())
                         
                         prompt_cio = f"""
@@ -1041,14 +1141,9 @@ if st.session_state.get("modo_pro_toggle", False):
                         ESTRATEGIA DE DIVIDENDOS E IMPUESTOS: [Cómo preparar estos ingresos pasivos para la próxima etapa contable]
                         """
                         
-                        payload = {"contents": [{"parts": [{"text": prompt_cio}]}], "generationConfig": {"temperature": 0.3}}
-                        response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", headers=headers, json=payload)
-                        if response.status_code == 200:
-                            try:
-                                st.session_state["cio_report"] = response.json()['candidates'][0]['content']['parts'][0]['text']
-                            except Exception as e:
-                                st.error(f"Error al procesar la respuesta: {str(e)}")
-                        else: st.error(f"Error al generar el reporte de la IA. Código: {response.status_code}")
+                        texto_cio, err_cio = llamar_gemini(prompt_cio, backend_api_key, temperature=0.3)
+                        if texto_cio: st.session_state["cio_report"] = texto_cio
+                        else: st.error(f"Error al generar el reporte de la IA. {err_cio}")
                     except Exception as e: st.error(f"Error de conexión: {e}")
                 else: st.warning("Configura tu API Key de Gemini para activar al CIO Virtual.")
                     
