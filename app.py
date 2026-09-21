@@ -319,16 +319,25 @@ if active_client_id == "USR-001":
             if st.form_submit_button("Ejecutar Operación", use_container_width=True):
                 f_ticker_clean = sanitize_ticker(f_ticker)
                 if f_ticker_clean and f_titulos > 0 and f_precio > 0:
-                    v_bruto = (f_titulos * f_precio) * f_tc
-                    costos = (f_comision + f_iva) * f_tc
-                    if f_tipo_op == "COMPRA": total_mxn = v_bruto + costos; imp_caja = -total_mxn; t_fin = f_titulos
-                    else: total_mxn = v_bruto - costos; imp_caja = total_mxn; t_fin = -f_titulos
+                    valor_bruto_mxn = (f_titulos * f_precio) * f_tc
+                    costos_mxn = (f_comision + f_iva) * f_tc
+                    
+                    if f_tipo_op == "COMPRA":
+                        total_op_mxn = valor_bruto_mxn + costos_mxn
+                        impacto_caja = -total_op_mxn
+                        titulos_final = f_titulos
+                    else:
+                        total_op_mxn = valor_bruto_mxn - costos_mxn
+                        impacto_caja = total_op_mxn
+                        titulos_final = -f_titulos
                         
                     conn = get_connection(); cur = conn.cursor(); ts_id = datetime.now().timestamp()
-                    cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, f_tc, total_mxn))
-                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
+                    cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, titulos_final, f_precio, f_comision, f_iva, f_tc, total_op_mxn))
+                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", impacto_caja))
                     conn.commit(); cur.close(); conn.close()
-                    st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0
+                    
+                    st.session_state["val_ticker"] = ""
+                    st.session_state["val_price"] = 0.0
                     st.success(f"✅ {f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
                 else: st.error("⚠️ Verifica el Ticker, Títulos y Precio.")
 
@@ -342,8 +351,7 @@ if active_client_id == "USR-001":
                 monto_final = f_monto if c_tipo_op == "DEPOSITO" else -f_monto
                 conn = get_connection(); cur = conn.cursor()
                 cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-TES-{datetime.now().timestamp()}", active_client_id, str(f_dep_fecha), c_tipo_op, f_concepto, float(monto_final)))
-                conn.commit(); cur.close(); conn.close()
-                st.success("Caja actualizada exitosamente."); st.rerun()
+                conn.commit(); cur.close(); conn.close(); st.success("Caja actualizada exitosamente."); st.rerun()
 
 
 # ==========================================
@@ -459,8 +467,7 @@ else:
 total_portafolio = total_activos + liquidez_mxn
 pnl_global = total_activos - total_invertido
 retorno_global = (pnl_global / total_invertido) * 100 if total_invertido > 0 else 0.0
-if not summary.empty: summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100
-else: summary["ponderacion_pct"] = 0.0
+summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100 if not summary.empty else 0.0
 
 
 # ==========================================
@@ -469,11 +476,12 @@ else: summary["ponderacion_pct"] = 0.0
 items_html = ""
 for name, stats in macros.items():
     display_name = "S&P 500" if name == "^GSPC" else ("NASDAQ" if name == "^NDX" else ("DOW" if name == "^DJI" else ("ORO" if name == "GC=F" else name)))
-    color = "#34d399" if stats['pct'] >= 0 else "#fb7185"
-    sign = "+" if stats['pct'] >= 0 else ""
-    price_str = f"${stats['price']:,.2f}" if "MXN" not in name else f"${stats['price']:.4f}"
-    if name == "BTC-USD": price_str = f"${stats['price']:,.0f}"
-    items_html += f"<b>{display_name}:</b> <span style='color: white;'>{price_str}</span> <span style='color: {color};'>({sign}{stats['pct']:.2f}%)</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+    color = "#34d399" if stats.get('pct', 0) >= 0 else "#fb7185"
+    sign = "+" if stats.get('pct', 0) >= 0 else ""
+    p_val = stats.get('p', 0.0)
+    price_str = f"${p_val:,.2f}" if "MXN" not in name else f"${p_val:.4f}"
+    if name == "BTC-USD": price_str = f"${p_val:,.0f}"
+    items_html += f"<b>{display_name}:</b> <span style='color: white;'>{price_str}</span> <span style='color: {color};'>({sign}{stats.get('pct',0):.2f}%)</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
 
 if not summary.empty:
     top_assets = summary.sort_values("valor_actual", ascending=False).head(5)
@@ -722,10 +730,10 @@ with tab2: # RADAR V5 Y GEMINI
                             f"{ai_rating}<span style='font-size:0.9rem;margin-left:2px;opacity:0.8;'>/10</span></div></div>"
                             f"<div style='display:flex;gap:20px;margin-bottom:15px;'>"
                             f"<div style='flex:1;background:rgba(52, 211, 153, 0.05);border:1px solid rgba(52, 211, 153, 0.2);border-radius:12px;padding:15px;'>"
-                            f"<p style='color:#34d399;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>🟢 Puntos Fuertes (Bulls)</p>"
+                            f"<p style='color:#34d399;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Puntos Fuertes (Bulls)</p>"
                             f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bulls_html}</ul></div>"
                             f"<div style='flex:1;background:rgba(251, 113, 133, 0.05);border:1px solid rgba(251, 113, 133, 0.2);border-radius:12px;padding:15px;'>"
-                            f"<p style='color:#fb7185;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>🔴 Riesgos (Bears)</p>"
+                            f"<p style='color:#fb7185;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Riesgos (Bears)</p>"
                             f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bears_html}</ul></div></div>"
                             f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
                             f"<p class='metric-title'>Síntesis Macroeconómica</p>"
@@ -735,7 +743,7 @@ with tab2: # RADAR V5 Y GEMINI
                     )
                     if asset_news:
                         news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{n['link']}' target='_blank' style='color:#d4af37; text-decoration:none;'>{n['title']}</a></li>" for n in asset_news])
-                        st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>📰 Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
                     
                 with col_stats:
                     if is_owned:
@@ -910,13 +918,13 @@ with tab4: # BOLA DE NIEVE Y CIO VIRTUAL
             fig_snow.add_trace(go.Scatter(
                 x=df_hist["fecha"], y=df_hist["capital_acumulado"], fill='tozeroy', mode='lines+markers',
                 line=dict(color="#d4af37", width=3), marker=dict(size=6, color="#d4af37", symbol="circle"),
-                fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido (Tu esfuerzo)", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
+                fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
             ))
             
             color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#fb7185"
             fig_snow.add_trace(go.Scatter(
                 x=[df_hist["fecha"].iloc[0], df_hist["fecha"].iloc[-1]], y=[total_portafolio, total_portafolio],
-                mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Actual del Portafolio", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
+                mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
             ))
 
             fig_snow.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10, b=10, l=10, r=10), height=320, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
@@ -1018,8 +1026,8 @@ with tab4: # BOLA DE NIEVE Y CIO VIRTUAL
         )
 
 with tab5: # HISTORIAL Y CAJA
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📚 Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
-    tab_ops, tab_caja = st.tabs(["📊 Historial de Transacciones", "🏦 Flujo de Caja"])
+    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📊 Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
+    tab_ops, tab_caja = st.tabs(["Historial de Transacciones", "Flujo de Caja"])
 
     with tab_ops:
         if not tx_df.empty:
