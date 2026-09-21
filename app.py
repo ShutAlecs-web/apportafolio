@@ -194,6 +194,7 @@ if st.session_state["user_id"] is None:
                 else: st.error("Credenciales incorrectas.")
     st.stop()
 
+
 # ==========================================
 # 5. GESTIÓN MULTI-CLIENTE Y SIDEBAR
 # ==========================================
@@ -373,7 +374,7 @@ def get_prices_and_sparklines(tickers, fallback):
             elif t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"]: yf_tickers.append(f"{t}.L")
             else: yf_tickers.append(t)
     
-    macro_tickers = ["USDMXN=X", "^GSPC", "^NDX", "^DJI", "GC=F", "BTC-USD"]
+    macro_tickers = ["USDMXN=X", "EURMXN=X", "GBPMXN=X", "^GSPC", "^NDX", "^DJI", "GC=F", "BTC-USD"]
     download_list = list(set(yf_tickers + macro_tickers))
     data = yf.download(download_list, period="1mo", progress=False)
     
@@ -403,8 +404,11 @@ def get_prices_and_sparklines(tickers, fallback):
                 
     macro_data = {}
     for m in macro_tickers:
-        try: s = data["Close"][m].dropna(); macro_data[m] = {"p": s.iloc[-1], "pct": ((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2]) * 100}
-        except: macro_data[m] = {"p": 0.0, "pct": 0.0}
+        try: 
+            s = data["Close"][m].dropna()
+            macro_data[m] = {"p": float(s.iloc[-1]), "pct": float(((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2]) * 100)}
+        except: 
+            macro_data[m] = {"p": 0.0, "pct": 0.0}
         
     return pxs_mxn, pxs_usd, spark_data, usd, macro_data
 
@@ -459,19 +463,43 @@ retorno_global = (pnl_global / total_invertido) * 100 if total_invertido > 0 els
 summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100 if not summary.empty else 0.0
 
 # ==========================================
-# 7. TICKER TAPE (BUCLE INFINITO CSS - MACRO ONLY)
+# 7. TICKER TAPE (BUCLE INFINITO CSS - MACRO + TOP ACTIVOS)
 # ==========================================
 items_html = ""
 for name, stats in macros.items():
-    display_name = "S&P 500" if name == "^GSPC" else ("NASDAQ" if name == "^NDX" else ("DOW" if name == "^DJI" else ("ORO" if name == "GC=F" else name)))
-    color = "#34d399" if stats.get('pct', 0) >= 0 else "#fb7185"
-    sign = "+" if stats.get('pct', 0) >= 0 else ""
-    p_val = stats.get('p', 0.0)
-    price_str = f"${p_val:,.2f}" if "MXN" not in name else f"${p_val:.4f}"
-    if name == "BTC-USD": price_str = f"${p_val:,.0f}"
-    items_html += f"<b>{display_name}:</b> <span style='color: white;'>{price_str}</span> <span style='color: {color};'>({sign}{stats.get('pct',0):.2f}%)</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+    if name == "^GSPC": display_name = "S&P 500"
+    elif name == "^NDX": display_name = "NASDAQ"
+    elif name == "^DJI": display_name = "DOW"
+    elif name == "GC=F": display_name = "ORO"
+    elif name == "USDMXN=X": display_name = "USD/MXN"
+    elif name == "EURMXN=X": display_name = "EUR/MXN"
+    elif name == "GBPMXN=X": display_name = "GBP/MXN"
+    elif name == "BTC-USD": display_name = "BTC/USD"
+    else: display_name = name
 
-# Multiplicar el contenido para evitar espacios negros
+    pct_val = stats.get('pct', 0.0)
+    p_val = stats.get('p', 0.0)
+    
+    color = "#34d399" if pct_val >= 0 else "#fb7185"
+    sign = "+" if pct_val >= 0 else ""
+    
+    if "MXN" in display_name:
+        price_str = f"${p_val:.4f}"
+    elif "BTC" in display_name:
+        price_str = f"${p_val:,.0f}"
+    else:
+        price_str = f"${p_val:,.2f}"
+        
+    items_html += f"<b>{display_name}:</b> <span style='color: white;'>{price_str}</span> <span style='color: {color};'>({sign}{pct_val:.2f}%)</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+
+if not summary.empty:
+    top_assets = summary.sort_values("valor_actual", ascending=False).head(5)
+    for _, row in top_assets.iterrows():
+        t = row["ticker"]
+        if t not in ["BTC"]:
+            price_str = f"${row['precio_mercado']:,.2f}"
+            items_html += f"<b>{t}:</b> <span style='color: white;'>{price_str}</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+
 ticker_content = items_html * 4
 
 ticker_html_css = f"""
@@ -509,7 +537,7 @@ else:
     k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Dinero en Efectivo <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
     k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div></div>", unsafe_allow_html=True)
 
-# 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN (Visibles en ambos modos)
+# 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN
 st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📈 La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
 if not cash_df.empty:
     df_hist = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
@@ -546,7 +574,7 @@ if not cash_df.empty:
     else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
 else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
 
-st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>🏆 Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
+st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
 conn = get_connection()
 cur = conn.cursor()
 try:
@@ -758,11 +786,11 @@ if st.session_state.get("modo_pro_toggle", False):
 
                 mem_data = st.session_state["ai_memory"].get(target_asset)
                 if mem_data:
-                    ai_verdict = mem_data.get("v", "HOLD")
-                    ai_rating = mem_data.get("r", 5)
-                    ai_bulls = mem_data.get("bl", [])
-                    ai_bears = mem_data.get("br", [])
-                    ai_macro = mem_data.get("m", "")
+                    ai_verdict = mem_data.get("verdict", "HOLD")
+                    ai_rating = mem_data.get("rating", 5)
+                    ai_bulls = mem_data.get("bulls", [])
+                    ai_bears = mem_data.get("bears", [])
+                    ai_macro = mem_data.get("macro", "")
                 else:
                     ai_verdict, ai_rating, ai_bulls, ai_bears = "N/A", 5, [], []
                     ai_macro = "Motor matemático local activo. Evaluando métricas estándar."
@@ -787,24 +815,27 @@ if st.session_state.get("modo_pro_toggle", False):
                                 headers = {'Content-Type': 'application/json', 'x-goog-api-key': clean_key}
                                 prompt_filled = PROMPT_MAESTRO.format(ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2), pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2), portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo.")
                                 payload = {"contents": [{"parts": [{"text": prompt_filled}]}], "generationConfig": {"temperature": 0.2}}
-                                response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", headers=headers, json=payload)
+                                response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent", headers=headers, json=payload)
                                 if response.status_code == 200:
-                                    ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-                                    match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-                                    clean_json = match.group(0) if match else ai_response.replace('```json', '').replace('```', '').strip()
-                                    parsed_response = json.loads(clean_json)
-                                    ai_verdict = parsed_response.get("verdict", "HOLD")
-                                    ai_rating = int(parsed_response.get("rating", 5))
-                                    ai_bulls = parsed_response.get("bull_points", [])
-                                    ai_bears = parsed_response.get("bear_points", [])
-                                    ai_macro = parsed_response.get("macro_synthesis", "")
-                                    st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro}
+                                    try:
+                                        ai_response = response.json()['candidates'][0]['content']['parts'][0]['text']
+                                        match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+                                        clean_json = match.group(0) if match else ai_response.replace('```json', '').replace('```', '').strip()
+                                        parsed_response = json.loads(clean_json)
+                                        ai_verdict = parsed_response.get("verdict", "HOLD")
+                                        ai_rating = int(parsed_response.get("rating", 5))
+                                        ai_bulls = parsed_response.get("bull_points", ["Puntos fuertes en evaluación."])
+                                        ai_bears = parsed_response.get("bear_points", ["Riesgos en evaluación."])
+                                        ai_macro = parsed_response.get("macro_synthesis", "Evaluación macro en proceso.")
+                                        st.session_state["ai_memory"][target_asset] = {"verdict": ai_verdict, "rating": ai_rating, "bulls": ai_bulls, "bears": ai_bears, "macro": ai_macro}
+                                    except Exception as e:
+                                        ai_verdict, error_api = "ERROR PARSEO", f"Error al leer JSON: {str(e)}"
                                 else:
                                     ai_verdict, error_api = "ERROR API", f"Error {response.status_code}: {response.text}"
                             except Exception as e:
                                 ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
                     
-                    if not backend_api_key or ai_verdict in ["N/A", "ERROR API"]:
+                    if not backend_api_key or ai_verdict in ["N/A", "ERROR API", "ERROR PARSEO"]:
                         score = 5.0
                         ma50 = hist_data['Close'].tail(50).mean()
                         ma200 = hist_data['Close'].mean()
@@ -854,6 +885,9 @@ if st.session_state.get("modo_pro_toggle", False):
                         ),
                         unsafe_allow_html=True
                     )
+                    if asset_news:
+                        news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{n['link']}' target='_blank' style='color:#d4af37; text-decoration:none;'>{n['title']}</a></li>" for n in asset_news])
+                        st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
                     
                 with col_stats:
                     if is_owned:
@@ -1020,10 +1054,13 @@ if st.session_state.get("modo_pro_toggle", False):
                         """
                         
                         payload = {"contents": [{"parts": [{"text": prompt_cio}]}], "generationConfig": {"temperature": 0.3}}
-                        response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", headers=headers, json=payload)
+                        response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent", headers=headers, json=payload)
                         if response.status_code == 200:
-                            st.session_state["cio_report"] = response.json()['candidates'][0]['content']['parts'][0]['text']
-                        else: st.error("Error al generar el reporte de la IA.")
+                            try:
+                                st.session_state["cio_report"] = response.json()['candidates'][0]['content']['parts'][0]['text']
+                            except Exception as e:
+                                st.error(f"Error al procesar la respuesta: {str(e)}")
+                        else: st.error(f"Error al generar el reporte de la IA. Código: {response.status_code}")
                     except Exception as e: st.error(f"Error de conexión: {e}")
                 else: st.warning("Configura tu API Key de Gemini para activar al CIO Virtual.")
                     
