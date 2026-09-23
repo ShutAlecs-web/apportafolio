@@ -21,7 +21,7 @@ import numpy as np
 # ==========================================
 st.set_page_config(
     page_title="Terminal Apportafolio | Private Wealth",
-    page_icon="💎",
+    page_icon="◆",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -66,7 +66,7 @@ div[data-testid="stTabs"] button[aria-selected="true"] { background-color: rgba(
 .metric-subtext { font-size: 0.9rem !important; margin-top: 8px !important; font-weight: 300 !important; color: #64748b !important; font-family: 'Inter', sans-serif !important; }
 
 .text-neon-green, .pos-green { color: #34d399 !important; } 
-.text-neon-red, .pos-red { color: #fb7185 !important; } 
+.text-neon-red, .pos-red { color: #94a3b8 !important; } 
 .text-neon-cyan { color: #00f0ff !important; }
 .text-neon-purple { color: #c084fc !important; } 
 .text-neon-gold { color: #d4af37 !important; }
@@ -78,6 +78,33 @@ div[data-testid="stTabs"] button[aria-selected="true"] { background-color: rgba(
 #MainMenu {visibility: hidden;} footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
+
+# ==========================================
+# 2.1 ICONOS SVG (reemplazo minimalista de emojis)
+# ==========================================
+# Solo funcionan dentro de bloques st.markdown(..., unsafe_allow_html=True).
+# Los widgets nativos de Streamlit (botones, expanders, toggles, tabs, selectbox,
+# st.error/success/warning/info/toast) no renderizan HTML: ahí el emoji simplemente
+# se elimina del texto, sin reemplazo visual.
+_SVG_ICON_PATHS = {
+    "trend":    '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline>',
+    "shield":   '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>',
+    "eye":      '<path d="M1 12S4 4 12 4s11 8 11 8-3 8-11 8S1 12 1 12z"></path><circle cx="12" cy="12" r="3"></circle>',
+    "download": '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line>',
+    "book":     '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>',
+    "circle":   '<circle cx="12" cy="12" r="9"></circle>',
+    "spark":    '<path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6L12 2z"></path>',
+    "flame":    '<path d="M12 2s-6 6.5-6 11a6 6 0 0 0 12 0c0-2-1-3.5-2-5 .3 1.5-.5 2.5-1.5 2.5C13 10.5 13 8 12 2z"></path>',
+    "bolt":     '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>',
+    "award":    '<circle cx="12" cy="8" r="5"></circle><polyline points="8.21 13.89 7 22 12 19 17 22 15.79 13.88"></polyline>',
+}
+
+def svg_icon(kind, color="#d4af37", size=14):
+    """SVG inline minimalista (trazo fino, sin relleno)."""
+    path = _SVG_ICON_PATHS.get(kind, "")
+    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+            f'stroke="{color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" '
+            f'style="vertical-align:-2px;margin-right:6px;flex-shrink:0;">{path}</svg>')
 
 # ==========================================
 # 3. FUNCIONES CORE Y BASE DE DATOS
@@ -99,8 +126,6 @@ def get_live_usd():
 live_usd_rate = get_live_usd()
 
 # --- POOL DE CONEXIONES (PostgreSQL / Neon) ---------------------------------
-# Un único pool por proceso, compartido por todas las sesiones de Streamlit.
-# minconn=2 mantiene 2 conexiones tibias; maxconn=10 protege al servidor.
 @st.cache_resource
 def get_pool():
     return pg_pool.ThreadedConnectionPool(
@@ -109,7 +134,6 @@ def get_pool():
     )
 
 def _conexion_valida(conn):
-    """Ping ligero: Neon suspende conexiones inactivas y el pool podría entregar una muerta."""
     try:
         if conn.closed: return False
         conn.rollback()
@@ -121,8 +145,6 @@ def _conexion_valida(conn):
 
 @contextmanager
 def db_conn(autocommit=False):
-    """Entrega una conexión validada del pool. Confirma (commit) al salir sin error,
-    hace rollback si hubo excepción y SIEMPRE devuelve la conexión al pool."""
     pool = get_pool()
     conn = None
     for intento in range(3):
@@ -136,7 +158,7 @@ def db_conn(autocommit=False):
             break
         try: pool.putconn(candidata, close=True)
         except Exception: pass
-        if intento == 1:  # el pool completo parece muerto: se recrea
+        if intento == 1:
             try: pool.closeall()
             except Exception: pass
             get_pool.clear()
@@ -158,7 +180,6 @@ def db_conn(autocommit=False):
         except Exception: pass
 
 def read_df(sql, params=None):
-    """SELECT -> DataFrame usando el pool (sin abrir conexiones nuevas)."""
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
@@ -167,7 +188,6 @@ def read_df(sql, params=None):
     return pd.DataFrame(filas, columns=columnas)
 
 def get_user_profile(uid):
-    """(frecuencia_dca, nombre_meta) del usuario, con valores por defecto si falla."""
     try:
         with db_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT dca_frequency, goal_name FROM users WHERE user_id=%s", (uid,))
@@ -180,7 +200,6 @@ def hash_password(password: str) -> str: return hashlib.sha256(password.encode()
 
 @st.cache_resource
 def init_db():
-    """Crea tablas/columnas una sola vez por proceso (antes corría en cada interacción)."""
     with db_conn(autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -197,9 +216,6 @@ def init_db():
 
 init_db()
 
-# NOTA: las llaves literales del JSON de ejemplo van ESCAPADAS ({{ }}) porque este
-# prompt se rellena con .format(). Sin escapar, .format() interpreta {"verdict": ...}
-# como un campo y lanza KeyError -> "Error interno: 'verdict'".
 PROMPT_MAESTRO = """
 Eres el 'Motor Algorítmico V5', un analista cuantitativo y macroeconómico de inteligencia artificial.
 DATOS DEL ACTIVO: Ticker: {ticker} | Precio: {current_price} USD | Rango 52W: {low_52w} - {high_52w} | P/E: {pe_ratio} | EPS: {eps}
@@ -215,9 +231,6 @@ ASSET_SECTOR = {"ISAC": "Renta Variable Global", "XNAS": "Tecnología (Índice)"
 # ==========================================
 # 3.1 GEMINI: MODELOS Y HELPERS ROBUSTOS
 # ==========================================
-# Los modelos Gemini 1.5 ya están apagados (responden 404) y gemini-2.5-flash se retira
-# el 16-oct-2026. Se usa una cadena de modelos: si uno responde 404 se prueba el siguiente.
-# Puedes forzar uno propio agregando GEMINI_MODEL = "nombre-del-modelo" en secrets.toml.
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_MODELOS_DEFAULT = ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"]
 
@@ -232,8 +245,6 @@ def _cadena_modelos_gemini():
     return cadena
 
 def llamar_gemini(prompt, api_key, temperature=0.2, json_mode=False, timeout=45):
-    """Llama a la API de Gemini probando la cadena de modelos ante un 404.
-    Devuelve (texto, mensaje_error). Si todo va bien, mensaje_error == ''."""
     import requests
     headers = {'Content-Type': 'application/json', 'x-goog-api-key': str(api_key).strip()}
     gen_cfg = {"temperature": temperature}
@@ -265,7 +276,6 @@ def llamar_gemini(prompt, api_key, temperature=0.2, json_mode=False, timeout=45)
     return None, ultimo_error
 
 def extraer_json_robusto(texto):
-    """Aísla el bloque {...} aunque venga envuelto en markdown o con texto extra."""
     if not texto: return {}
     limpio = re.sub(r"```(?:json)?", "", str(texto), flags=re.IGNORECASE).strip()
     m = re.search(r"\{.*\}", limpio, flags=re.DOTALL)
@@ -367,13 +377,13 @@ user_id = st.session_state["user_id"]
 all_users = read_df("SELECT user_id, username FROM users")
 
 if user_id == "USR-001":
-    st.sidebar.markdown("<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>👑 Panel de Gestor</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic; display:flex; align-items:center;'>{svg_icon('shield', color='#d4af37', size=18)}Panel de Gestor</h3>", unsafe_allow_html=True)
     client_dict = dict(zip(all_users["username"], all_users["user_id"]))
     selected_client_name = st.sidebar.selectbox("Cliente Activo:", list(client_dict.keys()))
     active_client_id = client_dict[selected_client_name]
     active_username = selected_client_name 
     
-    with st.sidebar.expander("➕ Registrar Nuevo Cliente", expanded=False):
+    with st.sidebar.expander("Registrar Nuevo Cliente", expanded=False):
         with st.form("new_client_form"):
             new_usr = st.text_input("Nombre de Usuario")
             new_pwd = st.text_input("Contraseña Temporal", type="password")
@@ -389,14 +399,14 @@ else:
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
     st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {active_username}</h3>", unsafe_allow_html=True)
 
-if st.sidebar.button("🔒 Cerrar Sesión", use_container_width=True):
+if st.sidebar.button("Cerrar Sesión", use_container_width=True):
     st.session_state["user_id"] = None; st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 👁️ Experiencia de Usuario")
-st.sidebar.toggle("🔬 Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
+st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('eye', color='#d4af37', size=16)}Experiencia de Usuario</h3>", unsafe_allow_html=True)
+st.sidebar.toggle("Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
 
-with st.sidebar.expander("⚙️ Estrategia y Perfil", expanded=False):
+with st.sidebar.expander("Estrategia y Perfil", expanded=False):
     st.markdown("<p style='font-size:0.8rem; color:#8b949e;'>Personaliza tu experiencia financiera.</p>", unsafe_allow_html=True)
     current_freq, current_goal = get_user_profile(user_id)
 
@@ -407,7 +417,7 @@ with st.sidebar.expander("⚙️ Estrategia y Perfil", expanded=False):
         old_pwd = st.text_input("Contraseña Actual (Confirmar)", type="password")
         new_pwd = st.text_input("Nueva Contraseña (Opcional)", type="password")
         if st.form_submit_button("Guardar Cambios", use_container_width=True):
-            if not old_pwd: st.error("⚠️ Ingresa tu clave actual.")
+            if not old_pwd: st.error("Ingresa tu clave actual.")
             else:
                 perfil_ok = False
                 with db_conn() as conn, conn.cursor() as cur:
@@ -417,24 +427,24 @@ with st.sidebar.expander("⚙️ Estrategia y Perfil", expanded=False):
                         if new_pwd and len(new_pwd) >= 6: cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password(new_pwd), f_dca, f_goal, user_id))
                         else: cur.execute("UPDATE users SET dca_frequency=%s, goal_name=%s WHERE user_id=%s", (f_dca, f_goal, user_id))
                         perfil_ok = True
-                if perfil_ok: st.success("✅ Perfil actualizado.")
-                else: st.error("❌ Clave incorrecta.")
+                if perfil_ok: st.success("Perfil actualizado.")
+                else: st.error("Clave incorrecta.")
 
-st.sidebar.markdown("### 📥 Reportes Institucionales")
+st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('download', color='#d4af37', size=16)}Reportes Institucionales</h3>", unsafe_allow_html=True)
 export_df = read_df("SELECT * FROM transactions WHERE user_id=%s", (active_client_id,))
 
 if not export_df.empty:
     clean_df = export_df.drop(columns=["id", "user_id", "timestamp"], errors="ignore")
     clean_df.rename(columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Activo", "clase": "Clase", "plataforma": "Plataforma", "moneda": "Moneda", "titulos": "Títulos", "precio_unitario": "Precio Unitario", "comision": "Comisión", "iva": "IVA", "tipo_cambio": "Tipo de Cambio", "total_mxn": "Total MXN"}, inplace=True)
     col_dl1, col_dl2 = st.sidebar.columns(2)
-    with col_dl1: st.download_button("📊 CSV", data=clean_df.to_csv(index=False).encode('utf-8'), file_name=f"Portafolio_{active_username}.csv", mime="text/csv", use_container_width=True)
+    with col_dl1: st.download_button("CSV", data=clean_df.to_csv(index=False).encode('utf-8'), file_name=f"Portafolio_{active_username}.csv", mime="text/csv", use_container_width=True)
     with col_dl2:
         buffer = io.BytesIO()
         try:
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: clean_df.to_excel(writer, index=False, sheet_name='Terminal')
-            st.download_button("📗 Excel", data=buffer.getvalue(), file_name=f"Portafolio_{active_username}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-        except: st.download_button("📗 Excel", data=clean_df.to_csv(index=False, sep=";").encode('latin1'), file_name=f"Portafolio_{active_username}_EXCEL.csv", mime="text/csv", use_container_width=True)
-else: st.sidebar.button("📊 Sin datos", disabled=True, use_container_width=True)
+            st.download_button("Excel", data=buffer.getvalue(), file_name=f"Portafolio_{active_username}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        except: st.download_button("Excel", data=clean_df.to_csv(index=False, sep=";").encode('latin1'), file_name=f"Portafolio_{active_username}_EXCEL.csv", mime="text/csv", use_container_width=True)
+else: st.sidebar.button("Sin datos", disabled=True, use_container_width=True)
 
 if active_client_id == "USR-001":
     st.sidebar.markdown("---")
@@ -451,15 +461,15 @@ if active_client_id == "USR-001":
                         p = tk_data.fast_info.last_price
                         if p:
                             st.session_state["val_ticker"] = tk_sym; st.session_state["val_price"] = float(p)
-                            st.sidebar.success(f"✅ ${p:.2f}")
-                        else: st.sidebar.error("❌ Sin datos.")
-                    except: st.sidebar.error("❌ Inválido.")
+                            st.sidebar.success(f"${p:.2f}")
+                        else: st.sidebar.error("Sin datos.")
+                    except: st.sidebar.error("Inválido.")
             else: st.sidebar.warning("Escribe un ticker.")
 
     val_t = st.session_state.get("val_ticker", "")
     val_p = float(st.session_state.get("val_price", 0.0))
 
-    with st.sidebar.expander("🛒 Registrar Operación", expanded=True):
+    with st.sidebar.expander("Registrar Operación", expanded=True):
         with st.form("form_nueva_compra"):
             f_tipo_op = st.selectbox("Tipo de Operación", ["COMPRA", "VENTA"])
             f_ticker = st.text_input("Activo (Ticker)", value=val_t)
@@ -482,14 +492,14 @@ if active_client_id == "USR-001":
                     else: total_mxn = valor_bruto_mxn - costos_mxn; imp_caja = total_mxn; t_fin = -f_titulos
                         
                     ts_id = datetime.now().timestamp()
-                    with db_conn() as conn, conn.cursor() as cur:   # ambas inserciones en UNA transacción atómica
+                    with db_conn() as conn, conn.cursor() as cur:
                         cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, f_tc, total_mxn))
                         cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
                     st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0
-                    st.success(f"✅ {f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
-                else: st.error("⚠️ Verifica el Ticker, Títulos y Precio.")
+                    st.success(f"{f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
+                else: st.error("Verifica el Ticker, Títulos y Precio.")
 
-    with st.sidebar.expander("💸 Tesorería (Ingresos/Egresos)", expanded=False):
+    with st.sidebar.expander("Tesorería (Ingresos/Egresos)", expanded=False):
         with st.form("form_nuevo_deposito"):
             c_tipo_op = st.selectbox("Tipo de Movimiento", ["DEPOSITO", "RETIRO"])
             f_concepto = st.text_input("Concepto", placeholder="Ej: Fondeo DCA")
@@ -520,9 +530,7 @@ def calc_liquidez_real(df_caja):
 
 liquidez_mxn = calc_liquidez_real(cash_df)
 
-# --- XIRR ESTABLE (brentq con intervalo acotado; bisección como respaldo) ----
 def _biseccion(f, lo, hi, tol=1e-12, max_iter=300):
-    """Bisección con número máximo de iteraciones: imposible caer en un ciclo infinito."""
     f_lo, f_hi = f(lo), f(hi)
     if not (np.isfinite(f_lo) and np.isfinite(f_hi)) or f_lo * f_hi > 0: return None
     for _ in range(max_iter):
@@ -535,11 +543,6 @@ def _biseccion(f, lo, hi, tol=1e-12, max_iter=300):
     return 0.5 * (lo + hi)
 
 def resolver_xirr(flujos, min_dias=30):
-    """Tasa anual efectiva (fracción) o None. flujos = [(fecha, monto)]:
-    aportes con signo negativo; retiros y valor final del portafolio con signo positivo.
-    Busca un intervalo con cambio de signo en (-99.9999%, +10,000,000%) y resuelve con
-    scipy.optimize.brentq (o bisección si scipy no está instalado). Nunca itera sin límite.
-    Con menos de `min_dias` de historia devuelve None: anualizar ese plazo no tiene sentido."""
     try:
         if not flujos or len(flujos) < 2: return None
         flujos = sorted(flujos, key=lambda x: x[0])
@@ -568,11 +571,7 @@ def resolver_xirr(flujos, min_dias=30):
     except Exception:
         return None
 
-@st.cache_data(ttl=300, max_entries=50)
-def _serie_placeholder(): return None  # (reservado)
-
 def _serie_cierre(data, symbol):
-    """Serie de cierres limpia para un símbolo; Serie vacía si Yahoo no lo devolvió."""
     try:
         s = data["Close"][symbol]
         return s.dropna()
@@ -617,8 +616,6 @@ def get_prices_and_sparklines(tickers, fallback):
             except Exception: 
                 pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
                 
-    # Cada símbolo macro SIEMPRE devuelve las llaves 'price', 'p' y 'pct' (aunque Yahoo falle),
-    # así el Ticker Tape nunca lanza KeyError.
     macro_data = {}
     for m in macro_tickers:
         macro_data[m] = {"price": 0.0, "p": 0.0, "pct": 0.0}
@@ -648,14 +645,11 @@ def get_asset_yields(tickers):
         except: yields[t] = 0.0
     return yields
 
-# --- RIESGO: BETA LOCAL (regresión vs ^GSPC) Y RETORNOS EN MXN --------------
 def _yf_symbol(t):
     return "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
 
 @st.cache_data(ttl=86400, max_entries=50)
 def _descargar_cierres_riesgo(simbolos):
-    """UNA sola descarga masiva (activos + ^GSPC + USDMXN=X). Si falla lanza excepción,
-    y Streamlit NO cachea las excepciones (así un fallo de Yahoo no queda guardado 24 h)."""
     data = yf.download(list(simbolos), period="1y", progress=False)
     if data is None or data.empty: raise ValueError("Yahoo Finance no devolvió datos.")
     close = data["Close"]
@@ -665,12 +659,6 @@ def _descargar_cierres_riesgo(simbolos):
     return close
 
 def get_advanced_risk_metrics(tickers):
-    """Devuelve (retornos_usd, retornos_mxn, betas):
-      - retornos_usd: retornos diarios de cada activo en USD (se usan para la matriz de correlación).
-      - retornos_mxn: retornos diarios en MXN = precio USD x USDMXN (incluyen el riesgo cambiario del peso;
-                      se usan para VaR, Sharpe y Max Drawdown).
-      - betas: Beta local = Cov(r_activo, r_S&P500) / Var(r_S&P500), sin llamadas HTTP a `.info`.
-    Calendario común = días de operación del S&P 500 (los demás activos se rellenan hacia adelante)."""
     vacio = (pd.DataFrame(), pd.DataFrame(), {})
     try:
         tickers = list(tickers)
@@ -763,7 +751,6 @@ for name, stats in macros.items():
     elif name == "BTC-USD": display_name = "BTC/USD"
     else: continue
 
-    # Lectura defensiva: nunca se asume que existan las llaves 'price' / 'pct'.
     stats = stats if isinstance(stats, dict) else {}
     try: pct_val = float(stats.get('pct', 0.0) or 0.0)
     except Exception: pct_val = 0.0
@@ -774,7 +761,7 @@ for name, stats in macros.items():
         items_html += f"<b>{display_name}:</b> <span style='color: #64748b;'>N/D</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
         continue
     
-    color = "#34d399" if pct_val >= 0 else "#fb7185"
+    color = "#34d399" if pct_val >= 0 else "#94a3b8"
     sign = "+" if pct_val >= 0 else ""
     
     if "MXN" in display_name:
@@ -810,7 +797,7 @@ tt_pnl = "Profit & Loss (Pérdidas o Ganancias Totales de tus inversiones)."
 
 k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
-k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Capital Invertido <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
+k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{'Capital Invertido' if st.session_state.get('modo_pro_toggle', False) else 'Dinero de tu Bolsillo'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
 
 if st.session_state.get("modo_pro_toggle", False):
     k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Liquidez Disponible <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
@@ -820,11 +807,11 @@ else:
     ganancia_neta = pnl_global
     c_gan = "text-neon-green" if ganancia_neta >= 0 else "text-neon-red"
     texto_simple = "Ganancia Generada" if ganancia_neta >= 0 else "Pérdida Temporal"
-    k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Dinero en Efectivo <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
+    k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Efectivo Libre <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
     k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div></div>", unsafe_allow_html=True)
 
 # 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN
-st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📈 La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
+st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('trend', color='#d4af37', size=18)}La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
 if not cash_df.empty:
     df_hist = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
     if not df_hist.empty:
@@ -847,7 +834,7 @@ if not cash_df.empty:
             fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
         ))
         
-        color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#fb7185"
+        color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#94a3b8"
         fig_snow.add_trace(go.Scatter(
             x=[df_hist["fecha"].iloc[0], df_hist["fecha"].iloc[-1]], y=[total_portafolio, total_portafolio],
             mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
@@ -857,8 +844,8 @@ if not cash_df.empty:
         fig_snow.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
         fig_snow.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
         st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
-    else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
-else: st.info("💡 Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
+    else: st.info("Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
+else: st.info("Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
 
 st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
 user_freq, meta_nombre = get_user_profile(active_client_id)
@@ -899,11 +886,11 @@ if not cash_df.empty:
                 if curr_strk > max_strk: max_strk = curr_strk
         racha_maxima = max_strk
 
-if racha_actual == 0: color_racha, emoji_racha, rango_txt = "#64748b", "❄️", "Inactivo"
-elif racha_actual <= 2: color_racha, emoji_racha, rango_txt = "#fbbf24", "✨", "Iniciador"
-elif racha_actual <= 5: color_racha, emoji_racha, rango_txt = "#f97316", "🔥", "Constante"
-elif racha_actual <= 11: color_racha, emoji_racha, rango_txt = "#00f0ff", "⚡", "Pro"
-else: color_racha, emoji_racha, rango_txt = "#d4af37", "👑", "Leyenda"
+if racha_actual == 0: color_racha, icon_racha, rango_txt = "#64748b", "circle", "Inactivo"
+elif racha_actual <= 2: color_racha, icon_racha, rango_txt = "#fbbf24", "spark", "Iniciador"
+elif racha_actual <= 5: color_racha, icon_racha, rango_txt = "#f97316", "flame", "Constante"
+elif racha_actual <= 11: color_racha, icon_racha, rango_txt = "#00f0ff", "bolt", "Pro"
+else: color_racha, icon_racha, rango_txt = "#d4af37", "award", "Leyenda"
 
 hitos = [10000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000]
 meta_actual = next((h for h in hitos if h > total_portafolio), hitos[-1])
@@ -922,7 +909,7 @@ with col_g1:
     st.markdown(
         f"<div class='metric-card notranslate' translate='no' style='text-align:center; border-color:{color_racha}40;'>"
         f"<div class='metric-title'>Nivel DCA: <span style='color:{color_racha};'>{rango_txt}</span></div>"
-        f"<div style='font-family:\"Playfair Display\", serif; font-size:2.8rem; font-weight:400; color:{color_racha}; margin:5px 0;'>{racha_actual} {emoji_racha}</div>"
+        f"<div style='font-family:\"Playfair Display\", serif; font-size:2.8rem; font-weight:400; color:{color_racha}; margin:5px 0; display:flex; align-items:center; justify-content:center; gap:8px;'>{racha_actual}{svg_icon(icon_racha, color=color_racha, size=26)}</div>"
         f"<div class='metric-subtext' style='margin-bottom:8px;'>{txt_frecuencia} seguidas • Récord: <b style='color:white;'>{max(racha_actual, racha_maxima)}</b></div>"
         f"<div style='font-size:0.75rem; color:#34d399; background:rgba(52, 211, 153, 0.05); padding:6px; border-radius:6px; border:1px solid rgba(52, 211, 153, 0.2);'>"
         f"Ahorro en racha: <b>${ahorro_racha:,.2f}</b></div></div>", unsafe_allow_html=True
@@ -960,8 +947,8 @@ if st.session_state.get("modo_pro_toggle", False):
                 cfs = []
                 for _, r in cash_df.iterrows():
                     monto = abs(float(r["monto_mxn"]))
-                    if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -monto))   # aporte: sale de tu bolsillo
-                    elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), monto))    # retiro: regresa a tu bolsillo
+                    if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -monto))
+                    elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), monto))
                 if not cfs: return "N/A"
                 cfs.append((pd.to_datetime(datetime.today().date()), float(total_portafolio)))
                 tasa = resolver_xirr(cfs)
@@ -974,7 +961,7 @@ if st.session_state.get("modo_pro_toggle", False):
             (
                 f"<div class='pos-box notranslate' translate='no'>"
                 f"<p class='metric-title'>Fricción Financiera <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fric}</span></span></p>"
-                f"<p style='color:#fb7185;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>${total_friccion:,.2f} MXN</p></div>"
+                f"<p style='color:#94a3b8;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>${total_friccion:,.2f} MXN</p></div>"
                 f"<div class='pos-box notranslate' translate='no'>"
                 f"<p class='metric-title'>Rentabilidad Ponderada (XIRR) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p>"
                 f"<p style='color:#00f0ff;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>{calc_xirr()}</p></div>"
@@ -987,7 +974,7 @@ if st.session_state.get("modo_pro_toggle", False):
             attr_df = summary[summary["pnl"] != 0].copy()
             if not attr_df.empty:
                 attr_df.sort_values("pnl", ascending=True, inplace=True)
-                attr_df["color_pnl"] = attr_df["pnl"].apply(lambda x: "#34d399" if x >= 0 else "#fb7185")
+                attr_df["color_pnl"] = attr_df["pnl"].apply(lambda x: "#34d399" if x >= 0 else "#94a3b8")
                 fig_attr = go.Figure()
                 fig_attr.add_trace(go.Bar(
                     y=attr_df["ticker"], x=attr_df["pnl"], orientation="h", marker_color=attr_df["color_pnl"],
@@ -1003,11 +990,10 @@ if st.session_state.get("modo_pro_toggle", False):
 
     if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
 
-    # RADIOGRAFÍA INDIVIDUAL V5
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Radiografía Individual y Rating de Compra (Motor V5)</h4>", unsafe_allow_html=True)
     if not summary.empty:
-        selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para análisis a profundidad:", sorted(summary["ticker"].tolist()) + ["🔍 Buscar nuevo ticker (Ej: AAPL, SPY)"], label_visibility="collapsed")
-        if selected_asset.startswith("🔍"):
+        selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para análisis a profundidad:", sorted(summary["ticker"].tolist()) + ["+ Buscar nuevo ticker (Ej: AAPL, SPY)"], label_visibility="collapsed")
+        if selected_asset.startswith("+ Buscar"):
             search_ticker = st.text_input("Ingresa el Ticker de Yahoo Finance a analizar (Ej: NVDA, URA, SCHD):").upper()
             target_asset = sanitize_ticker(search_ticker) if search_ticker else None
         else: target_asset = sanitize_ticker(selected_asset)
@@ -1047,7 +1033,7 @@ if st.session_state.get("modo_pro_toggle", False):
                 current_price = hist_data['Close'].iloc[-1]
                 start_price = hist_data['Close'].iloc[0]
                 pct_change_1y = ((current_price - start_price) / start_price) * 100
-                color_line = "#34d399" if pct_change_1y >= 0 else "#fb7185"
+                color_line = "#34d399" if pct_change_1y >= 0 else "#94a3b8"
                 
                 pe_ratio = asset_info.get("trailingPE", "N/A")
                 eps = asset_info.get("trailingEps", "N/A")
@@ -1077,7 +1063,7 @@ if st.session_state.get("modo_pro_toggle", False):
                         if time_left > 0:
                             error_api = f"Rate Limit: Espera {int(time_left)}s"
                             ai_verdict = "ERROR API"
-                            st.toast(f"⏳ Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.", icon="🛡️")
+                            st.toast(f"Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.")
                         else:
                             st.session_state["last_gemini_call"] = current_time
                             try:
@@ -1112,16 +1098,16 @@ if st.session_state.get("modo_pro_toggle", False):
                         if is_owned and p_peso > 20.0: score -= 2.0; ai_bears.append(f"Riesgo de Concentración ({p_peso:.1f}% del portafolio).")
                         ai_rating = max(1, min(10, int(score)))
                         ai_verdict = "ZONA DE COMPRA" if ai_rating >= 7 else ("HOLD" if ai_rating >= 4 else "ESPERAR")
-                        if error_api: ai_macro = f"⚠️ Fallo conexión IA o Anti-Baneo activo: {error_api}"
-                        elif not backend_api_key: ai_macro = "⚠️ Llave de Gemini no detectada en secrets.toml."
+                        if error_api: ai_macro = f"Fallo conexión IA o Anti-Baneo activo: {error_api}"
+                        elif not backend_api_key: ai_macro = "Llave de Gemini no detectada en secrets.toml."
                         else: ai_macro = "Motor matemático local activo."
 
-                score_color = "#34d399" if ai_rating >= 7 else ("#d4af37" if ai_rating >= 4 else "#fb7185")
+                score_color = "#34d399" if ai_rating >= 7 else ("#d4af37" if ai_rating >= 4 else "#94a3b8")
 
                 col_chart, col_stats = st.columns([2.5, 1])
                 with col_chart:
                     fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
-                    fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 251}, {211 if pct_change_1y>=0 else 113}, {153 if pct_change_1y>=0 else 133}, 0.15)"), row=1, col=1)
+                    fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 148}, {211 if pct_change_1y>=0 else 163}, {153 if pct_change_1y>=0 else 184}, 0.15)"), row=1, col=1)
                     fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
                     fig_deep.update_layout(title=dict(text=f"{target_asset} | Análisis de 1 Año", font=dict(family="Playfair Display", size=18, color="#cbd5e1")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=40,b=10,l=10,r=10), showlegend=False, xaxis2=dict(showgrid=False), yaxis=dict(gridcolor="#1f2937"), yaxis2=dict(showgrid=False, showticklabels=False))
                     st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
@@ -1140,8 +1126,8 @@ if st.session_state.get("modo_pro_toggle", False):
                             f"<div style='flex:1;background:rgba(52, 211, 153, 0.05);border:1px solid rgba(52, 211, 153, 0.2);border-radius:12px;padding:15px;'>"
                             f"<p style='color:#34d399;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Puntos Fuertes (Bulls)</p>"
                             f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bulls_html}</ul></div>"
-                            f"<div style='flex:1;background:rgba(251, 113, 133, 0.05);border:1px solid rgba(251, 113, 133, 0.2);border-radius:12px;padding:15px;'>"
-                            f"<p style='color:#fb7185;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Riesgos (Bears)</p>"
+                            f"<div style='flex:1;background:rgba(148, 163, 184, 0.08);border:1px solid rgba(148, 163, 184, 0.25);border-radius:12px;padding:15px;'>"
+                            f"<p style='color:#94a3b8;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Riesgos (Bears)</p>"
                             f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bears_html}</ul></div></div>"
                             f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
                             f"<p class='metric-title'>Síntesis Macroeconómica</p>"
@@ -1198,7 +1184,6 @@ if st.session_state.get("modo_pro_toggle", False):
             else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
     else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
 
-    # MÓDULO CUANTITATIVO DE RIESGO
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Módulo Cuantitativo de Riesgo y Correlación</h4>", unsafe_allow_html=True)
     if not summary.empty:
@@ -1210,13 +1195,11 @@ if st.session_state.get("modo_pro_toggle", False):
             port_beta = (summary["ponderacion_pct"] / 100 * summary["beta"]).sum()
             
             weights = (summary.set_index("ticker")["ponderacion_pct"] / 100).to_dict()
-            # VaR, Sharpe y Drawdown se calculan con retornos en MXN (precio USD x USDMXN),
-            # de modo que la volatilidad del peso mexicano queda incluida en el riesgo.
             port_returns = pd.Series(0.0, index=returns_mxn_df.index)
             for t in returns_mxn_df.columns:
                 if t in weights: port_returns += returns_mxn_df[t] * weights[t]
             
-            try: rf = float(st.secrets["RISK_FREE_RATE_MXN"])   # opcional: tasa libre de riesgo en MXN (p. ej. Cetes)
+            try: rf = float(st.secrets["RISK_FREE_RATE_MXN"])
             except Exception: rf = 0.05
             ann_ret = port_returns.mean() * 252
             ann_vol = port_returns.std() * np.sqrt(252)
@@ -1240,9 +1223,9 @@ if st.session_state.get("modo_pro_toggle", False):
             col_k2.markdown(f"<div class='metric-card'><div class='metric-title'>Sharpe Ratio <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_sharpe}</span></span></div><div class='metric-value {sharpe_c}' style='font-size:1.8rem;'>{sharpe_ratio:.2f}</div><div class='metric-subtext'>Rendimiento / Riesgo</div></div>", unsafe_allow_html=True)
             
             tt_mdd = "La peor caída histórica que ha sufrido el portafolio desde su punto más alto."
-            col_k3.markdown(f"<div class='metric-card'><div class='metric-title'>Max Drawdown (1Y) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_mdd}</span></span></div><div class='metric-value text-neon-red' style='font-size:1.8rem;'>{max_dd:.1f}%</div><div class='metric-subtext'>Peor caída histórica</div></div>", unsafe_allow_html=True)
+            col_k3.markdown(f"<div class='metric-card'><div class='metric-title'>Drawdown Máximo (1A) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_mdd}</span></span></div><div class='metric-value text-neon-red' style='font-size:1.8rem;'>{max_dd:.1f}%</div><div class='metric-subtext'>Peor caída histórica</div></div>", unsafe_allow_html=True)
             
-            tt_var = "Value at Risk. La cantidad máxima que se espera perder en un día de pánico absoluto en los mercados."
+            tt_var = "El umbral de pérdida que se superará estadísticamente solo el 5% de los días."
             col_k4.markdown(f"<div class='metric-card'><div class='metric-title'>Value at Risk (95%) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_var}</span></span></div><div class='metric-value text-neon-purple' style='font-size:1.8rem;'>${var_95_mxn:,.0f}</div><div class='metric-subtext'>Pérdida máxima esperada diaria</div></div>", unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
@@ -1252,19 +1235,19 @@ if st.session_state.get("modo_pro_toggle", False):
                 stress_drop = st.slider("Si el S&P 500 cae...", min_value=-50, max_value=0, value=-20, step=5, format="%d%%")
                 simulated_drop = stress_drop * port_beta
                 simulated_loss = total_portafolio * (simulated_drop / 100)
-                st.markdown(f"<div class='pos-box'><p class='metric-title'>Impacto Matemático Estimado</p><h3 style='color:#fb7185;margin:0;font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400;'>${simulated_loss:,.2f} MXN ({simulated_drop:+.2f}%)</h3></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='pos-box'><p class='metric-title'>Impacto Matemático Estimado</p><h3 style='color:#94a3b8;margin:0;font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400;'>${simulated_loss:,.2f} MXN ({simulated_drop:+.2f}%)</h3></div>", unsafe_allow_html=True)
                 
             with col_r2:
-                st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Matriz de Correlación (Diversificación Real)</p>", unsafe_allow_html=True)
+                tt_corr = "Mide cómo se mueven tus activos entre sí. Un valor cercano a +1 significa que se mueven igual, -1 en direcciones opuestas (buena diversificación), y 0 que no tienen relación."
+                st.markdown(f"<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Matriz de Correlación (Diversificación Real) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_corr}</span></span></p>", unsafe_allow_html=True)
                 if len(tickers_list) > 1:
                     corr_matrix = returns_df.corr()
-                    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
+                    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale=[[0, '#94a3b8'], [0.5, '#d4af37'], [1, '#34d399']], aspect="auto")
                     fig_corr.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10,b=10,l=10,r=10), height=350)
                     st.plotly_chart(fig_corr, use_container_width=True, config=plotly_config)
                 else: st.info("Necesitas al menos 2 activos en tu portafolio para generar el mapa de calor de correlación.")
-    else: st.info("💡 Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
+    else: st.info("Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
 
-    # CIO VIRTUAL (EARNINGS)
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:5px; letter-spacing:1px;' class='notranslate' translate='no'>CIO Virtual: Reportes y Earnings</h4>", unsafe_allow_html=True)
     st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Cruza datos de dividendos y reportes trimestrales con el entorno macroeconómico para generar tu informe ejecutivo semanal.</p>", unsafe_allow_html=True)
@@ -1303,7 +1286,6 @@ if st.session_state.get("modo_pro_toggle", False):
         if st.session_state.get("cio_report"):
             st.markdown(f"<div class='pos-box'><p style='color:#e5e7eb; font-size:0.95rem; line-height:1.6; white-space:pre-wrap;'>{st.session_state['cio_report']}</p></div>", unsafe_allow_html=True)
 
-    # SMART DCA
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA (Rebalanceo)</h4>", unsafe_allow_html=True)
     if not summary.empty:
@@ -1327,9 +1309,6 @@ if st.session_state.get("modo_pro_toggle", False):
             st.markdown(f"<div class='m-card'><div class='m-title'>Ruta Óptima de Capital</div><div class='pos-row'><span class='pos-label'>ETF:</span><span class='pos-val c-grn'>${comp_sug['ETF']:,.2f}</span></div><div class='pos-row'><span class='pos-label'>Acciones:</span><span class='pos-val c-grn'>${comp_sug['Acción']:,.2f}</span></div><div class='pos-row'><span class='pos-label'>Cripto:</span><span class='pos-val c-grn'>${comp_sug['Cripto']:,.2f}</span></div></div>", unsafe_allow_html=True)
         else: st.warning("Los objetivos deben sumar 100%.")
 
-# ==========================================
-# 9. MÓDULO FÁCIL: PORTAFOLIO SIMPLIFICADO
-# ==========================================
 else:
     st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Tu Portafolio Simplificado</h4>", unsafe_allow_html=True)
     
@@ -1363,7 +1342,7 @@ else:
             c_worst = "text-neon-green" if worst_row['pnl'] >= 0 else "text-neon-red"
             st.markdown(
                 f"<div class='metric-card'>"
-                f"<div class='metric-title' style='color:#fb7185 !important;'>En Recuperación</div>"
+                f"<div class='metric-title' style='color:#94a3b8 !important;'>En Recuperación</div>"
                 f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{worst_row['ticker']} <span class='{c_worst}' style='font-size:1.2rem;font-family:\"Inter\";'>({worst_row['pnl']:+,.2f} MXN)</span></div>"
                 f"<div class='metric-subtext'>Está tropezando temporalmente, pero el mercado da revanchas.</div></div>", 
                 unsafe_allow_html=True
@@ -1383,21 +1362,21 @@ else:
             path=['Clase', 'Sector', 'ticker'], 
             values='valor_actual',
             color='retorno_pct', 
-            color_continuous_scale='RdYlGn',
+            color_continuous_scale=[[0, '#94a3b8'], [0.5, '#d4af37'], [1, '#34d399']],
             color_continuous_midpoint=0
         )
         fig_sun.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=20, b=20, l=10, r=10), height=550)
         st.plotly_chart(fig_sun, use_container_width=True, config=plotly_config)
         
     else:
-        st.info("💡 **Modo Simple Activo:** Aún no tienes activos en tu portafolio. Registra tus primeras compras en el panel lateral para ver tu Salario Invisible y tu Radiografía de inversiones.")
+        st.info("**Modo Simple Activo:** Aún no tienes activos en tu portafolio. Registra tus primeras compras en el panel lateral para ver tu Salario Invisible y tu Radiografía de inversiones.")
     st.markdown("---")
 
 # ==========================================
 # 10. HISTORIAL CONTABLE Y CAJA
 # ==========================================
-st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>📚 Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
-tab_ops, tab_caja = st.tabs(["📊 Historial de Transacciones", "🏦 Flujo de Caja"])
+st.markdown(f"<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('book', color='#d4af37', size=18)}Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
+tab_ops, tab_caja = st.tabs(["Historial de Transacciones", "Flujo de Caja"])
 
 with tab_ops:
     if not tx_df.empty:
