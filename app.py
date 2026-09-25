@@ -9,11 +9,12 @@ import psycopg2
 from psycopg2 import pool as pg_pool
 import hashlib
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import re
 import io
 import time
+import uuid
 import numpy as np
 
 # ==========================================
@@ -301,6 +302,490 @@ def _como_lista(valor, default):
         if out: return out
     return default
 
+# ==========================================
+# 3.2 APPORTAFOLIO FP · FINANZAS PERSONALES (Fase 3)
+# Puntos 10 (Tu dinero hoy) y 20 (Registro rápido) + código de vinculación de Telegram.
+# Lee las mismas tablas y funciones de Neon que el bot (fp_dinero_libre, fp_ledger, etc.).
+# ==========================================
+ZONA_MX = timezone(timedelta(hours=-6))          # CDMX: sin horario de verano desde 2022
+SECCION_FP = "Tu dinero hoy"
+SECCION_TERMINAL = "Terminal de inversiones"
+_FP_DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_FP_MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+             "septiembre", "octubre", "noviembre", "diciembre"]
+_FP_FUENTES = {"TELEGRAM_TEXTO": "Telegram", "REGLA_AUTOMATICA": "Telegram · regla",
+               "WEB_MANUAL": "Web", "WHATSAPP_TEXTO": "WhatsApp"}
+_FP_TEXTO_MONTOS = ("comprometido", "comprometido_pendiente", "ahorro_programado", "reservado_bolsas",
+                    "gastado_periodo", "gastado_hoy", "dinero_libre", "presupuesto_hoy", "disponible_hoy",
+                    "base", "ingresos_periodo", "ingresos_extra")
+
+FP_ESTILOS = """
+<style>
+.fp-encabezado { font-family: 'Playfair Display', serif; font-style: italic; color: #ffffff; font-size: 2rem; font-weight: 400; margin: 0; letter-spacing: 0.5px; }
+.fp-fecha { color: #8b949e; font-size: 0.9rem; font-weight: 300; margin: 4px 0 22px 0; letter-spacing: 0.5px; }
+.fp-hero-valor { font-family: 'Playfair Display', serif; font-size: 3.4rem; font-weight: 400; line-height: 1.05; margin: 8px 0 6px 0; letter-spacing: -0.5px; }
+.fp-barra { display: flex; width: 100%; height: 14px; border-radius: 7px; overflow: hidden; background: #111827; border: 1px solid #1f2937; margin: 14px 0 12px 0; }
+.fp-barra div { height: 100%; }
+.fp-leyenda { display: flex; flex-wrap: wrap; gap: 14px 22px; font-size: 0.8rem; color: #8b949e; }
+.fp-leyenda span { display: inline-flex; align-items: center; gap: 7px; }
+.fp-leyenda i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.fp-fila { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.9rem; }
+.fp-fila:last-child { border-bottom: none; }
+.fp-fila-sub { color: #64748b; font-size: 0.78rem; margin-top: 2px; }
+.fp-codigo { font-family: 'Inter', monospace; font-size: 1.6rem; letter-spacing: 4px; color: #d4af37; text-align: center; padding: 14px 0 6px 0; }
+.fp-nota { color: #8b949e; font-size: 0.8rem; line-height: 1.5; }
+</style>
+"""
+
+
+def hoy_mx():
+    return datetime.now(ZONA_MX).date()
+
+
+def fp_dinero(valor):
+    v = round(float(valor or 0), 2)
+    signo = "-" if v < 0 else ""
+    v = abs(v)
+    return f"{signo}${v:,.0f}" if v == int(v) else f"{signo}${v:,.2f}"
+
+
+def fp_fecha_larga(fecha):
+    return f"{_FP_DIAS[fecha.weekday()].capitalize()} {fecha.day} de {_FP_MESES[fecha.month - 1]}"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fp_esquema_listo():
+    """True si Neon ya tiene las tablas y funciones de FP (las crean las migraciones del bot)."""
+    try:
+        with db_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT to_regprocedure('fp_dinero_libre(text,date)') IS NOT NULL
+                   AND to_regprocedure('fp_generar_codigo_vinculacion(text,integer)') IS NOT NULL
+                   AND to_regprocedure('fp_buscar_compromiso(text,text,text,numeric,date)') IS NOT NULL
+                   AND to_regclass('public.fp_bolsas') IS NOT NULL
+            """)
+            return bool(cur.fetchone()[0])
+    except Exception:
+        return False
+
+
+def _fp_consulta(sql, params=None):
+    """Lista de dicts (sin pandas, para conservar fechas y decimales tal cual)."""
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        columnas = [d[0] for d in cur.description]
+        return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+def fp_dinero_libre(uid, hoy):
+    filas = _fp_consulta("SELECT * FROM fp_dinero_libre(%s, %s)", (uid, hoy))
+    if not filas:
+        return None
+    dl = filas[0]
+    for clave in _FP_TEXTO_MONTOS:
+        dl[clave] = float(dl.get(clave) or 0)
+    return dl
+
+
+def fp_bolsas(uid):
+    return _fp_consulta(
+        "SELECT nombre, tipo, aporte_periodo, saldo_acumulado, monto_objetivo FROM fp_bolsas "
+        "WHERE user_id = %s AND activa ORDER BY prioridad, nombre", (uid,))
+
+
+def fp_proximos(uid, desde, hasta):
+    return _fp_consulta(
+        "SELECT fecha, nombre, tipo_movimiento, monto FROM fp_ocurrencias(%s, %s, %s) "
+        "ORDER BY fecha, tipo_movimiento, nombre LIMIT 8", (uid, desde, hasta))
+
+
+def fp_ultimos(uid):
+    return _fp_consulta(
+        """
+        SELECT l.movimiento_id, l.fecha, l.tipo_movimiento::TEXT AS tipo, l.monto, l.fuente::TEXT AS fuente,
+               COALESCE(NULLIF(l.concepto, ''), NULLIF(l.comercio, ''), '') AS concepto,
+               COALESCE(c.nombre, '') AS categoria
+          FROM fp_financial_ledger l
+          LEFT JOIN fp_categorias c ON c.categoria_id = l.categoria_id
+         WHERE l.user_id = %s AND l.estado <> 'DESCARTADO'
+         ORDER BY l.creado_en DESC
+         LIMIT 8
+        """, (uid,))
+
+
+def fp_categorias(uid):
+    return _fp_consulta(
+        "SELECT categoria_id, nombre FROM fp_categorias WHERE user_id = %s OR user_id IS NULL ORDER BY nombre", (uid,))
+
+
+def fp_cuentas(uid):
+    return _fp_consulta(
+        "SELECT cuenta_id, nombre FROM fp_cuentas WHERE user_id = %s AND activa ORDER BY nombre", (uid,))
+
+
+def fp_registrar(uid, tipo, monto, categoria_id, cuenta_id, concepto, fecha, token):
+    """Inserta en fp_financial_ledger con el mismo criterio que el bot.
+    Si es el pago de un compromiso programado, lo liga para no contarlo dos veces.
+    El token evita duplicados por doble clic. Devuelve movimiento_id o None si ya existía."""
+    with db_conn() as conn, conn.cursor() as cur:
+        compromiso_id = None
+        if tipo in ("GASTO", "INGRESO"):
+            cur.execute("SELECT fp_buscar_compromiso(%s, %s, %s, %s, %s)",
+                        (uid, tipo, categoria_id, monto, fecha))
+            compromiso_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            INSERT INTO fp_financial_ledger
+                (movimiento_id, user_id, tipo_movimiento, cuenta_origen_id, categoria_id, monto, moneda,
+                 concepto, fecha, fuente, estado, mensaje_origen_id, compromiso_id)
+            VALUES (%s, %s, %s, %s, %s, %s, 'MXN', %s, %s, 'WEB_MANUAL', 'CONFIRMADO', %s, %s)
+            ON CONFLICT (mensaje_origen_id) DO NOTHING
+            RETURNING movimiento_id
+            """,
+            (f"MOV-{uuid.uuid4().hex[:16]}", uid, tipo, cuenta_id, categoria_id, monto,
+             (concepto or "").strip()[:200] or None, fecha, f"WEB-{token}", compromiso_id))
+        fila = cur.fetchone()
+    return fila[0] if fila else None
+
+
+def fp_descartar(uid, movimiento_id):
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE fp_financial_ledger SET estado = 'DESCARTADO' WHERE movimiento_id = %s AND user_id = %s",
+                    (movimiento_id, uid))
+
+
+def fp_vinculo_activo(uid):
+    filas = _fp_consulta(
+        "SELECT telegram_username, vinculado_en FROM fp_telegram_links WHERE user_id = %s AND estado = 'ACTIVO'", (uid,))
+    return filas[0] if filas else None
+
+
+def fp_generar_codigo(uid):
+    """Llama a fp_generar_codigo_vinculacion (15 minutos) y devuelve (código, vence_en)."""
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT fp_generar_codigo_vinculacion(%s, 15)", (uid,))
+        codigo = cur.fetchone()[0]
+        cur.execute("SELECT expira_en FROM fp_telegram_links WHERE user_id = %s AND estado = 'PENDIENTE' "
+                    "ORDER BY creado_en DESC LIMIT 1", (uid,))
+        vence = cur.fetchone()[0]
+    return codigo, vence
+
+
+def fp_desconectar_telegram(uid):
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT fp_revocar_vinculo_telegram(%s)", (uid,))
+
+
+def _fp_titulo(texto, icono=None):
+    icono_html = svg_icon(icono, color="#d4af37", size=17) if icono else ""
+    st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.15rem; font-style:italic; "
+                f"margin:22px 0 12px 0; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' "
+                f"translate='no'>{icono_html}{texto}</h4>", unsafe_allow_html=True)
+
+
+def _fp_tooltip(texto):
+    return f"<span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{texto}</span></span>"
+
+
+def render_fp_telegram(uid):
+    """Generador del código de vinculación (va dentro de 'Estrategia y Perfil')."""
+    st.markdown("<p style='font-size:0.8rem; color:#e5e7eb; font-weight:600; margin:6px 0 2px 0;'>Telegram</p>",
+                unsafe_allow_html=True)
+    if not fp_esquema_listo():
+        st.caption("La conexión con Telegram estará disponible cuando se instalen las tablas de finanzas personales.")
+        return
+    try:
+        vinculo = fp_vinculo_activo(uid)
+    except Exception:
+        st.caption("No pude revisar tu conexión con Telegram. Intenta más tarde.")
+        return
+
+    if vinculo:
+        usuario_tg = f"@{vinculo['telegram_username']}" if vinculo.get("telegram_username") else "tu Telegram"
+        desde = vinculo["vinculado_en"].astimezone(ZONA_MX).strftime("%d/%m/%Y") if vinculo.get("vinculado_en") else ""
+        st.markdown(f"<p class='fp-nota'>Conectado con <b style='color:#34d399;'>{usuario_tg}</b>"
+                    f"{' desde el ' + desde if desde else ''}.</p>", unsafe_allow_html=True)
+        if st.button("Desconectar Telegram", key="fp_tg_desconectar", use_container_width=True):
+            fp_desconectar_telegram(uid)
+            st.session_state.pop("fp_codigo_tg", None)
+            st.rerun()
+        return
+
+    st.markdown("<p class='fp-nota'>Registra tus gastos por chat: genera un código y envíalo al bot.</p>",
+                unsafe_allow_html=True)
+    if st.button("Generar código de vinculación", key="fp_tg_generar", use_container_width=True):
+        try:
+            codigo, vence = fp_generar_codigo(uid)
+            st.session_state["fp_codigo_tg"] = {"uid": uid, "codigo": codigo, "vence": vence}
+        except Exception:
+            st.error("No pude generar el código. Intenta de nuevo.")
+
+    guardado = st.session_state.get("fp_codigo_tg")
+    if guardado and guardado.get("uid") == uid:
+        ahora = datetime.now(timezone.utc)
+        if guardado["vence"] <= ahora:
+            st.session_state.pop("fp_codigo_tg", None)
+            st.caption("El código anterior venció. Genera uno nuevo.")
+            return
+        minutos = max(1, int((guardado["vence"] - ahora).total_seconds() // 60))
+        hora = guardado["vence"].astimezone(ZONA_MX).strftime("%H:%M")
+        st.markdown(f"<div class='fp-codigo notranslate' translate='no'>{guardado['codigo']}</div>"
+                    f"<p class='fp-nota' style='text-align:center;'>Vence a las {hora} ({minutos} min). "
+                    f"Envía este mensaje al bot:</p>", unsafe_allow_html=True)
+        st.code(f"/vincular {guardado['codigo']}", language=None)
+        try:
+            bot = str(st.secrets["TELEGRAM_BOT_USERNAME"]).strip().lstrip("@")
+        except Exception:
+            bot = ""
+        if bot:
+            st.markdown(f"<p class='fp-nota' style='text-align:center;'><a href='https://t.me/{bot}' target='_blank' "
+                        f"style='color:#d4af37; text-decoration:none;'>Abrir @{bot} en Telegram</a></p>",
+                        unsafe_allow_html=True)
+
+
+def _fp_render_sin_base(uid, dl, hoy):
+    if dl and dl.get("proximo_ingreso"):
+        mensaje = (f"Tu próximo ingreso llega el {dl['proximo_ingreso']:%d/%m}. Para decirte desde hoy cuánto puedes "
+                   f"gastar, dime cuánto dinero tienes ahora.")
+    else:
+        mensaje = ("Todavía no tengo tus ingresos. Configúralos en Telegram con /configurar (1 minuto), "
+                   "o dime cuánto dinero tienes hoy para empezar a calcular.")
+    st.markdown(f"<div class='pos-box'><p class='metric-title'>Primer paso</p>"
+                f"<p style='color:#e5e7eb; font-size:0.95rem; margin:0; line-height:1.6;'>{mensaje}</p></div>",
+                unsafe_allow_html=True)
+    with st.form("fp_form_saldo", clear_on_submit=True):
+        saldo = st.number_input("¿Cuánto dinero tienes hoy? (MXN)", min_value=0.0, step=100.0, format="%.2f")
+        if st.form_submit_button("Guardar mi saldo", use_container_width=True):
+            if saldo <= 0:
+                st.error("Escribe un monto mayor a cero.")
+            else:
+                token = st.session_state.setdefault("fp_token", uuid.uuid4().hex)
+                if fp_registrar(uid, "AJUSTE", round(saldo, 2), None, None, "Saldo declarado (web)", hoy, token):
+                    st.session_state["fp_token"] = uuid.uuid4().hex
+                    st.rerun()
+
+
+def _fp_render_estado(dl):
+    disponible, libre = dl["disponible_hoy"], dl["dinero_libre"]
+    hasta = f"el {dl['proximo_ingreso']:%d/%m}" if dl.get("proximo_ingreso") else "tu próximo ingreso"
+
+    if disponible >= 0:
+        titulo, valor, color = "Hoy puedes gastar", fp_dinero(disponible), "#d4af37"
+    else:
+        titulo, valor, color = "Hoy ya usaste tu presupuesto", f"+{fp_dinero(-disponible)}", "#94a3b8"
+    sub = f"Presupuesto de hoy {fp_dinero(dl['presupuesto_hoy'])} · gastado hoy {fp_dinero(dl['gastado_hoy'])}"
+    tt_hoy = ("Lo que te queda libre hasta tu próximo ingreso, repartido entre los días que faltan. "
+              "Lo que no gastas hoy se suma a los días siguientes.")
+    st.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{titulo} {_fp_tooltip(tt_hoy)}</div>"
+                f"<div class='fp-hero-valor' style='color:{color};'>{valor}</div>"
+                f"<div class='metric-subtext'>{sub}</div></div>", unsafe_allow_html=True)
+
+    k1, k2, k3, k4 = st.columns(4)
+    color_libre = "#34d399" if libre >= 0 else "#94a3b8"
+    tarjetas = [
+        (k1, f"Libre hasta {hasta.replace('el ', '')}", fp_dinero(libre), f"{dl['dias_restantes']} días, hoy incluido",
+         color_libre, "Dinero que no tiene dueño: ya descontados tus pagos fijos, lo que apartaste y lo que gastaste."),
+        (k2, "Comprometido", fp_dinero(dl["comprometido"]), f"Faltan por pagar {fp_dinero(dl['comprometido_pendiente'])}",
+         "#ffffff", "Tus pagos fijos del periodo: renta, servicios, suscripciones, transporte, deudas."),
+        (k3, "Apartado", fp_dinero(dl["reservado_bolsas"] + dl["ahorro_programado"]),
+         "Colchón, metas e inversión", "#ffffff", "Lo que reservas en tus bolsas y tu ahorro o inversión programados."),
+        (k4, "Ya gastaste", fp_dinero(dl["gastado_periodo"]), "Gastos variables del periodo", "#ffffff",
+         "Lo que registraste por Telegram o aquí, sin contar pagos fijos."),
+    ]
+    for col, t, v, s, c, tt in tarjetas:
+        col.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{t} {_fp_tooltip(tt)}</div>"
+                     f"<div class='metric-value' style='font-size:1.9rem; color:{c} !important;'>{v}</div>"
+                     f"<div class='metric-subtext'>{s}</div></div>", unsafe_allow_html=True)
+
+    # Barra de las 5 bolsas sobre el total que entró en el periodo
+    entradas = dl["base"] + dl["ingresos_periodo"] + dl["ingresos_extra"]
+    partes = [("Comprometido", dl["comprometido"], "#475569"),
+              ("Ahorro e inversión", dl["ahorro_programado"], "#64748b"),
+              ("Apartado", dl["reservado_bolsas"], "rgba(212,175,55,0.65)"),
+              ("Gastado", dl["gastado_periodo"], "#94a3b8"),
+              ("Libre", max(libre, 0), "#34d399")]
+    total = max(entradas, sum(p[1] for p in partes), 1)
+    segmentos = "".join(f"<div style='width:{v / total * 100:.2f}%; background:{c};'></div>" for _, v, c in partes if v > 0)
+    leyenda = "".join(f"<span><i style='background:{c};'></i>{n} {fp_dinero(v)}</span>" for n, v, c in partes if v > 0)
+    origen = "saldo declarado" if dl["fuente_base"] == "SALDO" else "ingresos"
+    desde = f"{dl['periodo_inicio']:%d/%m}" if dl.get("periodo_inicio") else ""
+    nota_sobregiro = ("" if libre >= 0 else
+                      f"<p class='fp-nota' style='margin-top:10px;'>Vas {fp_dinero(-libre)} por encima de lo que te alcanza "
+                      f"hasta {hasta}. Frenar gastos variables unos días lo equilibra.</p>")
+    st.markdown(f"<div class='pos-box notranslate' translate='no'><p class='metric-title'>Tus bolsas · entradas desde el {desde}: "
+                f"{fp_dinero(entradas)} ({origen})</p><div class='fp-barra'>{segmentos}</div>"
+                f"<div class='fp-leyenda'>{leyenda}</div>{nota_sobregiro}</div>", unsafe_allow_html=True)
+    if dl["estado"] == "SIN_PROXIMO_INGRESO":
+        st.caption("No encontré tu próximo ingreso, así que calculé a 30 días. Revísalo en Telegram con /configurar.")
+    if dl["fuente_base"] == "INGRESO":
+        st.caption("Para que el cálculo sea exacto al centavo, registra de vez en cuando tu saldo real (tipo «Saldo de hoy»).")
+
+
+def _fp_render_registro(uid, hoy):
+    _fp_titulo("Registro rápido", "spark")
+    ultimo = st.session_state.get("fp_ultimo_registro")
+    if ultimo and ultimo.get("uid") == uid:
+        c1, c2 = st.columns([3, 1])
+        c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {ultimo['texto']}</p>", unsafe_allow_html=True)
+        if c2.button("Deshacer", key="fp_deshacer_ultimo", use_container_width=True):
+            fp_descartar(uid, ultimo["movimiento_id"])
+            st.session_state.pop("fp_ultimo_registro", None)
+            st.rerun()
+
+    tipo_txt = st.radio("Tipo de movimiento", ["Gasto", "Ingreso", "Saldo de hoy"], horizontal=True,
+                        key="fp_tipo_registro", label_visibility="collapsed")
+    tipo = {"Gasto": "GASTO", "Ingreso": "INGRESO", "Saldo de hoy": "AJUSTE"}[tipo_txt]
+    categorias = fp_categorias(uid)
+    if tipo == "GASTO":
+        categorias = [c for c in categorias if c["nombre"].lower() != "ingresos"]
+    elif tipo == "INGRESO":
+        categorias.sort(key=lambda c: c["nombre"].lower() != "ingresos")
+    cuentas = fp_cuentas(uid)
+
+    with st.form("fp_form_registro", clear_on_submit=True):
+        c1, c2 = st.columns([1, 1.4])
+        monto = c1.number_input("Monto (MXN)", min_value=0.0, step=10.0, format="%.2f")
+        if tipo == "AJUSTE":
+            c2.markdown("<p class='fp-nota' style='margin-top:30px;'>El dinero que tienes hoy en total. "
+                        "Recalibra el cálculo al centavo.</p>", unsafe_allow_html=True)
+            categoria_id, concepto, fecha = None, "Saldo declarado (web)", hoy
+        else:
+            nombres = [c["nombre"] for c in categorias]
+            elegido = c2.selectbox("Categoría", nombres, index=0 if nombres else None)
+            categoria_id = next((c["categoria_id"] for c in categorias if c["nombre"] == elegido), None)
+            c3, c4 = st.columns([1.4, 1])
+            concepto = c3.text_input("Concepto", placeholder="Ej. tacos, uber, renta", max_chars=120)
+            fecha = c4.date_input("Fecha", value=hoy, max_value=hoy, format="DD/MM/YYYY")
+        cuenta_id = None
+        if cuentas and tipo != "AJUSTE":
+            opciones = ["Sin especificar"] + [c["nombre"] for c in cuentas]
+            cuenta_nombre = st.selectbox("Cuenta", opciones)
+            cuenta_id = next((c["cuenta_id"] for c in cuentas if c["nombre"] == cuenta_nombre), None)
+
+        if st.form_submit_button("Registrar", use_container_width=True):
+            if monto <= 0:
+                st.error("Escribe un monto mayor a cero.")
+            elif tipo != "AJUSTE" and not categoria_id:
+                st.error("Elige una categoría.")
+            else:
+                token = st.session_state.setdefault("fp_token", uuid.uuid4().hex)
+                try:
+                    movimiento_id = fp_registrar(uid, tipo, round(monto, 2), categoria_id, cuenta_id, concepto, fecha, token)
+                except Exception:
+                    movimiento_id = None
+                    st.error("No pude guardar el movimiento. Intenta de nuevo.")
+                if movimiento_id:
+                    st.session_state["fp_token"] = uuid.uuid4().hex
+                    etiqueta = {"GASTO": "gasto", "INGRESO": "ingreso", "AJUSTE": "saldo de hoy"}[tipo]
+                    detalle = f" · {concepto}" if concepto and tipo != "AJUSTE" else ""
+                    st.session_state["fp_ultimo_registro"] = {"uid": uid, "movimiento_id": movimiento_id,
+                                                              "texto": f"{etiqueta} de {fp_dinero(monto)}{detalle}"}
+                    st.rerun()
+
+
+def _fp_render_ultimos(uid):
+    _fp_titulo("Últimos movimientos", "book")
+    movimientos = fp_ultimos(uid)
+    if not movimientos:
+        st.caption("Aún no hay movimientos. Regístralos aquí o escríbelos al bot de Telegram (\"42 pasaje\").")
+        return
+    for m in movimientos:
+        if m["tipo"] == "AJUSTE":
+            monto_html = f"<span style='color:#d4af37;'>= {fp_dinero(m['monto'])}</span>"
+            titulo = "Saldo declarado"
+        elif m["tipo"] == "INGRESO":
+            monto_html = f"<span style='color:#34d399;'>+{fp_dinero(m['monto'])}</span>"
+            titulo = m["concepto"] or m["categoria"] or "Ingreso"
+        else:
+            monto_html = f"<span style='color:#e5e7eb;'>-{fp_dinero(m['monto'])}</span>"
+            titulo = m["concepto"] or m["categoria"] or "Gasto"
+        sub = " · ".join(x for x in (f"{m['fecha']:%d/%m}", m["categoria"] if m["tipo"] != "AJUSTE" else "",
+                                     _FP_FUENTES.get(m["fuente"], m["fuente"])) if x)
+        c1, c2 = st.columns([6, 1])
+        c1.markdown(f"<div class='fp-fila notranslate' translate='no'><div><div style='color:#e5e7eb;'>{titulo}</div>"
+                    f"<div class='fp-fila-sub'>{sub}</div></div><div>{monto_html}</div></div>", unsafe_allow_html=True)
+        if c2.button("Quitar", key=f"fp_quitar_{m['movimiento_id']}", help="Lo descarta de tus números (no se borra del historial)."):
+            fp_descartar(uid, m["movimiento_id"])
+            st.rerun()
+
+
+def _fp_render_proximos(uid, dl, hoy):
+    _fp_titulo("Lo que viene", "trend")
+    hasta = (dl.get("proximo_ingreso") if dl else None) or (hoy + timedelta(days=30))
+    eventos = fp_proximos(uid, hoy, hasta + timedelta(days=1))
+    if not eventos:
+        st.caption("Sin pagos fijos ni ingresos programados. Configúralos en Telegram con /configurar.")
+        return
+    filas = ""
+    for e in eventos:
+        es_ingreso = e["tipo_movimiento"] == "INGRESO"
+        color = "#34d399" if es_ingreso else "#e5e7eb"
+        signo = "+" if es_ingreso else "-"
+        filas += (f"<div class='fp-fila'><div><div style='color:#e5e7eb;'>{e['nombre']}</div>"
+                  f"<div class='fp-fila-sub'>{_FP_DIAS[e['fecha'].weekday()][:3]} {e['fecha']:%d/%m}</div></div>"
+                  f"<div style='color:{color};'>{signo}{fp_dinero(e['monto'])}</div></div>")
+    st.markdown(f"<div class='pos-box notranslate' translate='no'>{filas}</div>", unsafe_allow_html=True)
+
+
+def _fp_render_bolsas(uid):
+    _fp_titulo("Tus bolsas", "shield")
+    bolsas = fp_bolsas(uid)
+    if not bolsas:
+        st.caption("Aún no apartas dinero. Desde Telegram: /apartar 500 colchón (o el nombre de una meta).")
+        return
+    html = ""
+    for b in bolsas:
+        aporte, saldo, objetivo = float(b["aporte_periodo"] or 0), float(b["saldo_acumulado"] or 0), b["monto_objetivo"]
+        detalle = f"{fp_dinero(aporte)} por periodo"
+        barra = ""
+        if objetivo:
+            avance = min(saldo / float(objetivo) * 100, 100)
+            detalle += f" · {fp_dinero(saldo)} de {fp_dinero(objetivo)}"
+            barra = (f"<div style='width:100%; height:6px; background:#111827; border-radius:3px; margin-top:6px;'>"
+                     f"<div style='width:{avance:.1f}%; height:100%; background:rgba(212,175,55,0.7); border-radius:3px;'></div></div>")
+        html += (f"<div class='fp-fila' style='display:block;'><div style='display:flex; justify-content:space-between;'>"
+                 f"<span style='color:#e5e7eb;'>{b['nombre']}</span><span style='color:#d4af37;'>{fp_dinero(aporte)}</span></div>"
+                 f"<div class='fp-fila-sub'>{detalle}</div>{barra}</div>")
+    st.markdown(f"<div class='pos-box notranslate' translate='no'>{html}</div>", unsafe_allow_html=True)
+
+
+def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
+    """Punto 10 · Home de finanzas personales."""
+    st.markdown(FP_ESTILOS, unsafe_allow_html=True)
+    hoy = hoy_mx()
+    st.markdown("<p class='fp-encabezado notranslate' translate='no'>Tu dinero hoy</p>", unsafe_allow_html=True)
+    fecha_txt = fp_fecha_larga(hoy)
+    if viendo_otro_cliente:
+        fecha_txt += f" · viendo las finanzas de {nombre_cliente}"
+    st.markdown(f"<p class='fp-fecha'>{fecha_txt}</p>", unsafe_allow_html=True)
+
+    if not fp_esquema_listo():
+        st.info("Las finanzas personales aún no están instaladas en la base de datos. "
+                "Corre las migraciones del repositorio del bot (carpeta sql/) en Neon.")
+        return
+    try:
+        dl = fp_dinero_libre(uid, hoy)
+    except Exception:
+        st.warning("No pude calcular tu dinero libre en este momento. Recarga la página en un minuto.")
+        return
+
+    if not dl or dl["estado"] == "SIN_BASE":
+        _fp_render_sin_base(uid, dl, hoy)
+    else:
+        _fp_render_estado(dl)
+
+    col_izq, col_der = st.columns([1.35, 1], gap="large")
+    with col_izq:
+        _fp_render_registro(uid, hoy)
+        _fp_render_ultimos(uid)
+    with col_der:
+        _fp_render_proximos(uid, dl, hoy)
+        _fp_render_bolsas(uid)
+    st.markdown("<p style='font-size:0.75rem; color:#64748b; font-style:italic; text-align:center; margin-top:24px;'>"
+                "Los montos son estimaciones con base en lo que registras y tus pagos programados; "
+                "no sustituyen el saldo de tu banco.</p>", unsafe_allow_html=True)
+
+
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 # ==========================================
@@ -399,12 +884,19 @@ else:
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
     st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {active_username}</h3>", unsafe_allow_html=True)
 
+# 5.1 NAVEGACIÓN PRINCIPAL (Fase 3): "Tu dinero hoy" es el home; la Terminal sigue intacta.
+if "modo_pro_toggle" in st.session_state:
+    st.session_state["modo_pro_toggle"] = st.session_state["modo_pro_toggle"]   # conserva el Modo Pro al cambiar de sección
+seccion = st.sidebar.radio("Sección", [SECCION_FP, SECCION_TERMINAL], key="seccion_app", label_visibility="collapsed")
+
 if st.sidebar.button("Cerrar Sesión", use_container_width=True):
+    st.session_state.clear()   # nada del usuario anterior (código de Telegram, reportes de IA) queda en pantalla
     st.session_state["user_id"] = None; st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('eye', color='#d4af37', size=16)}Experiencia de Usuario</h3>", unsafe_allow_html=True)
-st.sidebar.toggle("Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
+if seccion == SECCION_TERMINAL:
+    st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('eye', color='#d4af37', size=16)}Experiencia de Usuario</h3>", unsafe_allow_html=True)
+    st.sidebar.toggle("Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
 
 with st.sidebar.expander("Estrategia y Perfil", expanded=False):
     st.markdown("<p style='font-size:0.8rem; color:#8b949e;'>Personaliza tu experiencia financiera.</p>", unsafe_allow_html=True)
@@ -429,6 +921,13 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
                         perfil_ok = True
                 if perfil_ok: st.success("Perfil actualizado.")
                 else: st.error("Clave incorrecta.")
+
+    st.markdown("<hr style='margin:14px 0 8px 0; border-color:#1f2937;'>", unsafe_allow_html=True)
+    render_fp_telegram(user_id)   # siempre del usuario que inició sesión (nunca del cliente que se está viendo)
+
+if seccion == SECCION_FP:
+    render_fp_dashboard(active_client_id, active_username, viendo_otro_cliente=(active_client_id != user_id))
+    st.stop()   # la Terminal (cotizaciones, riesgo, IA) no se calcula mientras no se abra
 
 st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('download', color='#d4af37', size=16)}Reportes Institucionales</h3>", unsafe_allow_html=True)
 export_df = read_df("SELECT * FROM transactions WHERE user_id=%s", (active_client_id,))
