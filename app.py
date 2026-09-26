@@ -18,7 +18,7 @@ import uuid
 import numpy as np
 from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
 from telegram_deeplink import render_boton_telegram
-from fp_edicion_ui import render_panel_edicion_fp
+from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -714,7 +714,9 @@ def _fp_render_ultimos(uid):
 
 
 def _fp_render_proximos(uid, dl, hoy):
-    _fp_titulo("Lo que viene", "trend")
+    c_tit, c_btn = st.columns([10, 1])
+    with c_tit: _fp_titulo("Lo que viene", "trend")
+    with c_btn: ui_boton_compromisos(db_conn, uid)
     hasta = (dl.get("proximo_ingreso") if dl else None) or (hoy + timedelta(days=30))
     eventos = fp_proximos(uid, hoy, hasta + timedelta(days=1))
     if not eventos:
@@ -732,7 +734,9 @@ def _fp_render_proximos(uid, dl, hoy):
 
 
 def _fp_render_bolsas(uid):
-    _fp_titulo("Tus bolsas", "shield")
+    c_tit, c_btn = st.columns([10, 1])
+    with c_tit: _fp_titulo("Tus bolsas", "shield")
+    with c_btn: ui_boton_bolsas(db_conn, uid)
     bolsas = fp_bolsas(uid)
     if not bolsas:
         st.caption("Aún no apartas dinero. Desde Telegram: /apartar 500 colchón (o el nombre de una meta).")
@@ -885,6 +889,7 @@ else:
     active_client_id = user_id
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
     st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {active_username}</h3>", unsafe_allow_html=True)
+    ui_boton_perfil(db_conn, user_id, active_client_id)
 
 # 5.1 NAVEGACIÓN PRINCIPAL (Fase 3): "Tu dinero hoy" es el home; la Terminal sigue intacta.
 if "modo_pro_toggle" in st.session_state:
@@ -894,8 +899,6 @@ seccion = st.sidebar.radio("Sección", [SECCION_FP, SECCION_TERMINAL], key="secc
 if st.sidebar.button("Cerrar Sesión", use_container_width=True):
     st.session_state.clear()   # nada del usuario anterior (código de Telegram, reportes de IA) queda en pantalla
     st.session_state["user_id"] = None; st.rerun()
-
-render_panel_edicion_fp(db_conn, user_id, active_client_id, st.sidebar)
 
 st.sidebar.markdown("---")
 if seccion == SECCION_TERMINAL:
