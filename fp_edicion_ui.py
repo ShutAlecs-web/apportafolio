@@ -163,21 +163,8 @@ def _flash(mensaje: str):
 # ==========================================
 # 4. INTROSPECCIÓN DEL ESQUEMA (cacheada)
 # ==========================================
-@st.cache_data(ttl=600, show_spinner=False)
 def _resolver_tabla(_db_conn, candidatas: tuple):
-    """Primera tabla existente de la lista, o None."""
-    try:
-        with _db_conn() as conn, conn.cursor() as cur:
-            for nombre in candidatas:
-                if not nombre:
-                    continue
-                cur.execute("SELECT to_regclass(%s)", (str(nombre),))
-                fila = cur.fetchone()
-                if fila and fila[0]:
-                    return str(nombre)
-    except Exception:
-        return None
-    return None
+    return candidatas[0] if candidatas else None
 
 
 @st.cache_data(ttl=600, show_spinner=False)
