@@ -894,7 +894,8 @@ seccion = st.sidebar.radio("Sección", [SECCION_FP, SECCION_TERMINAL], key="secc
 if st.sidebar.button("Cerrar Sesión", use_container_width=True):
     st.session_state.clear()   # nada del usuario anterior (código de Telegram, reportes de IA) queda en pantalla
     st.session_state["user_id"] = None; st.rerun()
-    render_panel_edicion_fp(db_conn, user_id, active_client_id, st.sidebar)
+
+render_panel_edicion_fp(db_conn, user_id, active_client_id, st.sidebar)
 
 st.sidebar.markdown("---")
 if seccion == SECCION_TERMINAL:
