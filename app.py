@@ -18,6 +18,7 @@ import uuid
 import numpy as np
 from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
 from telegram_deeplink import render_boton_telegram
+from fp_edicion_ui import render_panel_edicion_fp
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -893,6 +894,7 @@ seccion = st.sidebar.radio("Sección", [SECCION_FP, SECCION_TERMINAL], key="secc
 if st.sidebar.button("Cerrar Sesión", use_container_width=True):
     st.session_state.clear()   # nada del usuario anterior (código de Telegram, reportes de IA) queda en pantalla
     st.session_state["user_id"] = None; st.rerun()
+    render_panel_edicion_fp(db_conn, user_id, active_client_id, st.sidebar)
 
 st.sidebar.markdown("---")
 if seccion == SECCION_TERMINAL:
