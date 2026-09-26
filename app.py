@@ -16,6 +16,8 @@ import io
 import time
 import uuid
 import numpy as np
+from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
+from telegram_deeplink import render_boton_telegram
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -533,6 +535,7 @@ def render_fp_telegram(uid):
                     f"<p class='fp-nota' style='text-align:center;'>Vence a las {hora} ({minutos} min). "
                     f"Envía este mensaje al bot:</p>", unsafe_allow_html=True)
         st.code(f"/vincular {guardado['codigo']}", language=None)
+        render_boton_telegram(guardado['codigo'])
         try:
             bot = str(st.secrets["TELEGRAM_BOT_USERNAME"]).strip().lstrip("@")
         except Exception:
@@ -848,10 +851,8 @@ if st.session_state["user_id"] is None:
             usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
             pwd = st.text_input("Contraseña", type="password", placeholder="CLAVE DE ACCESO")
             if st.form_submit_button("ACCEDER", use_container_width=True):
-                with db_conn() as conn, conn.cursor() as cur:
-                    cur.execute("SELECT user_id FROM users WHERE username=%s AND password_hash=%s", (usr, hash_password(pwd)))
-                    user = cur.fetchone()
-                if user: st.session_state["user_id"] = user[0]; st.rerun()
+                uid_ok = autenticar(db_conn, usr, pwd)
+                if uid_ok: st.session_state["user_id"] = uid_ok; st.rerun()
                 else: st.error("Credenciales incorrectas.")
     st.stop()
 
@@ -915,8 +916,8 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
                 with db_conn() as conn, conn.cursor() as cur:
                     cur.execute("SELECT password_hash FROM users WHERE user_id=%s", (user_id,))
                     fila_pwd = cur.fetchone()
-                    if fila_pwd and fila_pwd[0] == hash_password(old_pwd):
-                        if new_pwd and len(new_pwd) >= 6: cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password(new_pwd), f_dca, f_goal, user_id))
+                    if fila_pwd and verificar_usuario(db_conn, user_id, old_pwd):
+                        ash_password_seguro(new_pwd) >= 6: cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password(new_pwd), f_dca, f_goal, user_id))
                         else: cur.execute("UPDATE users SET dca_frequency=%s, goal_name=%s WHERE user_id=%s", (f_dca, f_goal, user_id))
                         perfil_ok = True
                 if perfil_ok: st.success("Perfil actualizado.")
