@@ -5,13 +5,15 @@ Módulo aislado (Norma 2): no toca app.py ni ninguna función existente. Solo se
 
 Qué hace:
   * Editar / eliminar bolsas (fp_bolsas).
-  * Editar / eliminar próximos pagos (fp_reglas_recurrentes).
+  * Editar / eliminar próximos pagos (la tabla que alimenta fp_ocurrencias: fp_reglas_recurrentes o
+    fp_compromisos_programados, detectada sola).
   * Cambiar el `username` del usuario (independencia de cuentas compartidas).
 
 API pública (botones contextuales, se colocan junto a cada sección de la Terminal):
-  * ui_boton_bolsas(db_conn, uid)
-  * ui_boton_compromisos(db_conn, uid)
-  * ui_boton_perfil(db_conn, actor_uid, target_uid)
+  * ui_boton_bolsas(db_conn, uid, contenedor=None)
+  * ui_boton_compromisos(db_conn, uid, contenedor=None)
+  * ui_boton_perfil(db_conn, actor_uid, target_uid, contenedor=None)
+  `contenedor` (p. ej. st.sidebar) pinta ahí el botón; la ventana siempre se abre en el área principal.
 
 Diseño "schema-adaptive":
   El editor NO asume nombres de columnas. Lee el esquema real desde pg_catalog (legible por cualquier rol
@@ -50,19 +52,24 @@ COLUMNA_USUARIO = "user_id"
 LIMITE_FILAS = 500
 
 TABLA_BOLSAS_CANDIDATAS = ("fp_bolsas",)
-TABLA_COMPROMISOS_CANDIDATAS = ("fp_reglas_recurrentes",)
-# ALTERNATIVAS históricas (no se usan con el resolver simplificado; se pueden forzar con
-# st.secrets["FP_TABLA_COMPROMISOS"]): "fp_compromisos", "fp_proximos_pagos", "fp_pagos_programados".
+TABLA_COMPROMISOS_CANDIDATAS = ("fp_reglas_recurrentes", "fp_compromisos_programados")
+# Se elige la que lea la función fp_ocurrencias (la misma que pinta "Lo que viene"), para que lo que
+# edites se vea de inmediato. Si no se puede saber, la primera cuyo esquema sea legible.
+# Forzar una tabla: st.secrets["FP_TABLA_COMPROMISOS"] = "nombre_tabla".
+FUNCION_OCURRENCIAS = "fp_ocurrencias"
 
 # Columnas que jamás se editan desde la UI.
 COLUMNAS_SIEMPRE_BLOQUEADAS = {
     COLUMNA_USUARIO, "creado_en", "created_at", "actualizado_en", "updated_at",
     "timestamp", "mensaje_origen_id", "fuente", "vinculado_en",
 }
+# Tipos que ni siquiera se muestran (listas, JSON): ilegibles para el usuario.
+TIPOS_NO_VISIBLES = {"ARRAY", "json", "jsonb", "bytea", "tsvector"}
 # Columnas técnicas que no se MUESTRAN (siguen en el DataFrame interno para el UPDATE).
 COLUMNAS_OCULTAS = {
     COLUMNA_USUARIO, "bolsa_id", "regla_id", "compromiso_id", "meta_id", "prioridad",
     "creado_en", "actualizado_en", "created_at", "updated_at", "timestamp", "mensaje_origen_id", "vinculado_en",
+    "fuente",
 }
 OCULTAR_SUFIJO_ID = True   # oculta también cualquier otra columna *_id (cuenta_id, categoria_id...). ALTERNATIVA: False
 
@@ -73,6 +80,11 @@ PATRONES_DERIVADOS = ("saldo", "consumido", "gastado", "acumulado", "disponible"
 # Si existe alguna de estas columnas booleanas, "Eliminar" = desactivar (reversible).
 BANDERAS_SOFT_DELETE = ("activa", "activo", "vigente")
 # ALTERNATIVA (borrado físico siempre): cambiar a  BANDERAS_SOFT_DELETE = ()
+
+# Baja lógica por columna `estado` (reversible y respeta el historial del ledger):
+COLUMNA_ESTADO = "estado"
+ESTADO_BAJA_POR_TABLA = {"fp_compromisos_programados": "FINALIZADO"}   # mismo valor que usa el bot
+ESTADOS_BAJA_CANDIDATOS = ("FINALIZADO", "CANCELADO", "INACTIVO", "ELIMINADO")
 
 # Convención de llaves primarias si el catálogo no reporta la PK.
 PK_CONVENCIONALES = ("bolsa_id", "regla_id", "compromiso_id", "meta_id", "id")
@@ -207,10 +219,19 @@ def _leer_esquema(db_conn, tabla: str):
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull
+            SELECT a.attname,
+                   CASE WHEN ty.typtype = 'd' THEN format_type(ty.typbasetype, ty.typtypmod)
+                        ELSE format_type(a.atttypid, a.atttypmod) END,
+                   NOT a.attnotnull,
+                   ty.typtype::text,
+                   CASE WHEN ty.typtype = 'e' THEN
+                        ARRAY(SELECT e.enumlabel::text FROM pg_enum e
+                               WHERE e.enumtypid = a.atttypid ORDER BY e.enumsortorder) END,
+                   (a.attgenerated <> '')
               FROM pg_attribute a
               JOIN pg_class t     ON t.oid = a.attrelid
               JOIN pg_namespace n ON n.oid = t.relnamespace
+              JOIN pg_type ty     ON ty.oid = a.atttypid
              WHERE t.relname = %s
                AND n.nspname = ANY(current_schemas(false))
                AND a.attnum > 0 AND NOT a.attisdropped
@@ -230,7 +251,7 @@ def _leer_esquema(db_conn, tabla: str):
                 """,
                 (tabla,),
             )
-            filas = cur.fetchall()
+            filas = [(c, t, n, "b", None, False) for c, t, n in cur.fetchall()]
         cur.execute(
             """
             SELECT a.attname
@@ -249,15 +270,26 @@ def _leer_esquema(db_conn, tabla: str):
     if not filas:
         raise LookupError(f"Sin columnas visibles para {tabla}")
 
-    tipos = {c: _normalizar_tipo(t) for c, t, _ in filas}
+    tipos, opciones, generadas = {}, {}, set()
+    for c, t, _, typtype, etiquetas, generada in filas:
+        if typtype == "e":
+            tipos[c] = "enum"
+            opciones[c] = list(etiquetas or [])
+        else:
+            tipos[c] = _normalizar_tipo(t)
+        if generada:
+            generadas.add(c)
     pk = pks[0] if len(pks) == 1 else None
     if pk is None and not pks:
         pk = next((c for c in PK_CONVENCIONALES if c in tipos), None)
     return {
         "tipos": tipos,
-        "nulos": {c: bool(n) for c, _, n in filas},
-        "orden": [c for c, _, _ in filas],
+        "nulos": {f[0]: bool(f[2]) for f in filas},
+        "orden": [f[0] for f in filas],
         "pk": pk,
+        "opciones": opciones,     # valores permitidos de columnas ENUM (se editan con lista desplegable)
+        "generadas": generadas,   # columnas GENERATED: Postgres no permite escribirlas
+        "tabla": tabla,
     }
 
 
@@ -276,11 +308,36 @@ def _esquema(db_conn, tabla: str):
         return None
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _fuente_funcion(_db_conn, nombre_funcion: str) -> str:
+    """Código fuente de una función SQL (pg_proc es legible por cualquier rol)."""
+    with _db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(string_agg(prosrc, ' '), '') FROM pg_proc WHERE proname = %s", (nombre_funcion,))
+        fila = cur.fetchone()
+    return (fila[0] if fila else "") or ""
+
+
+def _tabla_compromisos(db_conn):
+    """Tabla de próximos pagos: forzada por secrets > la que usa fp_ocurrencias > la primera legible."""
+    override = _secret("FP_TABLA_COMPROMISOS")
+    if override:
+        return _resolver_tabla(db_conn, (str(override).strip(),))
+    try:
+        fuente = _fuente_funcion(db_conn, FUNCION_OCURRENCIAS).lower()
+    except Exception:
+        fuente = ""
+    usada = next((t for t in TABLA_COMPROMISOS_CANDIDATAS if re.search(rf"\b{re.escape(t)}\b", fuente)), None)
+    if usada:
+        return usada
+    legible = next((t for t in TABLA_COMPROMISOS_CANDIDATAS if _esquema(db_conn, t)), None)
+    return legible or _resolver_tabla(db_conn, TABLA_COMPROMISOS_CANDIDATAS)
+
+
 def _columnas_bloqueadas(esq) -> set:
     bloqueadas = set()
     for col, tipo in esq["tipos"].items():
         if (col in COLUMNAS_SIEMPRE_BLOQUEADAS or col == esq["pk"] or tipo in TIPOS_NO_EDITABLES
-                or any(p in col.lower() for p in PATRONES_DERIVADOS)):
+                or col in esq.get("generadas", ()) or any(p in col.lower() for p in PATRONES_DERIVADOS)):
             bloqueadas.add(col)
     return bloqueadas
 
@@ -292,7 +349,7 @@ def _columnas_visibles(esq, columnas_df) -> list:
         if col == COL_ELIMINAR:
             continue
         tipo = esq["tipos"].get(col, "")
-        if col in COLUMNAS_OCULTAS or col == esq["pk"] or tipo in TIPOS_TIMESTAMP:
+        if col in COLUMNAS_OCULTAS or col == esq["pk"] or tipo in TIPOS_TIMESTAMP or tipo in TIPOS_NO_VISIBLES:
             continue
         if OCULTAR_SUFIJO_ID and col.lower().endswith("_id"):
             continue
@@ -304,13 +361,35 @@ def _bandera_soft_delete(esq):
     return next((b for b in BANDERAS_SOFT_DELETE if esq["tipos"].get(b) == "boolean"), None)
 
 
+def _baja_logica(esq):
+    """(columna, valor_de_baja, valores_ocultos) o None si solo cabe borrado físico."""
+    bandera = _bandera_soft_delete(esq)
+    if bandera:
+        return bandera, False, None
+    if COLUMNA_ESTADO in esq["tipos"]:
+        if esq["tipos"][COLUMNA_ESTADO] == "enum":
+            posibles = [v for v in ESTADOS_BAJA_CANDIDATOS if v in esq.get("opciones", {}).get(COLUMNA_ESTADO, [])]
+            if posibles:
+                return COLUMNA_ESTADO, posibles[0], posibles
+        valor = ESTADO_BAJA_POR_TABLA.get(esq.get("tabla"))
+        if valor:
+            return COLUMNA_ESTADO, valor, [valor]
+    return None
+
+
 # ==========================================
 # 5. LECTURA Y ESCRITURA
 # ==========================================
 def _cargar(db_conn, tabla, esq, uid) -> pd.DataFrame:
-    bandera = _bandera_soft_delete(esq)
+    baja = _baja_logica(esq)
     orden = next((c for c in ORDEN_PREFERIDO if c in esq["tipos"]), esq["pk"] or esq["orden"][0])
-    filtro = sql.SQL(" AND {} IS NOT FALSE").format(sql.Identifier(bandera)) if bandera else sql.SQL("")
+    if baja and baja[2] is None:
+        filtro = sql.SQL(" AND {} IS NOT FALSE").format(sql.Identifier(baja[0]))
+    elif baja:
+        filtro = sql.SQL(" AND ({c} IS NULL OR {c}::text NOT IN ({v}))").format(
+            c=sql.Identifier(baja[0]), v=sql.SQL(", ").join(sql.Literal(x) for x in baja[2]))
+    else:
+        filtro = sql.SQL("")
     consulta = sql.SQL("SELECT * FROM {t} WHERE {u} = %s{f} ORDER BY {o} NULLS LAST LIMIT {lim}").format(
         t=sql.Identifier(tabla), u=sql.Identifier(COLUMNA_USUARIO), f=filtro,
         o=sql.Identifier(orden), lim=sql.Literal(LIMITE_FILAS),
@@ -343,6 +422,9 @@ def _column_config(esq, bloqueadas):
             cfg[col] = st.column_config.DateColumn(_etiqueta(col), format="DD/MM/YYYY", required=requerido)
         elif tipo == "boolean":
             cfg[col] = st.column_config.CheckboxColumn(_etiqueta(col))
+        elif tipo == "enum":
+            cfg[col] = st.column_config.SelectboxColumn(
+                _etiqueta(col), options=esq.get("opciones", {}).get(col, []), required=requerido)
         else:
             cfg[col] = st.column_config.TextColumn(_etiqueta(col), required=requerido)
     return cfg
@@ -376,7 +458,7 @@ def _persistir(db_conn, tabla, esq, uid, original, editado, marcados):
         if cambios:
             actualizaciones.append((k, cambios))
 
-    bandera = _bandera_soft_delete(esq)
+    baja = _baja_logica(esq)
     t, pk_id, u_id = sql.Identifier(tabla), sql.Identifier(pk), sql.Identifier(COLUMNA_USUARIO)
 
     with db_conn() as conn, conn.cursor() as cur:
@@ -387,18 +469,18 @@ def _persistir(db_conn, tabla, esq, uid, original, editado, marcados):
                 list(cambios.values()) + [k, uid],
             )
         for k in marcados_set:
-            if bandera:
+            if baja:
                 cur.execute(
-                    sql.SQL("UPDATE {t} SET {b} = FALSE WHERE {pk} = %s AND {u} = %s").format(
-                        t=t, b=sql.Identifier(bandera), pk=pk_id, u=u_id),
-                    (k, uid),
+                    sql.SQL("UPDATE {t} SET {b} = %s WHERE {pk} = %s AND {u} = %s").format(
+                        t=t, b=sql.Identifier(baja[0]), pk=pk_id, u=u_id),
+                    (baja[1], k, uid),
                 )
             else:
                 cur.execute(
                     sql.SQL("DELETE FROM {t} WHERE {pk} = %s AND {u} = %s").format(t=t, pk=pk_id, u=u_id),
                     (k, uid),
                 )
-    return len(actualizaciones), len(marcados_set), ("desactivado(s)" if bandera else "eliminado(s)")
+    return len(actualizaciones), len(marcados_set), ("desactivado(s)" if baja else "eliminado(s)")
 
 
 def _mensaje_error_pg(e) -> str:
@@ -468,7 +550,7 @@ def _editor_tabla(db_conn, clave, nombre_humano, tabla, uid):
     marcados = editado.loc[editado[COL_ELIMINAR] == True, pk].tolist()  # noqa: E712
     confirmado = True
     if marcados:
-        accion = "desactivar" if _bandera_soft_delete(esq) else "eliminar definitivamente"
+        accion = "quitar de tu lista" if _baja_logica(esq) else "eliminar definitivamente"
         confirmado = st.checkbox(f"Confirmo {accion} {len(marcados)} registro(s).", key=f"fpedit_conf_{clave}_{version}")
 
     c1, c2 = st.columns([1, 1])
@@ -612,23 +694,27 @@ def _dialogo_username(db_conn, actor_uid, target_uid):
     _editor_username(db_conn, actor_uid, target_uid)
 
 
-def _boton_contextual(etiqueta, key, clave, titulo_fallback, dialogo_fn, editor_fn, args_dialogo, args_editor, ayuda=None):
-    """Con st.dialog abre un modal. Sin él, abre un expander persistente justo debajo del botón."""
+def _boton_contextual(etiqueta, key, clave, titulo_fallback, dialogo_fn, editor_fn, args_dialogo, args_editor,
+                      ayuda=None, contenedor=None, ancho_completo=False):
+    """Pinta el botón en `contenedor` (o donde se llame). Con st.dialog abre un modal: la llamada se hace
+    FUERA del contenedor para que la ventana nunca quede atrapada en el sidebar. Sin st.dialog, abre un
+    expander persistente justo debajo del botón."""
     _mostrar_flash()
-    if st.button(etiqueta, key=key, help=ayuda):
+    destino = contenedor if contenedor is not None else st
+    if destino.button(etiqueta, key=key, help=ayuda, use_container_width=ancho_completo):
         if _DIALOG is not None:
             dialogo_fn(*args_dialogo)
         else:
             st.session_state[f"fpedit_abierto_{clave}"] = True
     if _DIALOG is None and st.session_state.get(f"fpedit_abierto_{clave}"):
-        with st.expander(titulo_fallback, expanded=True):
+        with destino.expander(titulo_fallback, expanded=True):
             editor_fn(*args_editor)
 
 
 # ==========================================
 # 9. API PÚBLICA — BOTONES CONTEXTUALES
 # ==========================================
-def ui_boton_bolsas(db_conn, uid):
+def ui_boton_bolsas(db_conn, uid, contenedor=None):
     """Botón ✏️ para editar/eliminar bolsas. Colócalo junto al encabezado de tus bolsas."""
     if not uid:
         return
@@ -637,29 +723,28 @@ def ui_boton_bolsas(db_conn, uid):
         "✏️", "btn_bolsas", "bolsas", "Editar bolsas",
         _dialogo_bolsas, _editor_tabla,
         (db_conn, uid, tabla), (db_conn, "bolsas", "bolsas", tabla, uid),
-        ayuda="Editar o eliminar bolsas",
+        ayuda="Editar o eliminar bolsas", contenedor=contenedor,
     )
 
 
-def ui_boton_compromisos(db_conn, uid):
+def ui_boton_compromisos(db_conn, uid, contenedor=None):
     """Botón ✏️ para editar/eliminar próximos pagos. Colócalo junto al encabezado de tus compromisos."""
     if not uid:
         return
-    override = _secret("FP_TABLA_COMPROMISOS")
-    candidatas = ((str(override).strip(),) if override else ()) + TABLA_COMPROMISOS_CANDIDATAS
-    tabla = _resolver_tabla(db_conn, candidatas)
+    tabla = _tabla_compromisos(db_conn)
     _boton_contextual(
         "✏️", "btn_comp", "compromisos", "Editar próximos pagos",
         _dialogo_compromisos, _editor_tabla,
         (db_conn, uid, tabla), (db_conn, "compromisos", "próximos pagos", tabla, uid),
-        ayuda="Editar o eliminar próximos pagos",
+        ayuda="Editar o eliminar próximos pagos", contenedor=contenedor,
     )
 
 
-def ui_boton_perfil(db_conn, actor_uid, target_uid):
+def ui_boton_perfil(db_conn, actor_uid, target_uid, contenedor=None):
     """Botón ⚙️ para cambiar el nombre de usuario.
     actor_uid  = quien inició sesión (su contraseña confirma el cambio).
-    target_uid = perfil a renombrar (el gestor puede pasar el cliente activo; un cliente, su propio uid)."""
+    target_uid = perfil a renombrar (el gestor puede pasar el cliente activo; un cliente, su propio uid).
+    contenedor = st.sidebar para pintarlo en el menú lateral (NO lo envuelvas en `with st.sidebar:`)."""
     if not actor_uid:
         return
     target_uid = target_uid or actor_uid
@@ -667,4 +752,5 @@ def ui_boton_perfil(db_conn, actor_uid, target_uid):
         "⚙️ Perfil y Usuario", "btn_perfil", "username", "Perfil y usuario",
         _dialogo_username, _editor_username,
         (db_conn, actor_uid, target_uid), (db_conn, actor_uid, target_uid),
+        contenedor=contenedor, ancho_completo=True,
     )
