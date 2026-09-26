@@ -536,7 +536,8 @@ def render_fp_telegram(uid):
                     f"<p class='fp-nota' style='text-align:center;'>Vence a las {hora} ({minutos} min). "
                     f"Envía este mensaje al bot:</p>", unsafe_allow_html=True)
         st.code(f"/vincular {guardado['codigo']}", language=None)
-        render_boton_telegram(guardado['codigo'])
+        _codigo_dl = str(guardado['codigo']).strip().upper()
+        render_boton_telegram(_codigo_dl if _codigo_dl.startswith("CMA-") else f"CMA-{_codigo_dl}")
         try:
             bot = str(st.secrets["TELEGRAM_BOT_USERNAME"]).strip().lstrip("@")
         except Exception:
@@ -873,6 +874,7 @@ if user_id == "USR-001":
     selected_client_name = st.sidebar.selectbox("Cliente Activo:", list(client_dict.keys()))
     active_client_id = client_dict[selected_client_name]
     active_username = selected_client_name 
+    ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=st.sidebar)   # botón en el menú lateral
     
     with st.sidebar.expander("Registrar Nuevo Cliente", expanded=False):
         with st.form("new_client_form"):
@@ -889,7 +891,7 @@ else:
     active_client_id = user_id
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
     st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {active_username}</h3>", unsafe_allow_html=True)
-    ui_boton_perfil(db_conn, user_id, active_client_id)
+    ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=st.sidebar)   # botón en el menú lateral
 
 # 5.1 NAVEGACIÓN PRINCIPAL (Fase 3): "Tu dinero hoy" es el home; la Terminal sigue intacta.
 if "modo_pro_toggle" in st.session_state:
