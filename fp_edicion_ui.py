@@ -5,22 +5,25 @@ Módulo aislado (Norma 2): no toca app.py ni ninguna función existente. Solo se
 
 Qué hace:
   * Editar / eliminar bolsas (fp_bolsas).
-  * Editar / eliminar próximos pagos o compromisos.
-  * Cambiar el `username` del usuario activo (independencia de cuentas compartidas).
+  * Editar / eliminar próximos pagos (fp_reglas_recurrentes).
+  * Cambiar el `username` del usuario (independencia de cuentas compartidas).
+
+API pública (botones contextuales, se colocan junto a cada sección de la Terminal):
+  * ui_boton_bolsas(db_conn, uid)
+  * ui_boton_compromisos(db_conn, uid)
+  * ui_boton_perfil(db_conn, actor_uid, target_uid)
 
 Diseño "schema-adaptive":
-  El editor NO asume nombres de columnas. Lee el esquema real de Neon (information_schema + pg_index)
-  y construye el formulario con lo que encuentra. Si algo no cuadra, cae a modo seguro (solo lectura
-  o aviso), nunca rompe la Terminal.
+  El editor NO asume nombres de columnas. Lee el esquema real desde pg_catalog (legible por cualquier rol
+  en Neon, sin depender de to_regclass) y construye el formulario con lo que encuentra. Si algo no cuadra,
+  cae a modo seguro (solo lectura o aviso), nunca rompe la Terminal.
 
 Suposiciones (Norma 3, documentadas):
-  - Asumí que fp_bolsas y la tabla de compromisos tienen columna `user_id` (sin ella no se edita nada).
-  - Asumí que la tabla de compromisos es la primera que exista de TABLA_COMPROMISOS_CANDIDATAS
-    (o la definida en st.secrets["FP_TABLA_COMPROMISOS"]).
-  - Asumí llave primaria simple (una columna). Con PK compuesta o sin PK, el editor queda en solo lectura.
+  - fp_bolsas y fp_reglas_recurrentes tienen columna `user_id` (sin ella no se edita nada).
+  - Llave primaria simple. Si pg_catalog no la reporta, se usa la convención bolsa_id / regla_id / id.
 
 Requisitos: streamlit >= 1.37 recomendado (st.dialog). Con versiones anteriores usa st.experimental_dialog
-y, si tampoco existe, cae automáticamente a un st.expander.
+y, si tampoco existe, cae automáticamente a un st.expander debajo del botón.
 """
 from __future__ import annotations
 
@@ -47,13 +50,22 @@ COLUMNA_USUARIO = "user_id"
 LIMITE_FILAS = 500
 
 TABLA_BOLSAS_CANDIDATAS = ("fp_bolsas",)
-TABLA_COMPROMISOS_CANDIDATAS = ("fp_compromisos", "fp_proximos_pagos", "fp_pagos_programados", "fp_commitments")
+TABLA_COMPROMISOS_CANDIDATAS = ("fp_reglas_recurrentes",)
+# ALTERNATIVAS históricas (no se usan con el resolver simplificado; se pueden forzar con
+# st.secrets["FP_TABLA_COMPROMISOS"]): "fp_compromisos", "fp_proximos_pagos", "fp_pagos_programados".
 
 # Columnas que jamás se editan desde la UI.
 COLUMNAS_SIEMPRE_BLOQUEADAS = {
     COLUMNA_USUARIO, "creado_en", "created_at", "actualizado_en", "updated_at",
     "timestamp", "mensaje_origen_id", "fuente", "vinculado_en",
 }
+# Columnas técnicas que no se MUESTRAN (siguen en el DataFrame interno para el UPDATE).
+COLUMNAS_OCULTAS = {
+    COLUMNA_USUARIO, "bolsa_id", "regla_id", "compromiso_id", "meta_id", "prioridad",
+    "creado_en", "actualizado_en", "created_at", "updated_at", "timestamp", "mensaje_origen_id", "vinculado_en",
+}
+OCULTAR_SUFIJO_ID = True   # oculta también cualquier otra columna *_id (cuenta_id, categoria_id...). ALTERNATIVA: False
+
 # Campos probablemente derivados por el motor de Dinero Libre: solo lectura para no desincronizar saldos.
 # ALTERNATIVA: vaciar esta tupla si quieres permitir ajustes manuales de saldo.
 PATRONES_DERIVADOS = ("saldo", "consumido", "gastado", "acumulado", "disponible")
@@ -62,17 +74,20 @@ PATRONES_DERIVADOS = ("saldo", "consumido", "gastado", "acumulado", "disponible"
 BANDERAS_SOFT_DELETE = ("activa", "activo", "vigente")
 # ALTERNATIVA (borrado físico siempre): cambiar a  BANDERAS_SOFT_DELETE = ()
 
+# Convención de llaves primarias si el catálogo no reporta la PK.
+PK_CONVENCIONALES = ("bolsa_id", "regla_id", "compromiso_id", "meta_id", "id")
+
 TIPOS_ENTEROS = {"integer", "bigint", "smallint"}
 TIPOS_DECIMALES = {"numeric", "real", "double precision", "decimal"}
 TIPOS_NUMERICOS = TIPOS_ENTEROS | TIPOS_DECIMALES
 TIPOS_TEXTO = {"text", "character varying", "character", "varchar", "char"}
+TIPOS_TIMESTAMP = {"timestamp with time zone", "timestamp without time zone"}
 # Tipos que la tabla editable no maneja con seguridad → solo lectura.
 # (Timestamps bloqueados para evitar corrimientos de zona horaria; ALTERNATIVA: quitarlos de aquí.)
 TIPOS_NO_EDITABLES = {
     "json", "jsonb", "bytea", "ARRAY", "USER-DEFINED", "tsvector", "uuid", "money",
-    "timestamp with time zone", "timestamp without time zone", "time without time zone",
-    "time with time zone", "interval",
-}
+    "time without time zone", "time with time zone", "interval",
+} | TIPOS_TIMESTAMP
 
 ORDEN_PREFERIDO = ("proxima_fecha", "fecha_proxima", "fecha_vencimiento", "fecha_pago", "dia_pago", "fecha", "nombre")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._\-]{3,30}$")
@@ -160,21 +175,55 @@ def _flash(mensaje: str):
     st.session_state["fpedit_flash"] = mensaje
 
 
+def _mostrar_flash():
+    """Muestra una sola vez el mensaje pendiente de la última acción (lo consume el primer botón que se pinte)."""
+    flash = st.session_state.pop("fpedit_flash", None)
+    if flash:
+        try:
+            st.toast(flash)
+        except Exception:
+            st.success(flash)
+
+
+def _normalizar_tipo(tipo_pg: str) -> str:
+    """'numeric(12,2)' -> 'numeric'; 'character varying(120)' -> 'character varying'; 'text[]' -> 'ARRAY'."""
+    t = str(tipo_pg or "").strip()
+    if t.endswith("[]"):
+        return "ARRAY"
+    t = re.sub(r"\(.*?\)", "", t).strip()
+    return {"timestamptz": "timestamp with time zone", "timestamp": "timestamp without time zone"}.get(t, t)
+
+
 # ==========================================
-# 4. INTROSPECCIÓN DEL ESQUEMA (cacheada)
+# 4. RESOLUCIÓN DE TABLAS E INTROSPECCIÓN DEL ESQUEMA
 # ==========================================
 def _resolver_tabla(_db_conn, candidatas: tuple):
+    # Simplificado: to_regclass devolvía NULL por permisos en Neon. Se toma la primera candidata.
     return candidatas[0] if candidatas else None
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _esquema(_db_conn, tabla: str):
-    """{'tipos': {col: data_type}, 'nulos': {col: bool}, 'orden': [cols], 'pk': col|None}"""
-    try:
-        with _db_conn() as conn, conn.cursor() as cur:
+def _leer_esquema(db_conn, tabla: str):
+    """Lee columnas y PK desde pg_catalog. Lanza excepción si no hay columnas (así no se cachea un fallo)."""
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull
+              FROM pg_attribute a
+              JOIN pg_class t     ON t.oid = a.attrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE t.relname = %s
+               AND n.nspname = ANY(current_schemas(false))
+               AND a.attnum > 0 AND NOT a.attisdropped
+             ORDER BY a.attnum
+            """,
+            (tabla,),
+        )
+        filas = cur.fetchall()
+        if not filas:
+            # Respaldo: information_schema (por si el rol no ve pg_attribute de esa tabla).
             cur.execute(
                 """
-                SELECT column_name, data_type, is_nullable
+                SELECT column_name, data_type, (is_nullable = 'YES')
                   FROM information_schema.columns
                  WHERE table_schema = current_schema() AND table_name = %s
                  ORDER BY ordinal_position
@@ -182,26 +231,49 @@ def _esquema(_db_conn, tabla: str):
                 (tabla,),
             )
             filas = cur.fetchall()
-            cur.execute(
-                """
-                SELECT a.attname
-                  FROM pg_index i
-                  JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                 WHERE i.indrelid = to_regclass(%s) AND i.indisprimary
-                """,
-                (tabla,),
-            )
-            pks = [r[0] for r in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT a.attname
+              FROM pg_constraint c
+              JOIN pg_class t     ON t.oid = c.conrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+              JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+             WHERE c.contype = 'p'
+               AND t.relname = %s
+               AND n.nspname = ANY(current_schemas(false))
+            """,
+            (tabla,),
+        )
+        pks = [r[0] for r in cur.fetchall()]
+
+    if not filas:
+        raise LookupError(f"Sin columnas visibles para {tabla}")
+
+    tipos = {c: _normalizar_tipo(t) for c, t, _ in filas}
+    pk = pks[0] if len(pks) == 1 else None
+    if pk is None and not pks:
+        pk = next((c for c in PK_CONVENCIONALES if c in tipos), None)
+    return {
+        "tipos": tipos,
+        "nulos": {c: bool(n) for c, _, n in filas},
+        "orden": [c for c, _, _ in filas],
+        "pk": pk,
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _esquema_cacheado(_db_conn, tabla: str):
+    return _leer_esquema(_db_conn, tabla)   # si lanza excepción, Streamlit NO la guarda en caché
+
+
+def _esquema(db_conn, tabla: str):
+    """{'tipos': {col: tipo}, 'nulos': {col: bool}, 'orden': [cols], 'pk': col|None} o None."""
+    if not tabla:
+        return None
+    try:
+        return _esquema_cacheado(db_conn, tabla)
     except Exception:
         return None
-    if not filas:
-        return None
-    return {
-        "tipos": {c: t for c, t, _ in filas},
-        "nulos": {c: (n == "YES") for c, _, n in filas},
-        "orden": [c for c, _, _ in filas],
-        "pk": pks[0] if len(pks) == 1 else None,
-    }
 
 
 def _columnas_bloqueadas(esq) -> set:
@@ -211,6 +283,21 @@ def _columnas_bloqueadas(esq) -> set:
                 or any(p in col.lower() for p in PATRONES_DERIVADOS)):
             bloqueadas.add(col)
     return bloqueadas
+
+
+def _columnas_visibles(esq, columnas_df) -> list:
+    """Orden de columnas para la vista: COL_ELIMINAR + solo columnas legibles para el usuario."""
+    visibles = []
+    for col in columnas_df:
+        if col == COL_ELIMINAR:
+            continue
+        tipo = esq["tipos"].get(col, "")
+        if col in COLUMNAS_OCULTAS or col == esq["pk"] or tipo in TIPOS_TIMESTAMP:
+            continue
+        if OCULTAR_SUFIJO_ID and col.lower().endswith("_id"):
+            continue
+        visibles.append(col)
+    return [COL_ELIMINAR] + visibles
 
 
 def _bandera_soft_delete(esq):
@@ -278,6 +365,8 @@ def _persistir(db_conn, tabla, esq, uid, original, editado, marcados):
             continue
         cambios = {}
         for col in editables:
+            if col not in edit.columns:
+                continue
             nuevo = edit.at[clave, col]
             if not _iguales(orig.at[clave, col], nuevo):
                 valor = _py(nuevo, tipos.get(col))
@@ -322,6 +411,8 @@ def _mensaje_error_pg(e) -> str:
         return "Ya existe otro registro con ese mismo valor."
     if codigo == "23514":
         return "Uno de los valores no cumple las reglas de la tabla (por ejemplo, montos negativos)."
+    if codigo == "42501":
+        return "Tu usuario de base de datos no tiene permiso para modificar esta tabla."
     if codigo.startswith("22"):
         return "Uno de los valores tiene un formato inválido."
     return "No se pudieron guardar los cambios. No se modificó nada."
@@ -349,23 +440,27 @@ def _editor_tabla(db_conn, clave, nombre_humano, tabla, uid):
     if df.empty:
         st.info(f"Todavía no tienes {nombre_humano} registradas.")
         return
-    if not pk:
-        st.warning("Esta tabla no tiene llave primaria simple: se muestra en solo lectura.")
-        st.dataframe(df, hide_index=True, use_container_width=True)
-        return
 
     bloqueadas = _columnas_bloqueadas(esq)
     vista = df.copy()
     vista.insert(0, COL_ELIMINAR, False)
+    orden_vista = _columnas_visibles(esq, vista.columns)   # IDs y fechas técnicas quedan fuera de la vista
+
+    if not pk:
+        st.warning("Esta tabla no tiene llave primaria simple: se muestra en solo lectura.")
+        st.dataframe(vista, hide_index=True, use_container_width=True,
+                     column_order=[c for c in orden_vista if c != COL_ELIMINAR])
+        return
 
     version = st.session_state.get(f"fpedit_ver_{clave}", 0)
     st.caption("Toca una celda para editarla. Los campos en gris se calculan solos.")
     editado = st.data_editor(
-        vista,
+        vista,                                   # conserva TODAS las columnas (IDs incluidos) para el UPDATE
         key=f"fpedit_editor_{clave}_{version}",
         hide_index=True,
         use_container_width=True,
         num_rows="fixed",
+        column_order=orden_vista,                # solo se MUESTRAN Eliminar + columnas legibles
         column_config=_column_config(esq, bloqueadas),
         disabled=sorted(bloqueadas),
     )
@@ -512,75 +607,64 @@ def _dialogo_compromisos(db_conn, uid, tabla):
     _editor_tabla(db_conn, "compromisos", "próximos pagos", tabla, uid)
 
 
-@_como_dialogo("Cambiar nombre de usuario")
+@_como_dialogo("Perfil y usuario")
 def _dialogo_username(db_conn, actor_uid, target_uid):
     _editor_username(db_conn, actor_uid, target_uid)
 
 
-def _abrir(contenedor, clave, fn, *args):
-    """Con st.dialog abre un modal. Sin él, renderiza dentro de un expander persistente."""
-    if _DIALOG is not None:
-        fn(*args)
-    else:
-        st.session_state[f"fpedit_abierto_{clave}"] = True
-
-
-def _render_fallback(contenedor, clave, titulo, fn, *args):
+def _boton_contextual(etiqueta, key, clave, titulo_fallback, dialogo_fn, editor_fn, args_dialogo, args_editor, ayuda=None):
+    """Con st.dialog abre un modal. Sin él, abre un expander persistente justo debajo del botón."""
+    _mostrar_flash()
+    if st.button(etiqueta, key=key, help=ayuda):
+        if _DIALOG is not None:
+            dialogo_fn(*args_dialogo)
+        else:
+            st.session_state[f"fpedit_abierto_{clave}"] = True
     if _DIALOG is None and st.session_state.get(f"fpedit_abierto_{clave}"):
-        with contenedor.expander(titulo, expanded=True):
-            fn(*args)
+        with st.expander(titulo_fallback, expanded=True):
+            editor_fn(*args_editor)
 
 
 # ==========================================
-# 9. PUNTO DE ENTRADA PÚBLICO
+# 9. API PÚBLICA — BOTONES CONTEXTUALES
 # ==========================================
-def render_panel_edicion_fp(db_conn, user_id, active_client_id=None, contenedor=None, titulo=True):
-    """Pinta los 3 botones de edición. Llamar UNA sola vez por página (las keys de widgets son fijas).
-
-    db_conn          : el context manager db_conn() de app.py.
-    user_id          : quien inició sesión (se usa para verificar contraseñas).
-    active_client_id : perfil sobre el que se trabaja (el gestor puede estar viendo a un cliente).
-    contenedor       : st.sidebar, una columna, etc. Por defecto st.sidebar.
-    """
-    contenedor = contenedor if contenedor is not None else st.sidebar
-    uid = active_client_id or user_id
+def ui_boton_bolsas(db_conn, uid):
+    """Botón ✏️ para editar/eliminar bolsas. Colócalo junto al encabezado de tus bolsas."""
     if not uid:
         return
+    tabla = _resolver_tabla(db_conn, TABLA_BOLSAS_CANDIDATAS)
+    _boton_contextual(
+        "✏️", "btn_bolsas", "bolsas", "Editar bolsas",
+        _dialogo_bolsas, _editor_tabla,
+        (db_conn, uid, tabla), (db_conn, "bolsas", "bolsas", tabla, uid),
+        ayuda="Editar o eliminar bolsas",
+    )
 
-    flash = st.session_state.pop("fpedit_flash", None)
-    if flash:
-        try:
-            st.toast(flash)
-        except Exception:
-            contenedor.success(flash)
 
-    tabla_bolsas = _resolver_tabla(db_conn, TABLA_BOLSAS_CANDIDATAS)
+def ui_boton_compromisos(db_conn, uid):
+    """Botón ✏️ para editar/eliminar próximos pagos. Colócalo junto al encabezado de tus compromisos."""
+    if not uid:
+        return
     override = _secret("FP_TABLA_COMPROMISOS")
-    candidatas_comp = ((str(override).strip(),) if override else ()) + TABLA_COMPROMISOS_CANDIDATAS
-    tabla_comp = _resolver_tabla(db_conn, candidatas_comp)
+    candidatas = ((str(override).strip(),) if override else ()) + TABLA_COMPROMISOS_CANDIDATAS
+    tabla = _resolver_tabla(db_conn, candidatas)
+    _boton_contextual(
+        "✏️", "btn_comp", "compromisos", "Editar próximos pagos",
+        _dialogo_compromisos, _editor_tabla,
+        (db_conn, uid, tabla), (db_conn, "compromisos", "próximos pagos", tabla, uid),
+        ayuda="Editar o eliminar próximos pagos",
+    )
 
-    if titulo:
-        contenedor.markdown(
-            "<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600;"
-            " margin:0.6rem 0 0.3rem 0;'>Editar mis finanzas</h3>",
-            unsafe_allow_html=True,
-        )
 
-    if contenedor.button("Bolsas", use_container_width=True, key="fpedit_btn_bolsas",
-                         disabled=tabla_bolsas is None,
-                         help=None if tabla_bolsas else "Aún no existen bolsas en tu cuenta."):
-        _abrir(contenedor, "bolsas", _dialogo_bolsas, db_conn, uid, tabla_bolsas)
-
-    if contenedor.button("Próximos pagos", use_container_width=True, key="fpedit_btn_compromisos",
-                         disabled=tabla_comp is None,
-                         help=None if tabla_comp else "No encontré la tabla de compromisos (define FP_TABLA_COMPROMISOS)."):
-        _abrir(contenedor, "compromisos", _dialogo_compromisos, db_conn, uid, tabla_comp)
-
-    if contenedor.button("Nombre de usuario", use_container_width=True, key="fpedit_btn_username"):
-        _abrir(contenedor, "username", _dialogo_username, db_conn, user_id, uid)
-
-    # Solo aplica cuando no hay st.dialog disponible.
-    _render_fallback(contenedor, "bolsas", "Editar bolsas", _editor_tabla, db_conn, "bolsas", "bolsas", tabla_bolsas, uid)
-    _render_fallback(contenedor, "compromisos", "Editar próximos pagos", _editor_tabla, db_conn, "compromisos",
-                     "próximos pagos", tabla_comp, uid)
-    _render_fallback(contenedor, "username", "Cambiar nombre de usuario", _editor_username, db_conn, user_id, uid)
+def ui_boton_perfil(db_conn, actor_uid, target_uid):
+    """Botón ⚙️ para cambiar el nombre de usuario.
+    actor_uid  = quien inició sesión (su contraseña confirma el cambio).
+    target_uid = perfil a renombrar (el gestor puede pasar el cliente activo; un cliente, su propio uid)."""
+    if not actor_uid:
+        return
+    target_uid = target_uid or actor_uid
+    _boton_contextual(
+        "⚙️ Perfil y Usuario", "btn_perfil", "username", "Perfil y usuario",
+        _dialogo_username, _editor_username,
+        (db_conn, actor_uid, target_uid), (db_conn, actor_uid, target_uid),
+    )
