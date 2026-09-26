@@ -917,8 +917,10 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
                     cur.execute("SELECT password_hash FROM users WHERE user_id=%s", (user_id,))
                     fila_pwd = cur.fetchone()
                     if fila_pwd and verificar_usuario(db_conn, user_id, old_pwd):
-                        ash_password_seguro(new_pwd) >= 6: cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password(new_pwd), f_dca, f_goal, user_id))
-                        else: cur.execute("UPDATE users SET dca_frequency=%s, goal_name=%s WHERE user_id=%s", (f_dca, f_goal, user_id))
+                        if new_pwd and len(new_pwd) >= 6:
+                            cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password_seguro(new_pwd), f_dca, f_goal, user_id))
+                        else:
+                            cur.execute("UPDATE users SET dca_frequency=%s, goal_name=%s WHERE user_id=%s", (f_dca, f_goal, user_id))
                         perfil_ok = True
                 if perfil_ok: st.success("Perfil actualizado.")
                 else: st.error("Clave incorrecta.")
