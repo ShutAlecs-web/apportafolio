@@ -449,10 +449,10 @@ def _semaforo(m):
         estado = "EN_CONSTRUCCION"
         faltan = sum(1 for i in bloqueantes if i["estado"] != "OK")
         resumen = f"Vas bien. Falta{'n' if faltan != 1 else ''} {faltan} criterio{'s' if faltan != 1 else ''} para abrir la Terminal con seguridad."
+    
     return {"estado": estado, **_ESTADOS_SEMAFORO[estado], "resumen": resumen,
             "cumplidos": sum(1 for i in bloqueantes if i["estado"] == "OK"), "total": len(bloqueantes),
             "checklist": items}
-
 
 # ==========================================
 # 5. SIGUIENTE MEJOR ACCIÓN (Punto 18) · escalera determinista
