@@ -19,6 +19,7 @@ import numpy as np
 from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
 from telegram_deeplink import render_boton_telegram
 from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
+from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -938,6 +939,9 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
 
 if seccion == SECCION_FP:
     render_fp_dashboard(active_client_id, active_username, viendo_otro_cliente=(active_client_id != user_id))
+    if fp_esquema_listo():
+        st.markdown("---")
+        ui_planificacion(db_conn, active_client_id)
     st.stop()   # la Terminal (cotizaciones, riesgo, IA) no se calcula mientras no se abra
 
 st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('download', color='#d4af37', size=16)}Reportes Institucionales</h3>", unsafe_allow_html=True)
