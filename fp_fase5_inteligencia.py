@@ -47,6 +47,7 @@ _ESTADOS_SEMAFORO = {
     "LISTO":           {"icono": "🟢", "etiqueta": "Listo para invertir", "color": VERDE},
     "EN_CONSTRUCCION": {"icono": "🟡", "etiqueta": "En construcción",     "color": ORO},
     "PRIORIDAD":       {"icono": "🔴", "etiqueta": "Prioridad: cimientos", "color": TERRACOTA},
+    "VIP":             {"icono": "💎", "etiqueta": "Private Wealth",       "color": ORO},
 }
 _NIVELES = {  # alertas de 4 niveles del Blueprint (punto 15)
     "RIESGO": ("Riesgo", TERRACOTA), "ATENCION": ("Atención", ORO),
@@ -426,7 +427,18 @@ def _semaforo(m):
                        else "Aún sin operaciones de inversión.", bloqueante=False))
 
     bloqueantes = [i for i in items if i["bloqueante"]]
-    if any(i["estado"] == "CRITICO" for i in bloqueantes):
+    if m.get("operaciones_terminal", 0) > 0:
+        estado = "VIP"
+        criticos = [i for i in bloqueantes if i["estado"] == "CRITICO"]
+        faltan = sum(1 for i in bloqueantes if i["estado"] != "OK")
+        if criticos:
+            resumen = f"Operas en la Terminal. Antes de tu siguiente aportación, atiende: {criticos[0]['titulo'].lower()}."
+        elif faltan:
+            resumen = (f"Operas en la Terminal. Refuerza {faltan} cimiento{'s' if faltan != 1 else ''} "
+                       "para invertir sin tener que vender en un mal momento.")
+        else:
+            resumen = "Operas en la Terminal con cimientos completos. Tu patrimonio trabaja para ti."
+    elif any(i["estado"] == "CRITICO" for i in bloqueantes):
         estado = "PRIORIDAD"
         primero = next(i for i in bloqueantes if i["estado"] == "CRITICO")
         resumen = f"Antes de invertir, atiende: {primero['titulo'].lower()}."
@@ -541,12 +553,13 @@ def _r_meta_atrasada(m, s):
 
 
 def _r_invertir(m, s):
-    if s["estado"] != "LISTO" or m["transferible"] < MINIMO_ACCION:
+    if s["estado"] not in ("LISTO", "VIP") or m["transferible"] < MINIMO_ACCION:
         return None
     t = m["transferible"]
     return _accion("INVERTIR", "OPORTUNIDAD", f"Tienes {_dinero(t)} libres: transfiérelos a Terminal",
                    f"Ya descontados tus compromisos, tus apartados y {_dinero(m['reserva_gasto'])} para tu gasto habitual "
-                   f"de los {m['dias_restantes']} días que faltan, sobran {_dinero(t)}. Tus cimientos están listos: "
+                   f"de los {m['dias_restantes']} días que faltan, sobran {_dinero(t)}. "
+                   f"{'Tus cimientos están listos: ' if s['estado'] == 'LISTO' else 'Como inversor activo, '}"
                    "invertirlos de forma constante hace crecer tu patrimonio. Regístralo como transferencia, no como gasto.",
                    t, [("Dinero libre", _dinero(m["dinero_libre"])), ("Reserva de gasto", _dinero(m["reserva_gasto"]))],
                    destino="TERMINAL")
