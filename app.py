@@ -20,6 +20,7 @@ from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
 from telegram_deeplink import render_boton_telegram
 from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
+from fp_fase5_inteligencia import ui_panel_inteligencia
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -773,6 +774,9 @@ def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
         st.info("Las finanzas personales aún no están instaladas en la base de datos. "
                 "Corre las migraciones del repositorio del bot (carpeta sql/) en Neon.")
         return
+    
+    ui_panel_inteligencia(db_conn, uid)
+    
     try:
         dl = fp_dinero_libre(uid, hoy)
     except Exception:
