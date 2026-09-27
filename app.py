@@ -630,9 +630,9 @@ def _fp_render_estado(dl):
 
 
 def _fp_render_registro(uid, hoy):
-    def _fp_render_registro(uid, hoy):
     _fp_titulo("Registro rápido", "spark")
     ui_boton_importacion(db_conn, uid)
+    ultimo = st.session_state.get("fp_ultimo_registro")
     if ultimo and ultimo.get("uid") == uid:
         c1, c2 = st.columns([3, 1])
         c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {ultimo['texto']}</p>", unsafe_allow_html=True)
