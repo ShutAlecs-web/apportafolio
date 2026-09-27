@@ -21,6 +21,7 @@ from telegram_deeplink import render_boton_telegram
 from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
 from fp_fase5_inteligencia import ui_panel_inteligencia
+from fp_fase6_ui_importacion import ui_boton_importacion
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -629,8 +630,9 @@ def _fp_render_estado(dl):
 
 
 def _fp_render_registro(uid, hoy):
+    def _fp_render_registro(uid, hoy):
     _fp_titulo("Registro rápido", "spark")
-    ultimo = st.session_state.get("fp_ultimo_registro")
+    ui_boton_importacion(db_conn, uid)
     if ultimo and ultimo.get("uid") == uid:
         c1, c2 = st.columns([3, 1])
         c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {ultimo['texto']}</p>", unsafe_allow_html=True)
