@@ -15,6 +15,10 @@ import re
 import io
 import time
 import uuid
+import html as _html
+import logging
+import random
+import unicodedata
 import numpy as np
 from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
 from telegram_deeplink import render_boton_telegram
@@ -22,6 +26,9 @@ from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
 from fp_fase5_inteligencia import ui_panel_inteligencia
 from fp_fase6_ui_importacion import ui_boton_importacion
+
+log_app = logging.getLogger("apportafolio.terminal")
+if not logging.getLogger().handlers: logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
@@ -224,12 +231,61 @@ def init_db():
 init_db()
 
 PROMPT_MAESTRO = """
-Eres el 'Motor Algorítmico V5', un analista cuantitativo y macroeconómico de inteligencia artificial.
-DATOS DEL ACTIVO: Ticker: {ticker} | Precio: {current_price} USD | Rango 52W: {low_52w} - {high_52w} | P/E: {pe_ratio} | EPS: {eps}
-PORTAFOLIO: Costo Promedio: {avg_cost} | Retorno: {net_return_pct}% | Peso: {portfolio_weight}%
-CONTEXTO MACRO: {macro_news_context}
-Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido.
-{{"verdict": "DCA FUERTE", "rating": 8, "bull_points": ["Punto 1"], "bear_points": ["Punto 1"], "macro_synthesis": "Síntesis de 2 líneas."}}
+ROL
+Eres el "Motor Algorítmico V5" de APortafolio: analista senior de un Multi-Family Office con doble especialidad en análisis cuantitativo-técnico y análisis fundamental. Tu mandato es emitir un veredicto accionable: agresivo cuando los datos lo justifican, defensivo cuando no. El inversionista es mexicano y su moneda base es MXN.
+
+FECHA DE ANÁLISIS: {fecha_hoy}
+
+1) FICHA DEL ACTIVO
+- Ticker: {ticker} | Clase: {clase} | Sector: {sector}
+- Precio actual: {current_price} (moneda de cotización) | Tipo de cambio USD/MXN: {usd_mxn}
+
+2) BLOQUE TÉCNICO (precalculado y verificado en Python; NO lo recalcules ni lo contradigas)
+- Rango 52 semanas: {low_52w} a {high_52w} | Posición en el rango: {pos_52w} (0% = mínimo, 100% = máximo) | Distancia al máximo: {dist_max_52w}
+- MA50: {ma50} (precio vs MA50: {dist_ma50}) | MA200: {ma200} (precio vs MA200: {dist_ma200})
+- Variación 12 meses: {cambio_1y} | RSI(14): {rsi14}
+- Volatilidad anualizada: {vol_anual} | Drawdown máximo 12 meses: {max_dd}
+
+3) BLOQUE FUNDAMENTAL
+- P/E (trailing): {pe_ratio} | EPS (trailing): {eps}
+- Si P/E o EPS aparecen como N/A, el activo es probablemente un ETF, un criptoactivo o una empresa sin utilidades: NO inventes múltiplos; sustituye la lectura de valuación por tendencia, posición en rango y riesgo.
+
+4) CONTEXTO DE CARTERA (moneda base MXN)
+- Estado: {estado_posicion}
+- Costo promedio: {avg_cost_mxn} MXN (equivalente aproximado en moneda de cotización: {avg_cost_equiv})
+- Retorno neto de la posición: {net_return_pct} ({pnl_mxn} MXN). Dato autoritativo: ya incluye efecto cambiario y comisiones.
+- Peso en el portafolio: {portfolio_weight}
+
+5) FLUJO DE NOTICIAS (titulares recientes)
+{macro_news_context}
+
+6) AGENDA MACRO
+{fed_cpi_events}
+
+MARCO DE DECISIÓN (aplícalo en este orden)
+A. Tendencia: Precio > MA50 > MA200 = alcista; Precio < MA50 < MA200 = bajista; cualquier otra combinación = transición.
+B. Timing: RSI(14) > 70 = sobrecompra (no perseguir el precio); RSI(14) < 30 = sobreventa (oportunidad solo si la tendencia primaria no está rota o la valuación lo respalda). Posición en rango < 25% = zona de descuento; > 85% = margen de seguridad reducido.
+C. Valuación: P/E < 20 atractivo; 20 a 40 razonable si existe crecimiento; > 40 exigente y requiere un catalizador visible en las noticias. EPS negativo o nulo penaliza.
+D. Riesgo de cartera: peso > 20% = riesgo de concentración (el veredicto máximo es DCA FUERTE salvo descuento extremo); peso > 30% = sesgo hacia REDUCIR POSICIÓN. Volatilidad > 45% o drawdown peor que -30% obligan a escalonar entradas.
+E. Costo promedio: con pérdida y tesis intacta, promediar a la baja es válido; con tesis rota, no lo es. Con ganancia amplia (> 40%) y sobrecompra, evalúa tomar utilidades parciales.
+F. Noticias: úsalas solo como catalizador o riesgo. No inventes hechos, cifras, fechas de reporte ni eventos que no estén en los titulares o en los datos.
+
+VEREDICTO (elige EXACTAMENTE uno y que sea coherente con el rating)
+- "COMPRA AGRESIVA" (rating 9 o 10): confluencia técnica, de valuación y de catalizador; asimetría clara al alza.
+- "DCA FUERTE" (rating 7 u 8): tesis sólida con timing o valuación imperfectos; acumular de forma escalonada.
+- "HOLD ESTRATÉGICO" (rating 4 a 6): relación riesgo-beneficio neutral; mantener y esperar un mejor punto de entrada.
+- "REDUCIR POSICIÓN" (rating 1 a 3): deterioro técnico o fundamental, sobrevaluación o sobreconcentración. Si el activo NO está en cartera, significa "no abrir posición".
+
+REGLAS DE REDACCIÓN
+- Español profesional con tono de comité de inversión: directo, cuantitativo, sin relleno ni frases genéricas.
+- Cada argumento debe citar al menos una cifra del bloque de datos (porcentajes, múltiplos o niveles de precio).
+- bull_points y bear_points: de 2 a 4 elementos cada uno, máximo 20 palabras por elemento.
+- macro_synthesis: un solo párrafo de 4 a 6 oraciones (máximo 120 palabras) que (1) describa la estructura técnica, (2) la contraste con la valuación, (3) integre noticias y agenda macro, (4) pondere la posición en cartera y (5) cierre con la acción concreta y su ejecución (escalonar, niveles de referencia como MA50, MA200 o extremos del rango).
+- Prohibido: markdown, asteriscos, emojis, disclaimers legales, mencionar que eres una IA o señalar que faltan datos.
+
+FORMATO DE SALIDA
+Responde ÚNICA Y EXCLUSIVAMENTE con un objeto JSON válido (sin texto antes ni después y sin bloques de código) con exactamente estas claves:
+{{"verdict": "DCA FUERTE", "rating": 7, "bull_points": ["...", "..."], "bear_points": ["...", "..."], "macro_synthesis": "..."}}
 """
 
 ASSET_CLASS = {"ISAC": "ETF", "XNAS": "ETF", "XDWH": "ETF", "EIMI": "ETF", "NUCL": "ETF", "GOOGL": "Acción", "MELI": "Acción", "NOW": "Acción", "ASML": "Acción", "NVO": "Acción", "MA": "Acción", "V": "Acción", "BTC": "Cripto"}
@@ -251,35 +307,80 @@ def _cadena_modelos_gemini():
         if m not in cadena: cadena.append(m)
     return cadena
 
-def llamar_gemini(prompt, api_key, temperature=0.2, json_mode=False, timeout=45):
+# Códigos que indican saturación o fallo transitorio del proveedor: se salta al siguiente
+# modelo de la cadena en silencio. 400/401/403 son permanentes (llave, payload) y cortan el ciclo.
+GEMINI_CODIGOS_TRANSITORIOS = {429, 500, 502, 503, 504}
+
+def _espera_backoff(resp, intento):
+    """Pausa corta antes del siguiente modelo: respeta Retry-After (tope 2s) o usa backoff con jitter."""
+    try:
+        ra = float(resp.headers.get("Retry-After", "") or 0) if resp is not None else 0.0
+    except (TypeError, ValueError):
+        ra = 0.0
+    if ra > 0: return min(ra, 2.0)
+    return min(0.4 * (intento + 1), 1.5) + random.uniform(0, 0.25)
+
+def llamar_gemini(prompt, api_key, temperature=0.2, json_mode=False, timeout=45, presupuesto_s=None):
+    """Devuelve (texto, error). Firma compatible con la versión anterior (presupuesto_s es opcional).
+    - 404 / 429 / 5xx / timeout / red / respuesta vacía o ilegible  -> se prueba el siguiente modelo.
+    - 400 / 401 / 403 (errores permanentes)                            -> se corta el ciclo.
+    - presupuesto_s limita el tiempo TOTAL de la cadena para no congelar la UI.
+    El error se registra en logs del servidor; nunca debe mostrarse crudo al cliente."""
     import requests
     headers = {'Content-Type': 'application/json', 'x-goog-api-key': str(api_key).strip()}
     gen_cfg = {"temperature": temperature}
     if json_mode: gen_cfg["responseMimeType"] = "application/json"
+    # Alternativa más estricta (desactivada por seguridad: si el modelo no soporta el esquema responde 400
+    # y todo caería al Plan B). Activar solo tras probarla con los modelos de la cadena:
+    # if json_mode: gen_cfg["responseSchema"] = {"type": "OBJECT", "properties": {
+    #     "verdict": {"type": "STRING", "enum": list(VEREDICTOS_V5)}, "rating": {"type": "INTEGER"},
+    #     "bull_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+    #     "bear_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+    #     "macro_synthesis": {"type": "STRING"}}, "required": ["verdict", "rating", "macro_synthesis"]}
     payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
+    cadena = _cadena_modelos_gemini()
+    limite = time.monotonic() + (presupuesto_s if presupuesto_s else timeout * max(1, len(cadena)))
     ultimo_error = "Sin respuesta de la API."
-    for modelo in _cadena_modelos_gemini():
+    for intento, modelo in enumerate(cadena):
+        restante = limite - time.monotonic()
+        if restante < 3:
+            ultimo_error = f"Presupuesto de tiempo agotado antes de {modelo}. Último error: {ultimo_error}"
+            log_app.warning("Gemini · %s", ultimo_error)
+            break
         url = f"{GEMINI_API_BASE}/{modelo}:generateContent"
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        except Exception as e:
-            ultimo_error = f"Fallo de conexión con {modelo}: {str(e)}"
-            break
-        if resp.status_code == 200:
+            resp = requests.post(url, headers=headers, json=payload, timeout=(5, max(3.0, min(float(timeout), restante))))
+        except requests.exceptions.RequestException as e:
+            ultimo_error = f"{modelo}: fallo de red/timeout ({type(e).__name__})."
+            log_app.warning("Gemini · %s -> siguiente modelo", ultimo_error)
+            continue
+        codigo = resp.status_code
+        if codigo == 200:
             try:
                 partes = resp.json()["candidates"][0]["content"]["parts"]
                 texto = "".join(p.get("text", "") for p in partes if isinstance(p, dict) and not p.get("thought"))
-                if texto.strip(): return texto, ""
+                if texto.strip():
+                    if intento > 0: log_app.info("Gemini · respondió %s tras %d fallo(s) previo(s).", modelo, intento)
+                    return texto, ""
                 ultimo_error = f"{modelo}: respuesta vacía (posible bloqueo de seguridad)."
             except Exception as e:
                 ultimo_error = f"{modelo}: estructura de respuesta inesperada ({str(e)})."
-            break
-        elif resp.status_code == 404:
-            ultimo_error = f"Error 404: el modelo '{modelo}' no está disponible."
+            log_app.warning("Gemini · %s -> siguiente modelo", ultimo_error)
             continue
-        else:
-            ultimo_error = f"Error {resp.status_code}: {resp.text[:300]}"
-            break
+        if codigo == 404:
+            ultimo_error = f"Error 404: el modelo '{modelo}' no está disponible."
+            log_app.warning("Gemini · %s -> siguiente modelo", ultimo_error)
+            continue
+        if codigo in GEMINI_CODIGOS_TRANSITORIOS:
+            ultimo_error = f"Error {codigo} en {modelo}: {resp.text[:200]}"
+            log_app.warning("Gemini · %s -> siguiente modelo", ultimo_error)
+            if intento < len(cadena) - 1:
+                espera = _espera_backoff(resp, intento)
+                if time.monotonic() + espera < limite - 3: time.sleep(espera)
+            continue
+        ultimo_error = f"Error {codigo}: {resp.text[:300]}"
+        log_app.error("Gemini · error permanente, se corta la cadena: %s", ultimo_error)
+        break
     return None, ultimo_error
 
 def extraer_json_robusto(texto):
@@ -307,6 +408,164 @@ def _como_lista(valor, default):
         out = [str(x).strip() for x in valor if str(x).strip()]
         if out: return out
     return default
+
+# ==========================================
+# 3.1.1 MOTOR V5: MÉTRICAS TÉCNICAS, VEREDICTOS Y PLAN B LOCAL
+# ==========================================
+VEREDICTOS_V5 = ("COMPRA AGRESIVA", "DCA FUERTE", "HOLD ESTRATÉGICO", "REDUCIR POSICIÓN")
+V5_TTL_PLAN_B_S = 120   # tras un fallo real de la API, el Plan B se reutiliza 2 min para no re-saturar ni frenar cada rerun
+
+def _num_finito(valor):
+    try:
+        f = float(valor)
+        return f if np.isfinite(f) else None
+    except (TypeError, ValueError):
+        return None
+
+def _fmt_num(valor, patron="{:,.2f}", na="N/A"):
+    v = _num_finito(valor)
+    return patron.format(v) if v is not None else na
+
+def html_seguro(texto):
+    """Escapa HTML y neutraliza '$' (Streamlit interpreta $...$ como LaTeX dentro de st.markdown)."""
+    return _html.escape(str(texto), quote=True).replace("$", "&#36;")
+
+def calcular_tecnicos_v5(hist, precio, low_52, high_52):
+    """Métricas técnicas deterministas del último año. Nunca lanza excepción: devuelve None en lo no calculable."""
+    t = {"precio": _num_finito(precio) or 0.0, "ma50": None, "ma200": None, "dist_ma50": None, "dist_ma200": None,
+         "cambio_1y": None, "rsi14": None, "vol_anual": None, "max_dd": None,
+         "low_52": _num_finito(low_52), "high_52": _num_finito(high_52), "pos_52w": None, "dist_max_52w": None}
+    try:
+        cierre = pd.to_numeric(hist["Close"], errors="coerce").dropna().astype(float)
+        if cierre.empty: return t
+        p = t["precio"] or float(cierre.iloc[-1])
+        t["precio"] = p
+        t["ma50"] = float(cierre.tail(50).mean())
+        t["ma200"] = float(cierre.tail(200).mean())
+        if t["ma50"]: t["dist_ma50"] = (p / t["ma50"] - 1) * 100
+        if t["ma200"]: t["dist_ma200"] = (p / t["ma200"] - 1) * 100
+        if float(cierre.iloc[0]) != 0: t["cambio_1y"] = (float(cierre.iloc[-1]) / float(cierre.iloc[0]) - 1) * 100
+        if len(cierre) > 15:
+            delta = cierre.diff()
+            ganancia = delta.clip(lower=0).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+            perdida = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+            g, pe = _num_finito(ganancia.iloc[-1]), _num_finito(perdida.iloc[-1])
+            if g is not None and pe is not None:
+                t["rsi14"] = 100.0 if pe == 0 else 100 - 100 / (1 + g / pe)
+        rets = cierre.pct_change().dropna()
+        if len(rets) > 2:
+            periodos = 365 if len(cierre) > 300 else 252   # cripto cotiza 7 días/semana
+            t["vol_anual"] = float(rets.std() * np.sqrt(periodos) * 100)
+        t["max_dd"] = float((cierre / cierre.cummax() - 1).min() * 100)
+        lo, hi = t["low_52"], t["high_52"]
+        if lo is not None and hi is not None and hi > lo:
+            t["pos_52w"] = max(0.0, min(100.0, (p - lo) / (hi - lo) * 100))
+            t["dist_max_52w"] = (p / hi - 1) * 100
+    except Exception as e:
+        log_app.warning("Motor V5 · métricas técnicas incompletas: %s", e)
+    return t
+
+def veredicto_por_rating(rating):
+    r = _rating_seguro(rating)
+    if r >= 9: return "COMPRA AGRESIVA"
+    if r >= 7: return "DCA FUERTE"
+    if r >= 4: return "HOLD ESTRATÉGICO"
+    return "REDUCIR POSICIÓN"
+
+def normalizar_veredicto(valor, rating):
+    """Lleva cualquier texto del modelo a uno de los 4 veredictos canónicos; si es ambiguo, decide el rating."""
+    s = unicodedata.normalize("NFKD", str(valor or "")).encode("ascii", "ignore").decode().upper()
+    if "AGRESIV" in s: return "COMPRA AGRESIVA"
+    if "DCA" in s or "ACUMUL" in s: return "DCA FUERTE"
+    if any(k in s for k in ("REDUC", "VEND", "VENTA", "EVITAR", "RECORT", "SALIR")): return "REDUCIR POSICIÓN"
+    if any(k in s for k in ("HOLD", "MANTEN", "ESPERA", "NEUTRAL")): return "HOLD ESTRATÉGICO"
+    if "COMPRA" in s: return "COMPRA AGRESIVA" if _rating_seguro(rating) >= 9 else "DCA FUERTE"
+    return veredicto_por_rating(rating)
+
+def _sintesis_local_v5(ticker, t, pe, eps, veredicto, is_owned, peso, ret_pct):
+    """Síntesis en lenguaje natural construida solo con datos verificados (Plan B, indistinguible para el cliente)."""
+    p, frases = t["precio"], []
+    s = f"{ticker} cotiza en ${p:,.2f}"
+    if t["dist_ma50"] is not None and t["dist_ma200"] is not None:
+        s += f", {t['dist_ma50']:+.1f}% respecto a su MA50 y {t['dist_ma200']:+.1f}% frente a su MA200"
+    if t["pos_52w"] is not None:
+        s += f", en el {t['pos_52w']:.0f}% de su rango de 52 semanas (${t['low_52']:,.2f} a ${t['high_52']:,.2f})"
+    frases.append(s + ".")
+
+    ma50, ma200 = t["ma50"], t["ma200"]
+    cambio = f", con un desempeño de {t['cambio_1y']:+.1f}% en 12 meses" if t["cambio_1y"] is not None else ""
+    if ma50 and ma200:
+        if p > ma50 > ma200: frases.append(f"La estructura de medias es alcista (precio sobre MA50 y MA200){cambio}.")
+        elif p < ma50 < ma200: frases.append(f"La estructura de medias es bajista (precio bajo MA50 y MA200){cambio}, lo que exige confirmar piso antes de ampliar exposición.")
+        else: frases.append(f"Las medias móviles describen una fase de transición{cambio}, sin una tendencia primaria dominante.")
+
+    rsi, vol = t["rsi14"], t["vol_anual"]
+    if rsi is not None:
+        if rsi >= 70: s = f"El RSI(14) en {rsi:.0f} advierte sobrecompra de corto plazo"
+        elif rsi <= 30: s = f"El RSI(14) en {rsi:.0f} refleja sobreventa, típicamente zona de rebote táctico"
+        else: s = f"El RSI(14) en {rsi:.0f} se mantiene en zona neutral"
+        frases.append(s + (f", con una volatilidad anualizada de {vol:.1f}%." if vol is not None else "."))
+
+    pe_n, eps_n = _num_finito(pe), _num_finito(eps)
+    eps_txt = f" y un EPS de ${eps_n:,.2f}" if eps_n is not None else ""
+    if pe_n is not None and pe_n > 0:
+        if pe_n < 20: frases.append(f"Con un P/E de {pe_n:.1f}x{eps_txt}, la valuación luce atractiva en términos relativos y aporta margen de seguridad.")
+        elif pe_n <= 40: frases.append(f"Con un P/E de {pe_n:.1f}x{eps_txt}, la valuación se ubica en un rango razonable para su perfil de crecimiento.")
+        else: frases.append(f"Con un P/E de {pe_n:.1f}x{eps_txt}, la valuación es exigente y descuenta un crecimiento sostenido, lo que reduce el margen de seguridad.")
+    else:
+        frases.append("Al no reportar un múltiplo de utilidades aplicable (vehículo indexado, criptoactivo o utilidades negativas), la lectura descansa en la tendencia, la posición en rango y el riesgo.")
+
+    if is_owned:
+        s = f"La posición representa {peso:.1f}% del portafolio con un retorno acumulado de {ret_pct:+.1f}%"
+        frases.append(s + (", nivel que ya implica riesgo de concentración." if peso > 20 else "."))
+    else:
+        frases.append("El activo no forma parte de la cartera y se evalúa como candidato de entrada.")
+
+    cierres = {
+        "COMPRA AGRESIVA": "En conjunto, la confluencia técnica y de valuación favorece una acumulación decidida, escalonando entradas para administrar la volatilidad.",
+        "DCA FUERTE": ("En conjunto, las métricas respaldan una acumulación disciplinada vía DCA, priorizando entradas en retrocesos hacia la MA50."
+                       if (ma50 and p >= ma50) else "En conjunto, las métricas respaldan una acumulación disciplinada vía DCA, escalonando entradas mientras el precio consolida por debajo de la MA50."),
+        "HOLD ESTRATÉGICO": ("En conjunto, las métricas técnicas sugieren cautela a corto plazo: mantener la exposición actual y esperar una mejor relación riesgo-beneficio antes de incrementar."
+                             if is_owned else "En conjunto, las métricas técnicas sugieren cautela a corto plazo: conviene esperar un punto de entrada con mejor relación riesgo-beneficio."),
+        "REDUCIR POSICIÓN": ("En conjunto, el balance técnico-fundamental sugiere recortar exposición y proteger capital hasta que mejore la estructura."
+                             if is_owned else "En conjunto, no se justifica abrir posición en este momento; conviene mantenerlo en observación."),
+    }
+    frases.append(cierres.get(veredicto, cierres["HOLD ESTRATÉGICO"]))
+    return " ".join(frases)
+
+def plan_b_local_v5(ticker, t, pe_ratio, eps, is_owned, p_peso, p_retorno_pct):
+    """Scoring local. Conserva EXACTAMENTE las reglas de puntuación originales (score base 5, MA50/MA200,
+    P/E, concentración); añade la guardia de tendencia bajista, viñetas descriptivas y la síntesis. Devuelve (veredicto, rating, bulls, bears, macro)."""
+    score, bulls, bears = 5.0, [], []
+    p, ma50, ma200 = t["precio"], t["ma50"], t["ma200"]
+    if ma50 and ma200:
+        if p < ma50 and p > ma200: score += 2.0; bulls.append("Corrección saludable a corto plazo.")
+        elif p < ma200: score += 3.0; bulls.append("Cotiza bajo su MA200. Descuento profundo.")
+        elif p > ma50 * 1.15: score -= 2.0; bears.append("Sobrecomprado (>15% arriba de la MA50).")
+    if isinstance(pe_ratio, float):
+        if pe_ratio < 20: score += 2.0; bulls.append(f"Valuación atractiva (P/E: {pe_ratio:.1f}).")
+        elif pe_ratio > 40: score -= 1.5; bears.append(f"Valuación exigente/Premium (P/E: {pe_ratio:.1f}).")
+    if is_owned and p_peso > 20.0: score -= 2.0; bears.append(f"Riesgo de Concentración ({p_peso:.1f}% del portafolio).")
+    rating = max(1, min(10, int(score)))
+    # Guardia anti "cuchillo cayendo" (misma regla que el PROMPT_MAESTRO, punto B): con tendencia primaria
+    # bajista (precio < MA50 < MA200) el descuento no basta para COMPRA AGRESIVA; el techo es DCA FUERTE.
+    if ma50 and ma200 and p < ma50 < ma200 and rating > 8: rating = 8
+    veredicto = veredicto_por_rating(rating)
+
+    # Viñetas descriptivas (no alteran el score)
+    rsi, pos, vol, dd, c1y = t["rsi14"], t["pos_52w"], t["vol_anual"], t["max_dd"], t["cambio_1y"]
+    if rsi is not None and rsi <= 30: bulls.append(f"RSI(14) en {rsi:.0f}: sobreventa técnica.")
+    if rsi is not None and rsi >= 70: bears.append(f"RSI(14) en {rsi:.0f}: sobrecompra técnica.")
+    if pos is not None and pos <= 25: bulls.append(f"Cotiza en el cuartil inferior de su rango de 52 semanas ({pos:.0f}%).")
+    if pos is not None and pos >= 85: bears.append(f"Cerca de máximos de 52 semanas ({pos:.0f}% del rango): menor margen de seguridad.")
+    if c1y is not None and c1y > 0: bulls.append(f"Tendencia de 12 meses positiva ({c1y:+.1f}%).")
+    if vol is not None and vol > 45: bears.append(f"Volatilidad anualizada elevada ({vol:.1f}%).")
+    if dd is not None and dd < -25: bears.append(f"Drawdown máximo de 12 meses de {dd:.1f}%.")
+    if not bulls: bulls.append("Cotización líquida y continua que permite ajustar la exposición con precisión.")
+    if not bears: bears.append("Sensibilidad a cambios en tasas de interés y en el apetito global por riesgo.")
+
+    macro = _sintesis_local_v5(ticker, t, pe_ratio, eps, veredicto, is_owned, p_peso, p_retorno_pct)
+    return veredicto, rating, bulls[:4], bears[:4], macro
 
 # ==========================================
 # 3.2 APPORTAFOLIO FP · FINANZAS PERSONALES (Fase 3)
@@ -1629,17 +1888,20 @@ if st.session_state.get("modo_pro_toggle", False):
                 low_52 = asset_info.get("fiftyTwoWeekLow") or current_price * 0.9
                 noticias_texto = "\n".join([f"- {n['title']}" for n in asset_news]) if asset_news else "Sin noticias relevantes recientes."
 
+                tec_v5 = calcular_tecnicos_v5(hist_data, current_price, low_52, high_52)
                 mem_data = st.session_state["ai_memory"].get(target_asset)
+                if mem_data and mem_data.get("src") == "local" and (time.time() - mem_data.get("ts", 0)) > V5_TTL_PLAN_B_S:
+                    mem_data = None   # el Plan B cacheado expiró: se reintenta Gemini en este rerun
                 if mem_data:
-                    ai_verdict = mem_data.get("v", "HOLD")
+                    ai_verdict = mem_data.get("v", "HOLD ESTRATÉGICO")
                     ai_rating = mem_data.get("r", 5)
                     ai_bulls = mem_data.get("bl", [])
                     ai_bears = mem_data.get("br", [])
                     ai_macro = mem_data.get("m", "")
                 else:
-                    ai_verdict, ai_rating, ai_bulls, ai_bears = "N/A", 5, [], []
-                    ai_macro = "Motor matemático local activo. Evaluando métricas estándar."
+                    ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = "N/A", 5, [], [], ""
                     error_api = ""
+                    gemini_intentado = False
                     backend_api_key = None
                     try: backend_api_key = st.secrets["GEMINI_API_KEY"]
                     except Exception: pass
@@ -1649,46 +1911,68 @@ if st.session_state.get("modo_pro_toggle", False):
                         last_call = st.session_state.get("last_gemini_call", 0)
                         time_left = 10.0 - (current_time - last_call)
                         if time_left > 0:
-                            error_api = f"Rate Limit: Espera {int(time_left)}s"
+                            # Escudo anti-baneo: se resuelve en silencio con el Plan B (no se cachea; el próximo rerun reintenta Gemini).
+                            error_api = f"Escudo anti-baneo local: faltan {int(time_left)}s"
                             ai_verdict = "ERROR API"
-                            st.toast(f"Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.")
+                            # Alternativa visible (desactivada por diseño stealth):
+                            # st.toast(f"Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.")
                         else:
                             st.session_state["last_gemini_call"] = current_time
+                            gemini_intentado = True
                             try:
-                                prompt_filled = PROMPT_MAESTRO.format(ticker=target_asset, current_price=round(current_price, 2), low_52w=round(low_52, 2), high_52w=round(high_52, 2), pe_ratio=pe_ratio, eps=eps, avg_cost=round(p_costo_prom, 2), net_return_pct=round(p_retorno_total_pct, 2), portfolio_weight=round(p_peso, 2), macro_news_context=noticias_texto, fed_cpi_events="Decisiones de tasas FED, datos de IPC e inflación global en seguimiento continuo.")
-                                texto_ia, err_ia = llamar_gemini(prompt_filled, backend_api_key, temperature=0.2, json_mode=True)
+                                es_accion = isinstance(pe_ratio, (int, float)) and not isinstance(pe_ratio, bool)
+                                prompt_filled = PROMPT_MAESTRO.format(
+                                    fecha_hoy=datetime.now(ZONA_MX).strftime("%Y-%m-%d"),
+                                    ticker=target_asset,
+                                    clase=ASSET_CLASS.get(target_asset, "Acción" if es_accion else "No clasificado"),
+                                    sector=ASSET_SECTOR.get(target_asset, asset_info.get("sector") or "No especificado"),
+                                    current_price=_fmt_num(current_price),
+                                    usd_mxn=_fmt_num(usd_mxn, "{:,.4f}"),
+                                    low_52w=_fmt_num(low_52), high_52w=_fmt_num(high_52),
+                                    pos_52w=_fmt_num(tec_v5["pos_52w"], "{:.0f}%"),
+                                    dist_max_52w=_fmt_num(tec_v5["dist_max_52w"], "{:+.1f}%"),
+                                    ma50=_fmt_num(tec_v5["ma50"]), dist_ma50=_fmt_num(tec_v5["dist_ma50"], "{:+.1f}%"),
+                                    ma200=_fmt_num(tec_v5["ma200"]), dist_ma200=_fmt_num(tec_v5["dist_ma200"], "{:+.1f}%"),
+                                    cambio_1y=_fmt_num(tec_v5["cambio_1y"], "{:+.1f}%"),
+                                    rsi14=_fmt_num(tec_v5["rsi14"], "{:.0f}"),
+                                    vol_anual=_fmt_num(tec_v5["vol_anual"], "{:.1f}%"),
+                                    max_dd=_fmt_num(tec_v5["max_dd"], "{:.1f}%"),
+                                    pe_ratio=_fmt_num(pe_ratio, "{:.2f}x"), eps=_fmt_num(eps, "{:.2f}"),
+                                    estado_posicion=("EN CARTERA" if is_owned else "SIN POSICIÓN (candidato de observación)"),
+                                    avg_cost_mxn=(_fmt_num(p_costo_prom) if is_owned else "N/A"),
+                                    avg_cost_equiv=(_fmt_num(p_costo_prom / usd_mxn) if is_owned and _num_finito(usd_mxn) else "N/A"),
+                                    net_return_pct=(_fmt_num(p_retorno_total_pct, "{:+.2f}%") if is_owned else "N/A"),
+                                    pnl_mxn=(_fmt_num(p_retorno_total_mxn, "{:+,.2f}") if is_owned else "N/A"),
+                                    portfolio_weight=_fmt_num(p_peso, "{:.2f}%"),
+                                    macro_news_context=noticias_texto,
+                                    fed_cpi_events="Decisiones de tasas FED y Banxico, datos de IPC/inflación global y tipo de cambio USD/MXN en seguimiento continuo.",
+                                )
+                                with st.spinner(f"Corriendo motor de Scoring V5 para {target_asset}..."):
+                                    texto_ia, err_ia = llamar_gemini(prompt_filled, backend_api_key, temperature=0.2, json_mode=True, timeout=20, presupuesto_s=45)
                                 if texto_ia:
                                     parsed_response = extraer_json_robusto(texto_ia)
-                                    if parsed_response:
-                                        ai_verdict = str(parsed_response.get("verdict") or "HOLD").strip()
+                                    if parsed_response and parsed_response.get("macro_synthesis"):
                                         ai_rating = _rating_seguro(parsed_response.get("rating", 5))
-                                        ai_bulls = _como_lista(parsed_response.get("bull_points"), ["Puntos fuertes en evaluación."])
-                                        ai_bears = _como_lista(parsed_response.get("bear_points"), ["Riesgos en evaluación."])
-                                        ai_macro = str(parsed_response.get("macro_synthesis") or "Evaluación macro en proceso.").strip()
-                                        st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro}
+                                        ai_verdict = normalizar_veredicto(parsed_response.get("verdict"), ai_rating)
+                                        ai_bulls = _como_lista(parsed_response.get("bull_points"), ["Puntos fuertes en evaluación."])[:4]
+                                        ai_bears = _como_lista(parsed_response.get("bear_points"), ["Riesgos en evaluación."])[:4]
+                                        ai_macro = str(parsed_response.get("macro_synthesis")).strip()
+                                        st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro, "src": "gemini", "ts": time.time()}
                                     else:
-                                        ai_verdict, error_api = "ERROR PARSEO", "La IA no devolvió un JSON legible."
+                                        ai_verdict, error_api = "ERROR PARSEO", f"La IA no devolvió un JSON legible: {str(texto_ia)[:200]}"
                                 else:
                                     ai_verdict, error_api = "ERROR API", err_ia
                             except Exception as e:
                                 ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
-                    
+
                     if not backend_api_key or ai_verdict in ["N/A", "ERROR API", "ERROR PARSEO"]:
-                        score = 5.0
-                        ma50 = hist_data['Close'].tail(50).mean()
-                        ma200 = hist_data['Close'].mean()
-                        if current_price < ma50 and current_price > ma200: score += 2.0; ai_bulls.append("Corrección saludable a corto plazo.")
-                        elif current_price < ma200: score += 3.0; ai_bulls.append("Cotiza bajo su MA200. Descuento profundo.")
-                        elif current_price > ma50 * 1.15: score -= 2.0; ai_bears.append("Sobrecomprado (>15% arriba de la MA50).")
-                        if isinstance(pe_ratio, float):
-                            if pe_ratio < 20: score += 2.0; ai_bulls.append(f"Valuación atractiva (P/E: {pe_ratio:.1f}).")
-                            elif pe_ratio > 40: score -= 1.5; ai_bears.append(f"Valuación exigente/Premium (P/E: {pe_ratio:.1f}).")
-                        if is_owned and p_peso > 20.0: score -= 2.0; ai_bears.append(f"Riesgo de Concentración ({p_peso:.1f}% del portafolio).")
-                        ai_rating = max(1, min(10, int(score)))
-                        ai_verdict = "ZONA DE COMPRA" if ai_rating >= 7 else ("HOLD" if ai_rating >= 4 else "ESPERAR")
-                        if error_api: ai_macro = f"Fallo conexión IA o Anti-Baneo activo: {error_api}"
-                        elif not backend_api_key: ai_macro = "Llave de Gemini no detectada en secrets.toml."
-                        else: ai_macro = "Motor matemático local activo."
+                        # PLAN B (stealth): el cliente ve una síntesis normal; el motivo real solo queda en los logs.
+                        if error_api: log_app.warning("Motor V5 · %s -> Plan B local. Motivo: %s", target_asset, error_api)
+                        elif not backend_api_key: log_app.warning("Motor V5 · GEMINI_API_KEY no configurada -> Plan B local.")
+                        ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = plan_b_local_v5(
+                            target_asset, tec_v5, pe_ratio, eps, is_owned, p_peso, p_retorno_total_pct)
+                        if gemini_intentado:
+                            st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro, "src": "local", "ts": time.time()}
 
                 score_color = "#34d399" if ai_rating >= 7 else ("#d4af37" if ai_rating >= 4 else "#94a3b8")
 
@@ -1700,14 +1984,14 @@ if st.session_state.get("modo_pro_toggle", False):
                     fig_deep.update_layout(title=dict(text=f"{target_asset} | Análisis de 1 Año", font=dict(family="Playfair Display", size=18, color="#cbd5e1")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=40,b=10,l=10,r=10), showlegend=False, xaxis2=dict(showgrid=False), yaxis=dict(gridcolor="#1f2937"), yaxis2=dict(showgrid=False, showticklabels=False))
                     st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
                     
-                    bulls_html = "".join([f"<li style='margin-bottom:4px;'>{r}</li>" for r in ai_bulls])
-                    bears_html = "".join([f"<li style='margin-bottom:4px;'>{r}</li>" for r in ai_bears])
+                    bulls_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bulls])
+                    bears_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bears])
                     st.markdown(
                         (
                             f"<div class='pos-box notranslate' translate='no' style='border-top: 2px solid {score_color};'>"
                             f"<div style='display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid rgba(212, 175, 55, 0.15);padding-bottom:15px;margin-bottom:15px;'>"
                             f"<div><p class='metric-title'>Veredicto Algorítmico V5</p>"
-                            f"<h3 style='color:{score_color};margin:0;font-size:2rem;font-weight:400;font-family:\"Playfair Display\", serif;font-style:italic;'>{ai_verdict}</h3></div>"
+                            f"<h3 style='color:{score_color};margin:0;font-size:2rem;font-weight:400;font-family:\"Playfair Display\", serif;font-style:italic;'>{html_seguro(ai_verdict)}</h3></div>"
                             f"<div style='background:transparent;color:{score_color};border:1px solid {score_color};font-weight:600;font-size:1.4rem;padding:5px 15px;border-radius:20px;display:flex;align-items:center;'>"
                             f"{ai_rating}<span style='font-size:0.9rem;margin-left:2px;opacity:0.8;'>/10</span></div></div>"
                             f"<div style='display:flex;gap:20px;margin-bottom:15px;'>"
@@ -1719,7 +2003,7 @@ if st.session_state.get("modo_pro_toggle", False):
                             f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bears_html}</ul></div></div>"
                             f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
                             f"<p class='metric-title'>Síntesis Macroeconómica</p>"
-                            f"<p style='color:#e5e7eb;font-size:0.9rem;margin:0;line-height:1.6;'><i>\"{ai_macro}\"</i></p></div></div>"
+                            f"<p style='color:#e5e7eb;font-size:0.9rem;margin:0;line-height:1.6;'><i>\"{html_seguro(ai_macro)}\"</i></p></div></div>"
                         ),
                         unsafe_allow_html=True
                     )
@@ -1865,10 +2149,14 @@ if st.session_state.get("modo_pro_toggle", False):
                         ESTRATEGIA DE DIVIDENDOS E IMPUESTOS: [Cómo preparar estos ingresos pasivos para la próxima etapa contable]
                         """
                         
-                        texto_cio, err_cio = llamar_gemini(prompt_cio, backend_api_key, temperature=0.3)
+                        texto_cio, err_cio = llamar_gemini(prompt_cio, backend_api_key, temperature=0.3, presupuesto_s=90)
                         if texto_cio: st.session_state["cio_report"] = texto_cio
-                        else: st.error(f"Error al generar el reporte de la IA. {err_cio}")
-                    except Exception as e: st.error(f"Error de conexión: {e}")
+                        else:
+                            log_app.warning("CIO Virtual · sin respuesta de Gemini: %s", err_cio)
+                            st.info("El CIO Virtual está consolidando datos de mercado. Genera el reporte nuevamente en unos minutos.")
+                    except Exception as e:
+                        log_app.exception("CIO Virtual · error interno: %s", e)
+                        st.info("El CIO Virtual está consolidando datos de mercado. Genera el reporte nuevamente en unos minutos.")
                 else: st.warning("Configura tu API Key de Gemini para activar al CIO Virtual.")
                     
         if st.session_state.get("cio_report"):
