@@ -551,6 +551,65 @@ def render_fp_telegram(uid):
                         unsafe_allow_html=True)
 
 
+FP_ESTILOS_TELEGRAM = """
+<style>
+.fp-tg-banner { background: linear-gradient(135deg, rgba(212,175,55,0.10) 0%, rgba(8,11,19,0.95) 60%); border: 1px solid rgba(212,175,55,0.45); border-radius: 24px; padding: 26px 28px; margin: 4px 0 18px 0; box-shadow: 0 10px 28px rgba(0,0,0,0.45); }
+.fp-tg-kicker { color: #d4af37; font-size: 0.72rem; letter-spacing: 3px; text-transform: uppercase; margin: 0 0 6px 0; font-family: 'Inter', sans-serif; }
+.fp-tg-titulo { font-family: 'Playfair Display', serif; font-style: italic; color: #ffffff; font-size: 1.55rem; font-weight: 400; margin: 0 0 8px 0; line-height: 1.2; }
+.fp-tg-texto { color: #cbd5e1; font-size: 0.9rem; line-height: 1.6; margin: 0 0 12px 0; }
+.fp-tg-pasos { color: #8b949e; font-size: 0.85rem; line-height: 1.8; margin: 0; padding-left: 18px; }
+.fp-tg-pasos b { color: #e5e7eb; font-weight: 500; }
+.fp-tg-escudo { color: #64748b; font-size: 0.75rem; margin: 12px 0 0 0; }
+</style>
+"""
+
+
+def fp_estado_telegram(uid):
+    """'SIN_ESQUEMA' | 'VINCULADO' | 'PENDIENTE' | 'ERROR'. Una sola consulta por recarga."""
+    try:
+        if not fp_esquema_listo():
+            return "SIN_ESQUEMA"
+        return "VINCULADO" if fp_vinculo_activo(uid) else "PENDIENTE"
+    except Exception:
+        return "ERROR"
+
+
+def _fp_ir_a_telegram():
+    """Callback del botón lateral: lleva a 'Tu dinero hoy', donde vive el banner de vinculación."""
+    st.session_state["seccion_app"] = SECCION_FP
+
+
+def render_fp_telegram_banner(uid):
+    """Vinculación como elemento protagonista (solo mientras NO esté vinculado)."""
+    st.markdown(FP_ESTILOS_TELEGRAM, unsafe_allow_html=True)
+    col_txt, col_accion = st.columns([1.35, 1], gap="large")
+    with col_txt:
+        st.markdown(
+            "<div class='fp-tg-banner notranslate' translate='no'>"
+            "<p class='fp-tg-kicker'>Paso 1 · 30 segundos</p>"
+            "<p class='fp-tg-titulo'>Conecta tu Telegram y olvídate de capturar gastos</p>"
+            "<p class='fp-tg-texto'>Escribes \"42 pasaje\" en el chat y tu mayordomo lo clasifica, lo suma a tu "
+            "presupuesto y te dice cuánto te queda libre. Sin formularios.</p>"
+            "<ol class='fp-tg-pasos'>"
+            "<li>Toca <b>Generar código de vinculación</b>.</li>"
+            "<li>Toca <b>Abrir en Telegram</b> (o envía <b>/vincular CMA-XXXXXX</b> al bot).</li>"
+            "<li>Vuelve aquí y toca <b>Ya lo conecté</b>.</li></ol>"
+            "<p class='fp-tg-escudo'>Nunca te pediremos contraseñas del banco ni NIPs.</p>"
+            "</div>", unsafe_allow_html=True)
+    with col_accion:
+        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+        render_fp_telegram(uid)          # mismo componente de siempre (claves de widget intactas)
+        if st.session_state.get("fp_codigo_tg"):
+            if st.button("Ya lo conecté · actualizar", key="fp_tg_refrescar", use_container_width=True):
+                st.rerun()               # si ya quedó vinculado, el banner se convierte en la línea compacta
+
+
+def render_fp_telegram_compacto(uid):
+    """Ya vinculado: una línea discreta con opción de desconectar."""
+    with st.expander("Telegram · conexión activa", expanded=False):
+        render_fp_telegram(uid)
+
+
 def _fp_render_sin_base(uid, dl, hoy):
     if dl and dl.get("proximo_ingreso"):
         mensaje = (f"Tu próximo ingreso llega el {dl['proximo_ingreso']:%d/%m}. Para decirte desde hoy cuánto puedes "
@@ -940,11 +999,20 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
                 if perfil_ok: st.success("Perfil actualizado.")
                 else: st.error("Clave incorrecta.")
 
-    st.markdown("<hr style='margin:14px 0 8px 0; border-color:#1f2937;'>", unsafe_allow_html=True)
-    render_fp_telegram(user_id)   # siempre del usuario que inició sesión (nunca del cliente que se está viendo)
+    # render_fp_telegram(user_id)   # UX Beta: movido al área central (banner / línea compacta)
+
+# Vinculación de Telegram: protagonista en el área central (siempre del usuario que inició sesión)
+estado_tg = fp_estado_telegram(user_id)
+if estado_tg == "PENDIENTE" and seccion == SECCION_TERMINAL:
+    st.sidebar.button("Conectar Telegram", key="fp_tg_ir", on_click=_fp_ir_a_telegram, use_container_width=True,
+                      help="Registra tus gastos por chat en segundos.")
 
 if seccion == SECCION_FP:
+    if estado_tg == "PENDIENTE":
+        render_fp_telegram_banner(user_id)          # hasta arriba, antes de "Tu dinero hoy" y "Registro rápido"
     render_fp_dashboard(active_client_id, active_username, viendo_otro_cliente=(active_client_id != user_id))
+    if estado_tg in ("VINCULADO", "ERROR"):
+        render_fp_telegram_compacto(user_id)        # línea discreta al final del dashboard
     if fp_esquema_listo():
         st.markdown("---")
         ui_planificacion(db_conn, active_client_id)
