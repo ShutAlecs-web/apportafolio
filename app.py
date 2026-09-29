@@ -1165,6 +1165,7 @@ def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
         _fp_render_sin_base(uid, dl, hoy)
     else:
         _fp_render_estado(dl)
+        render_anillos_salud(uid, dl, hoy)   # Sprint 2 · anillos Registro / Presupuesto / Ahorro + Health Score
 
     col_izq, col_der = st.columns([1.35, 1], gap="large")
     with col_izq:
@@ -1175,6 +1176,580 @@ def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
     st.markdown("<p style='font-size:0.75rem; color:#64748b; font-style:italic; text-align:center; margin-top:24px;'>"
                 "Los montos son estimaciones con base en lo que registras y tus pagos programados; "
                 "no sustituyen el saldo de tu banco.</p>", unsafe_allow_html=True)
+
+
+# ==========================================
+# 3.3 SPRINT 2 · ESTEROIDES VISUALES Y GAMIFICACIÓN SANA  |  SPRINT 3 · PREMIUM WEALTH
+# Capa aditiva (Norma 2): funciones nuevas que la UI invoca. Si cualquiera falla, la UI
+# regresa exactamente al comportamiento previo (gráficas y tarjetas originales intactas).
+# ==========================================
+MODO_LECTURA_OPCIONES = ["Junior", "Senior"]   # Junior = experiencia actual (default)
+
+ESTILOS_SENIOR = """
+<style>
+/* Modo Senior: letra grande, números claros, sin ruido de mercado */
+.metric-value { font-size: clamp(2.2rem, 3.2vw, 3.1rem) !important; overflow-wrap: anywhere; }
+.metric-title { font-size: 0.95rem !important; letter-spacing: 1px !important; }
+.metric-subtext { font-size: 1.1rem !important; line-height: 1.5 !important; }
+.fp-hero-valor { font-size: 4.2rem !important; }
+.fp-fila, .fp-nota, .fp-leyenda, .pos-label, .pos-val, .pos-row { font-size: 1.1rem !important; }
+.fp-fila-sub { font-size: 0.95rem !important; }
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li { font-size: 1.08rem; }
+.marquee-wrapper { display: none !important; }
+.senior-card-valor { font-family: 'Playfair Display', serif; font-size: 2.6rem; color: #ffffff; line-height: 1.1; margin: 10px 0; }
+</style>
+"""
+
+
+class _ContenedorSilencioso:
+    """Adaptador: absorbe .markdown() de columnas que en Modo Senior no deben pintarse."""
+    def markdown(self, *args, **kwargs):
+        return None
+
+
+_CONTENEDOR_SILENCIOSO = _ContenedorSilencioso()
+
+
+def tasa_libre_riesgo(default=0.05):
+    """RISK_FREE_RATE_MXN como fracción. Acepta 0.105 o 10.5 (se interpreta como %)."""
+    try:
+        v = float(st.secrets["RISK_FREE_RATE_MXN"])
+    except Exception:
+        return default
+    if not np.isfinite(v) or v <= 0:
+        return default
+    return v / 100.0 if v > 1 else v
+
+
+def xirr_portafolio(cash_df, total_portafolio):
+    """Misma lógica que calc_xirr() de la Terminal, pero devuelve float (o None) para comparar contra CETES."""
+    try:
+        if cash_df is None or cash_df.empty:
+            return None
+        cfs = []
+        for _, r in cash_df.iterrows():
+            monto = abs(float(r["monto_mxn"]))
+            if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -monto))
+            elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), monto))
+        if not cfs:
+            return None
+        cfs.append((pd.to_datetime(datetime.today().date()), float(total_portafolio)))
+        return resolver_xirr(cfs)
+    except Exception:
+        return None
+
+
+# --- 1. BOLA DE NIEVE 2.0 ---------------------------------------------------
+@st.cache_data(ttl=3600, max_entries=20, show_spinner=False)
+def _cierres_historicos_mxn(simbolos, inicio_iso):
+    """Cierres diarios en MXN (cada día con su propio tipo de cambio). simbolos: tuple de símbolos de Yahoo."""
+    fx_syms = ["USDMXN=X", "GBPMXN=X", "EURMXN=X"]
+    data = yf.download(list(dict.fromkeys(list(simbolos) + fx_syms)), start=inicio_iso, progress=False)
+    if data is None or data.empty:
+        raise ValueError("Yahoo Finance no devolvió históricos.")
+    close = data["Close"]
+    if isinstance(close, pd.Series):
+        close = close.to_frame(name=simbolos[0])
+    if getattr(close.index, "tz", None) is not None:
+        close.index = close.index.tz_localize(None)
+    close.index = pd.to_datetime(close.index).normalize()
+    close = close.sort_index().ffill()
+    if "USDMXN=X" not in close.columns or close["USDMXN=X"].dropna().empty:
+        raise ValueError("Sin tipo de cambio histórico.")
+    usd = close["USDMXN=X"].bfill()
+    gbp = close["GBPMXN=X"].bfill() if "GBPMXN=X" in close.columns else None
+    eur = close["EURMXN=X"].bfill() if "EURMXN=X" in close.columns else None
+    fx = {"MXN": 1.0, "USD": usd}
+    if gbp is not None and not gbp.dropna().empty:
+        fx.update({"GBP": gbp, "GBp": gbp / 100.0, "GBX": gbp / 100.0})   # LSE a veces cotiza en peniques
+    if eur is not None and not eur.dropna().empty:
+        fx["EUR"] = eur
+    salida = {}
+    for s in simbolos:
+        if s in close.columns and not close[s].dropna().empty:
+            salida[s] = close[s] * fx.get(moneda_cotizacion(s), usd)   # moneda desconocida -> USD (criterio Sprint 0)
+    return pd.DataFrame(salida)
+
+
+def series_bola_nieve(cash_df, tx_df, total_portafolio, rf, cierres_fn=None):
+    """DataFrame diario con: capital (aportado neto), cetes (benchmark libre de riesgo) y valor (mercado + efectivo).
+    'valor' queda en NaN si no hay históricos de precios; el llamador decide cómo degradar."""
+    flujos = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
+    if flujos.empty:
+        return None
+    hoy = pd.Timestamp(datetime.today().date())
+    flujos["fecha"] = pd.to_datetime(flujos["fecha"]).dt.normalize()
+    flujos = flujos[flujos["fecha"] <= hoy]
+    if flujos.empty:
+        return None
+    flujos["flujo"] = np.where(flujos["tipo"] == "DEPOSITO", 1.0, -1.0) * flujos["monto_mxn"].astype(float).abs()
+    idx = pd.date_range(flujos["fecha"].min(), hoy, freq="D")
+
+    # 1) Capital invertido (lo que salió de tu bolsillo)
+    flujo_diario = flujos.groupby("fecha")["flujo"].sum().reindex(idx, fill_value=0.0)
+    capital = flujo_diario.cumsum()
+
+    # 2) Benchmark: cada aportación/retiro capitalizado a la tasa libre de riesgo desde su fecha
+    dias_idx = np.asarray((idx - idx[0]).days, dtype=float)
+    cetes = np.zeros(len(idx))
+    for fecha, monto in flujo_diario[flujo_diario != 0].items():
+        d = float((fecha - idx[0]).days)
+        t = np.clip(dias_idx - d, 0.0, None) / 365.0
+        cetes += np.where(dias_idx >= d, monto * np.power(1.0 + rf, t), 0.0)
+
+    # 3) Valor del portafolio: posiciones x precio histórico en MXN + efectivo (misma lógica que calc_liquidez_real)
+    valor = pd.Series(np.nan, index=idx)
+    try:
+        caja = cash_df.copy()
+        caja["fecha"] = pd.to_datetime(caja["fecha"]).dt.normalize()
+        entradas, salidas = {"DEPOSITO", "VENTA", "DIVIDENDO"}, {"COMPRA", "RETIRO", "COMISION", "IMPUESTO"}
+        monto_abs = caja["monto_mxn"].astype(float).abs()
+        caja["delta"] = np.where(caja["tipo"].isin(entradas), monto_abs, np.where(caja["tipo"].isin(salidas), -monto_abs, 0.0))
+        acumulado = caja.groupby("fecha")["delta"].sum().sort_index().cumsum()
+        efectivo = acumulado.reindex(acumulado.index.union(idx)).ffill().reindex(idx).fillna(0.0).clip(lower=0.0)
+
+        valor_posiciones = pd.Series(0.0, index=idx)
+        if tx_df is not None and not tx_df.empty:
+            tx = tx_df.copy()
+            tx["fecha"] = pd.to_datetime(tx["fecha"]).dt.normalize()
+            tx["titulos"] = tx["titulos"].astype(float)
+            pos = tx.pivot_table(index="fecha", columns="ticker", values="titulos", aggfunc="sum").sort_index().cumsum()
+            pos = pos.reindex(pos.index.union(idx)).ffill().reindex(idx).fillna(0.0).clip(lower=0.0)
+            tickers = [t for t in pos.columns if pos[t].abs().sum() > 0]
+            if tickers:
+                simbolos = tuple(_yf_symbol(t) for t in tickers)
+                inicio = (min(idx[0], tx["fecha"].min()) - timedelta(days=10)).strftime("%Y-%m-%d")
+                precios = (cierres_fn or _cierres_historicos_mxn)(simbolos, inicio)
+                precios = precios.reindex(precios.index.union(idx)).ffill().bfill().reindex(idx)
+                compras = tx[tx["tipo_operacion"] == "COMPRA"]
+                for t, s in zip(tickers, simbolos):
+                    if s in precios.columns and not precios[s].dropna().empty:
+                        valor_posiciones += pos[t] * precios[s].fillna(0.0)
+                    else:   # sin histórico: se valúa a costo promedio (no inventa plusvalía)
+                        c = compras[compras["ticker"] == t]
+                        tit = float(c["titulos"].sum())
+                        costo = float(c["total_mxn"].astype(float).sum()) / tit if tit > 0 else 0.0
+                        valor_posiciones += pos[t] * costo
+        valor = valor_posiciones + efectivo
+        valor.iloc[-1] = float(total_portafolio)   # el último punto cuadra al centavo con la tarjeta "Patrimonio Total"
+    except Exception as e:
+        log_app.warning("Bola de Nieve 2.0 · sin histórico de valor: %s", e)
+        valor = pd.Series(np.nan, index=idx)
+
+    return pd.DataFrame({"capital": capital.values, "cetes": cetes, "valor": valor.values}, index=idx)
+
+
+def construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, rf, senior=False):
+    """Devuelve (figura, resumen_html) o None. None = la Terminal pinta la gráfica original."""
+    try:
+        df = series_bola_nieve(cash_df, tx_df, total_portafolio, rf)
+        if df is None or df.empty:
+            return None
+        capital_hoy, cetes_hoy = float(df["capital"].iloc[-1]), float(df["cetes"].iloc[-1])
+        valor_hoy = float(total_portafolio)
+        hay_historia = df["valor"].notna().sum() > 1
+
+        fig = go.Figure()
+        color_valor = "#34d399" if valor_hoy >= capital_hoy else "#94a3b8"
+        relleno_valor = "rgba(52, 211, 153, 0.12)" if valor_hoy >= capital_hoy else "rgba(148, 163, 184, 0.12)"
+        if hay_historia:
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df["valor"], fill="tozeroy", mode="lines", name="Valor del Portafolio",
+                line=dict(color=color_valor, width=2), fillcolor=relleno_valor,
+                hovertemplate="<b>Valor del portafolio:</b> $%{y:,.2f} MXN<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["capital"], fill="tozeroy", mode="lines", name="Capital Invertido",
+            line=dict(color="#d4af37", width=2.5, shape="hv"), fillcolor="rgba(212, 175, 55, 0.15)",
+            hovertemplate="<b>Capital aportado:</b> $%{y:,.2f} MXN<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["cetes"], mode="lines", name=f"Si lo hubieras dejado en CETES ({rf * 100:.2f}%)",
+            line=dict(color="#c084fc", width=2, dash="dot"),
+            hovertemplate="<b>En CETES:</b> $%{y:,.2f} MXN<extra></extra>"))
+        if not hay_historia:   # sin precios históricos: mismo marcador que la versión original
+            fig.add_trace(go.Scatter(
+                x=[df.index[0], df.index[-1]], y=[valor_hoy, valor_hoy], mode="lines", name="Valor Portafolio Hoy",
+                line=dict(color=color_valor, width=2, dash="dash"),
+                hovertemplate="<b>Valor actual:</b> $%{y:,.2f} MXN<extra></extra>"))
+
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          font=dict(color="#9ca3af", size=15 if senior else 12), margin=dict(t=10, b=10, l=10, r=10),
+                          height=380 if senior else 340, showlegend=True, hovermode="x unified",
+                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        fig.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
+        fig.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
+
+        dif = valor_hoy - cetes_hoy
+        veredicto = (f"<b style='color:#34d399;'>le ganas a CETES por ${dif:,.0f}</b>" if dif >= 0
+                     else f"<b style='color:#94a3b8;'>CETES iría ${-dif:,.0f} arriba</b>")
+        tam = "1.1rem" if senior else "0.88rem"
+        resumen = (f"<p class='notranslate' translate='no' style='color:#8b949e; font-size:{tam}; margin:-4px 0 6px 0;'>"
+                   f"Aportaste <b style='color:#d4af37;'>${capital_hoy:,.0f}</b> · hoy vale "
+                   f"<b style='color:#ffffff;'>${valor_hoy:,.0f}</b> · en CETES tendrías "
+                   f"<b style='color:#c084fc;'>${cetes_hoy:,.0f}</b> → {veredicto}.</p>")
+        return fig, resumen
+    except Exception as e:
+        log_app.warning("Bola de Nieve 2.0 · se usa la gráfica original: %s", e)
+        return None
+
+
+# --- 2. TABLA DE POSICIONES PREMIUM ------------------------------------------
+def _spark_limpio(valores):
+    try:
+        limpio = [float(x) for x in (valores or []) if x is not None and np.isfinite(float(x))]
+        return limpio if len(limpio) >= 2 else []
+    except Exception:
+        return []
+
+
+def render_tabla_posiciones(summary, senior=False):
+    st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; "
+                f"margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>"
+                f"{svg_icon('eye', color='#d4af37', size=18)}Tus Posiciones</h4>", unsafe_allow_html=True)
+    if summary is None or summary.empty:
+        st.caption("Aún no tienes posiciones abiertas.")
+        return
+    try:
+        tabla = pd.DataFrame({
+            "Activo": summary["ticker"].astype(str),
+            "Clase": summary["Clase"].astype(str),
+            "Títulos": summary["titulos"].astype(float),
+            "Precio": summary["precio_mercado"].astype(float),
+            "Valor": summary["valor_actual"].astype(float),
+            "Ganancia": summary["pnl"].astype(float),
+            "Rendimiento": summary["retorno_pct"].astype(float),
+            "Peso": summary["ponderacion_pct"].astype(float),
+            "Tendencia (30D)": summary["Tendencia (30D)"].apply(_spark_limpio),
+        }).sort_values("Valor", ascending=False)
+        if senior:   # números grandes y claros: sin títulos, precio unitario ni clase
+            tabla = tabla[["Activo", "Valor", "Ganancia", "Peso", "Tendencia (30D)"]]
+
+        cc = getattr(st, "column_config", None)
+        if cc is None or not hasattr(cc, "LineChartColumn") or not hasattr(cc, "ProgressColumn"):
+            st.dataframe(tabla.drop(columns=["Tendencia (30D)"]), hide_index=True, use_container_width=True)   # Streamlit < 1.23
+            return
+        config = {
+            "Activo": cc.TextColumn("Activo"),
+            "Clase": cc.TextColumn("Clase"),
+            "Títulos": cc.NumberColumn("Títulos", format="%.4f"),
+            "Precio": cc.NumberColumn("Precio MXN", format="$%.2f"),
+            "Valor": cc.NumberColumn("Valor MXN", format="$%.2f"),
+            "Ganancia": cc.NumberColumn("Ganancia MXN", format="$%.2f"),
+            "Rendimiento": cc.NumberColumn("Rendimiento", format="%+.2f%%"),
+            # Peso sobre 100 % (honesto). Alternativa: max_value=float(tabla["Peso"].max()) para barras más largas.
+            "Peso": cc.ProgressColumn("Peso en portafolio", format="%.1f%%", min_value=0.0, max_value=100.0),
+            "Tendencia (30D)": cc.LineChartColumn("Tendencia 30D (MXN)"),
+        }
+        # Alternativa Streamlit >= 1.40: format="dollar" o "localized" para separador de miles.
+        st.dataframe(tabla, column_config={k: v for k, v in config.items() if k in tabla.columns},
+                     hide_index=True, use_container_width=True)
+    except Exception as e:
+        log_app.warning("Tabla de posiciones premium · %s", e)
+        st.caption("No pude armar la tabla de posiciones en este momento.")
+
+
+# --- 3. ¿LE GANASTE A CETES? + ADAPTADORES SENIOR DE RIESGO ------------------
+def html_le_ganaste_a_cetes(xirr, rf, senior=False):
+    titulo = "¿Le ganaste a CETES?"
+    tt = ("Compara tu rendimiento real anualizado (XIRR, con las fechas exactas de tus depósitos y retiros) "
+          f"contra la tasa libre de riesgo configurada ({rf * 100:.2f}% anual).")
+    if xirr is None:
+        cuerpo = ("<p style='color:#8b949e;font-size:0.95rem;margin:0;'>Aún no hay historia suficiente "
+                  "(mínimo 30 días con depósitos) para compararte.</p>")
+    else:
+        dif_pp = (xirr - rf) * 100
+        gano = dif_pp >= 0
+        color = "#34d399" if gano else "#94a3b8"
+        veredicto = "Sí" if gano else "Todavía no"
+        detalle = (f"Tu dinero rindió {xirr * 100:+.2f}% al año contra {rf * 100:.2f}% de CETES "
+                   f"({dif_pp:+.2f} puntos).")
+        cuerpo = (f"<p style='color:{color};font-size:{'2rem' if senior else '1.35rem'};font-weight:600;"
+                  f"font-family:\"Inter\", sans-serif;margin:0;'>{veredicto}</p>"
+                  f"<p style='color:#8b949e;font-size:{'1.05rem' if senior else '0.85rem'};margin:6px 0 0 0;'>{detalle}</p>")
+    return (f"<div class='pos-box notranslate' translate='no'><p class='metric-title'>{titulo} "
+            f"<span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt}</span></span></p>{cuerpo}</div>")
+
+
+def render_riesgo_senior(var_95_mxn, max_dd, port_beta):
+    """Mismos números del Módulo de Riesgo, sin Beta/Sharpe/VaR: solo lenguaje llano y cifras grandes."""
+    if port_beta > 1.2: mov, mov_txt = "Más movido", "Tu portafolio sube y baja más que la bolsa de EE.UU."
+    elif port_beta < 0.8: mov, mov_txt = "Más tranquilo", "Tu portafolio se mueve menos que la bolsa de EE.UU."
+    else: mov, mov_txt = "Parejo", "Tu portafolio se mueve parecido a la bolsa de EE.UU."
+    tarjetas = [
+        ("En un día malo", f"-${var_95_mxn:,.0f}", "Así de grande puede ser una baja en 1 de cada 20 días. Es normal y temporal."),
+        ("Tu peor tropiezo del año", f"{max_dd:.1f}%", "La mayor caída desde un punto alto en los últimos 12 meses."),
+        ("Comparado con la bolsa", mov, mov_txt),
+    ]
+    for col, (t, v, s) in zip(st.columns(3), tarjetas):
+        col.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{t}</div>"
+                     f"<div class='senior-card-valor'>{v}</div><div class='metric-subtext'>{s}</div></div>",
+                     unsafe_allow_html=True)
+
+
+def render_diversificacion_senior(corr_matrix):
+    try:
+        c = corr_matrix.values.astype(float)
+        n = c.shape[0]
+        promedio = (np.nansum(c) - np.nansum(np.diag(c))) / (n * (n - 1)) if n > 1 else 1.0
+    except Exception:
+        promedio = np.nan
+    if not np.isfinite(promedio):
+        st.caption("No pude medir tu diversificación en este momento.")
+        return
+    if promedio < 0.3: nivel, color, texto = "Buena", "#34d399", "Tus inversiones no se mueven todas igual: cuando una baja, otras aguantan."
+    elif promedio < 0.6: nivel, color, texto = "Media", "#d4af37", "Parte de tus inversiones se mueve en bloque. Sumar algo distinto te protegería más."
+    else: nivel, color, texto = "Baja", "#94a3b8", "Casi todas tus inversiones suben y bajan juntas. Conviene diversificar."
+    st.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>¿Qué tan repartido está tu dinero?</div>"
+                f"<div class='senior-card-valor' style='color:{color};'>{nivel}</div><div class='metric-subtext'>{texto}</div></div>",
+                unsafe_allow_html=True)
+
+
+# --- 4. ANILLOS DIARIOS & HEALTH SCORE (Tu dinero hoy) ------------------------
+def fp_actividad_registro(uid, hoy):
+    """(días con al menos un registro en los últimos 7, ¿registró hoy?). Lee fp_financial_ledger (mismo esquema del bot)."""
+    filas = _fp_consulta(
+        """
+        SELECT COUNT(DISTINCT fecha) AS dias, COALESCE(BOOL_OR(fecha = %s::date), FALSE) AS hoy
+          FROM fp_financial_ledger
+         WHERE user_id = %s AND estado <> 'DESCARTADO'
+           AND fecha > %s::date - 7 AND fecha <= %s::date
+        """, (hoy, uid, hoy, hoy))
+    if not filas:
+        return 0, False
+    return int(filas[0]["dias"] or 0), bool(filas[0]["hoy"])
+
+
+def calcular_anillos_salud(dl, dias_registro_7d):
+    """Tres anillos (0 a 1) y un Health Score explicable (0 a 100). Sin datos -> 0, nunca inventa."""
+    def _f(clave):
+        try: return float(dl.get(clave) or 0)
+        except Exception: return 0.0
+
+    registro = max(0.0, min(1.0, dias_registro_7d / 7.0))
+
+    # Presupuesto "al ritmo": fracción que te queda del dinero variable vs fracción del periodo que falta
+    libre_real = _f("dinero_libre")
+    libre, gastado = max(libre_real, 0.0), _f("gastado_periodo")
+    bolsa_variable = gastado + libre
+    frac_restante = (libre / bolsa_variable) if bolsa_variable > 0 else (1.0 if libre_real >= 0 else 0.0)
+    try:
+        dias_total = max((dl["proximo_ingreso"] - dl["periodo_inicio"]).days, 1)
+    except Exception:
+        dias_total = 30
+    frac_tiempo = max(0.0, min(1.0, _f("dias_restantes") / dias_total))
+    if libre_real < 0: presupuesto = 0.0
+    elif frac_tiempo <= 0: presupuesto = 1.0
+    else: presupuesto = min(1.0, frac_restante / frac_tiempo)
+
+    # Ahorro: lo apartado (bolsas + ahorro programado) vs meta sugerida del 10 % de lo que entró en el periodo
+    entradas = _f("base") + _f("ingresos_periodo") + _f("ingresos_extra")
+    apartado = _f("reservado_bolsas") + _f("ahorro_programado")
+    meta_ahorro = 0.10 * entradas
+    ahorro = min(1.0, apartado / meta_ahorro) if meta_ahorro > 0 else (1.0 if apartado > 0 else 0.0)
+
+    score = int(round(100 * (0.35 * presupuesto + 0.35 * ahorro + 0.30 * registro)))
+    if score >= 80: nivel, color = "Sólido", "#34d399"
+    elif score >= 60: nivel, color = "En construcción", "#d4af37"
+    else: nivel, color = "Prioridad", "#94a3b8"
+    return {"registro": registro, "presupuesto": presupuesto, "ahorro": ahorro, "score": score, "nivel": nivel,
+            "color": color, "dias_registro": dias_registro_7d, "frac_restante": frac_restante,
+            "frac_tiempo": frac_tiempo, "apartado": apartado, "meta_ahorro": meta_ahorro}
+
+
+def _svg_anillos(valores, colores, tam=132):
+    radios, grosor, centro = (54, 41, 28), 10, 66
+    capas = ""
+    for r, v, c in zip(radios, valores, colores):
+        circ = 2 * np.pi * r
+        capas += (f"<circle cx='{centro}' cy='{centro}' r='{r}' fill='none' stroke='rgba(255,255,255,0.06)' stroke-width='{grosor}'/>"
+                  f"<circle cx='{centro}' cy='{centro}' r='{r}' fill='none' stroke='{c}' stroke-width='{grosor}' "
+                  f"stroke-linecap='round' stroke-dasharray='{circ * max(v, 0.001):.2f} {circ:.2f}' "
+                  f"transform='rotate(-90 {centro} {centro})'/>")
+    return f"<svg width='{tam}' height='{tam}' viewBox='0 0 132 132' style='flex-shrink:0;'>{capas}</svg>"
+
+
+def render_anillos_salud(uid, dl, hoy):
+    try:
+        dias, registro_hoy = fp_actividad_registro(uid, hoy)
+        a = calcular_anillos_salud(dl, dias)
+    except Exception as e:
+        log_app.warning("Anillos de salud · %s", e)
+        return
+    colores = ("#d4af37", "#34d399", "#c084fc")
+    tt = ("Health Score = 35% Presupuesto al ritmo + 35% Ahorro (meta sugerida: 10% de lo que entró) "
+          "+ 30% Registro (días con movimientos en los últimos 7). Se compara contra ti mismo, no es un buró de crédito.")
+    filas = [
+        (colores[0], "Registro", f"{a['dias_registro']} de 7 días" + (" · hoy registrado" if registro_hoy else " · falta hoy")),
+        (colores[1], "Presupuesto", "Sobregirado" if a["presupuesto"] == 0 and float(dl.get("dinero_libre") or 0) < 0
+         else f"{a['presupuesto'] * 100:.0f}% al ritmo · te queda {a['frac_restante'] * 100:.0f}% con {a['frac_tiempo'] * 100:.0f}% del periodo"),
+        (colores[2], "Ahorro", f"{fp_dinero(a['apartado'])} de {fp_dinero(a['meta_ahorro'])} sugeridos"),
+    ]
+    filas_html = "".join(
+        f"<div style='display:flex; align-items:baseline; gap:8px; margin:5px 0;'>"
+        f"<i style='width:9px; height:9px; border-radius:50%; background:{c}; display:inline-block;'></i>"
+        f"<span style='color:#e5e7eb; min-width:92px;'>{n}</span><span class='fp-fila-sub' style='margin:0;'>{d}</span></div>"
+        for c, n, d in filas)
+    st.markdown(
+        f"<div class='metric-card notranslate' translate='no' style='display:flex; align-items:center; gap:26px; flex-wrap:wrap;'>"
+        f"{_svg_anillos((a['registro'], a['presupuesto'], a['ahorro']), colores)}"
+        f"<div style='flex:1; min-width:220px;'><div class='metric-title'>Salud financiera {_fp_tooltip(tt)}</div>"
+        f"<div style='display:flex; align-items:baseline; gap:12px;'>"
+        f"<span style='font-family:\"Playfair Display\", serif; font-size:2.6rem; color:{a['color']};'>{a['score']}</span>"
+        f"<span style='color:#8b949e;'>/ 100 · {a['nivel']}</span></div>{filas_html}</div></div>",
+        unsafe_allow_html=True)
+
+
+# --- 6. CMA FINANCIAL LETTER (entregable imprimible a PDF) --------------------
+def _siguientes_acciones_carta(ctx):
+    acciones = []
+    patrimonio = ctx["patrimonio"] or 0
+    for p in ctx["posiciones"]:
+        if p["peso"] > 20:
+            acciones.append(f"Concentración: {_html.escape(p['ticker'])} representa {p['peso']:.1f}% del patrimonio. "
+                            f"Sugerimos dirigir las próximas aportaciones a otros activos hasta equilibrarlo.")
+            break
+    if patrimonio > 0 and ctx["liquidez"] / patrimonio > 0.20:
+        acciones.append(f"Liquidez: {ctx['liquidez'] / patrimonio * 100:.0f}% de su patrimonio está en efectivo. "
+                        f"Conviene definir qué parte es colchón y cuál puede invertirse gradualmente.")
+    if ctx["xirr"] is not None and ctx["xirr"] < ctx["rf"]:
+        acciones.append("Rendimiento: su tasa real anualizada está por debajo de CETES. Revisemos costos, "
+                        "concentración y horizonte antes de la siguiente aportación.")
+    if ctx["racha"] == 0:
+        acciones.append("Disciplina: no registramos aportaciones en el periodo actual. Retomar la aportación "
+                        "periódica es la palanca de mayor impacto en su proyección.")
+    if not acciones:
+        acciones.append("Mantener el plan: la estructura actual es coherente con su disciplina de aportación. "
+                        "El siguiente paso es sostener la racha y revisar la asignación trimestralmente.")
+    return acciones[:3]
+
+
+def generar_carta_cma(ctx):
+    """Carta de banca privada en HTML autocontenido. Se imprime a PDF desde el navegador (Ctrl+P > Guardar como PDF).
+    Alternativa (requiere agregar 'weasyprint' a requirements.txt): weasyprint.HTML(string=html).write_pdf()."""
+    e = lambda x: _html.escape(str(x if x is not None else ""))
+    m = lambda v: f"${float(v or 0):,.2f}"
+    hoy = hoy_mx()
+    fecha_txt = f"Ciudad de México, {fp_fecha_larga(hoy).lower()} de {hoy.year}"
+    xirr, rf = ctx["xirr"], ctx["rf"]
+    if xirr is None:
+        cetes_txt = "Aún no contamos con historia suficiente (mínimo 30 días) para comparar su rendimiento contra CETES."
+    elif xirr >= rf:
+        cetes_txt = (f"Su rendimiento real anualizado (XIRR) es de {xirr * 100:+.2f}%, por encima de la tasa libre de "
+                     f"riesgo de {rf * 100:.2f}% ({(xirr - rf) * 100:+.2f} puntos). Su capital está siendo mejor remunerado que en CETES.")
+    else:
+        cetes_txt = (f"Su rendimiento real anualizado (XIRR) es de {xirr * 100:+.2f}%, por debajo de la tasa libre de "
+                     f"riesgo de {rf * 100:.2f}% ({(xirr - rf) * 100:+.2f} puntos).")
+    filas_pos = "".join(
+        f"<tr><td>{e(p['ticker'])}</td><td>{e(p['clase'])}</td><td class='n'>{m(p['valor'])}</td>"
+        f"<td class='n'>{p['peso']:.1f}%</td><td class='n {'pos' if p['retorno'] >= 0 else 'neg'}'>{p['retorno']:+.2f}%</td></tr>"
+        for p in ctx["posiciones"]) or "<tr><td colspan='5'>Sin posiciones abiertas.</td></tr>"
+    r = ctx.get("riesgo") or {}
+    bloque_riesgo = ""
+    if r:
+        bloque_riesgo = (
+            "<h2>Perfil de riesgo (últimos 12 meses)</h2><table class='kpi'>"
+            f"<tr><td>Sensibilidad al mercado (beta vs S&amp;P 500)</td><td class='n'>{r.get('beta', 0):.2f}</td></tr>"
+            f"<tr><td>Rendimiento ajustado por riesgo (Sharpe)</td><td class='n'>{r.get('sharpe', 0):.2f}</td></tr>"
+            f"<tr><td>Caída máxima desde un punto alto</td><td class='n'>{r.get('max_dd', 0):.1f}%</td></tr>"
+            f"<tr><td>Pérdida diaria que solo se supera 1 de cada 20 días (VaR 95%)</td><td class='n'>{m(r.get('var_95_mxn', 0))}</td></tr>"
+            "</table>")
+    bloque_cio = (f"<h2>Nota del CIO Virtual</h2><div class='cio'>{e(ctx['cio'])}</div>" if ctx.get("cio") else "")
+    acciones = "".join(f"<li>{a}</li>" for a in _siguientes_acciones_carta(ctx))
+    color_pnl = "pos" if ctx["pnl"] >= 0 else "neg"
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CMA Financial Letter · {e(ctx['nombre'])}</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;1,400&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+@page {{ size: A4; margin: 18mm 16mm; }}
+body {{ background:#fbf9f4; color:#1f2937; font-family:'Inter', Helvetica, Arial, sans-serif; font-size:10.5pt; line-height:1.6; margin:0; }}
+.hoja {{ max-width:780px; margin:0 auto; padding:48px 56px; background:#fffdf8; border:1px solid #e8e1cf; }}
+.marca {{ display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid #b8962e; padding-bottom:14px; }}
+.marca h1 {{ font-family:'Playfair Display', Georgia, serif; font-weight:400; letter-spacing:4px; font-size:18pt; margin:0; color:#1f2937; }}
+.marca span {{ color:#8a7a4a; font-size:8.5pt; letter-spacing:3px; text-transform:uppercase; }}
+.fecha {{ text-align:right; color:#6b7280; margin:18px 0 26px 0; font-size:9.5pt; }}
+h2 {{ font-family:'Playfair Display', Georgia, serif; font-style:italic; font-weight:400; color:#8a6d1f; font-size:13pt; margin:26px 0 8px 0; }}
+table {{ width:100%; border-collapse:collapse; margin:6px 0; }}
+td, th {{ padding:7px 6px; border-bottom:1px solid #eee6d3; text-align:left; }}
+th {{ font-size:8pt; letter-spacing:2px; text-transform:uppercase; color:#8a7a4a; font-weight:600; }}
+.n {{ text-align:right; font-variant-numeric:tabular-nums; }}
+.pos {{ color:#047857; }} .neg {{ color:#6b7280; }}
+.kpi td:first-child {{ color:#4b5563; }}
+.cio {{ white-space:pre-wrap; background:#f7f3e8; padding:14px 16px; border-left:2px solid #b8962e; font-size:9.5pt; }}
+ul {{ padding-left:18px; }} li {{ margin-bottom:6px; }}
+.firma {{ margin-top:34px; }} .firma b {{ font-family:'Playfair Display', Georgia, serif; font-weight:400; font-size:12pt; }}
+.legal {{ margin-top:30px; font-size:7.5pt; color:#9ca3af; border-top:1px solid #eee6d3; padding-top:10px; }}
+@media print {{ body {{ background:#ffffff; }} .hoja {{ border:none; padding:0; max-width:none; }} }}
+</style></head><body><div class="hoja">
+<div class="marca"><h1>CMA</h1><span>Private Wealth · Financial Letter</span></div>
+<p class="fecha">{e(fecha_txt)}</p>
+<p>Estimado(a) {e(ctx['nombre'])}:</p>
+<p>Le compartimos el estado de su patrimonio al día de hoy. Su patrimonio total asciende a <b>{m(ctx['patrimonio'])}</b>,
+construido con <b>{m(ctx['capital'])}</b> de capital aportado. El resultado no realizado de sus inversiones es de
+<b class="{color_pnl}">{m(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</b>.</p>
+<h2>Resumen patrimonial</h2>
+<table class="kpi">
+<tr><td>Patrimonio total</td><td class="n">{m(ctx['patrimonio'])}</td></tr>
+<tr><td>Capital aportado</td><td class="n">{m(ctx['capital'])}</td></tr>
+<tr><td>Liquidez disponible</td><td class="n">{m(ctx['liquidez'])}</td></tr>
+<tr><td>Ingreso pasivo estimado por dividendos (anual)</td><td class="n">{m(ctx['salario_invisible'])}</td></tr>
+<tr><td>Proyección a 5 años (supuesto de 10% anual)</td><td class="n">{m(ctx['proyeccion_5a'])}</td></tr>
+</table>
+<h2>¿Le ganamos a CETES?</h2>
+<p>{e(cetes_txt)}</p>
+<h2>Composición del portafolio</h2>
+<table><tr><th>Activo</th><th>Clase</th><th class="n">Valor MXN</th><th class="n">Peso</th><th class="n">Rendimiento</th></tr>{filas_pos}</table>
+{bloque_riesgo}
+<h2>Disciplina y metas</h2>
+<p>Racha de aportaciones: <b>{ctx['racha']}</b> periodo(s) seguidos con frecuencia {e(str(ctx['frecuencia']).lower())} (nivel {e(ctx['rango'])}).
+Meta «{e(ctx['meta_nombre'])}»: hito de {m(ctx['meta_monto'])}, avance de {ctx['progreso_meta']:.1f}%; faltan {m(ctx['faltante'])}.</p>
+<h2>Siguiente mejor acción</h2>
+<ul>{acciones}</ul>
+{bloque_cio}
+<div class="firma"><p>Quedamos a sus órdenes para revisar cualquier punto.</p><p><b>CMA · Private Wealth</b><br>
+<span style="color:#6b7280;">Terminal APPortafolio</span></p></div>
+<p class="legal">Documento informativo generado automáticamente con datos registrados por el cliente y cotizaciones de mercado
+(Yahoo Finance). Los rendimientos son no realizados y no garantizan resultados futuros. Las proyecciones usan supuestos explícitos
+y no constituyen una recomendación personalizada de inversión.</p>
+</div></body></html>"""
+
+
+def posiciones_para_carta(summary, limite=12):
+    """Top de posiciones por valor, con números limpios (sin NaN) para la carta."""
+    salida = []
+    if summary is None or summary.empty:
+        return salida
+    def _n(v):
+        try:
+            f = float(v)
+            return f if np.isfinite(f) else 0.0
+        except Exception:
+            return 0.0
+    for _, r in summary.sort_values("valor_actual", ascending=False).head(limite).iterrows():
+        salida.append({"ticker": str(r["ticker"]), "clase": str(r.get("Clase", "") or ""), "valor": _n(r["valor_actual"]),
+                       "peso": _n(r.get("ponderacion_pct", 0)), "retorno": _n(r.get("retorno_pct", 0))})
+    return salida
+
+
+def render_carta_cma(ctx):
+    st.markdown("---")
+    st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; "
+                f"margin-bottom:6px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>"
+                f"{svg_icon('award', color='#d4af37', size=18)}CMA Financial Letter</h4>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Tu carta ejecutiva de banca privada. Descárgala y "
+                "guárdala como PDF desde el navegador (Ctrl+P → Guardar como PDF).</p>", unsafe_allow_html=True)
+    try:
+        carta = generar_carta_cma(ctx)
+    except Exception as e:
+        log_app.warning("Carta CMA · %s", e)
+        st.caption("No pude generar la carta en este momento.")
+        return
+    c1, c2 = st.columns([1, 2])
+    c1.download_button("Descargar Carta CMA", data=carta.encode("utf-8"),
+                       file_name=f"Carta_CMA_{re.sub(r'[^A-Za-z0-9_-]', '_', str(ctx['nombre']))}_{hoy_mx():%Y%m%d}.html",
+                       mime="text/html", use_container_width=True)
+    with c2.expander("Vista previa", expanded=False):
+        import streamlit.components.v1 as components
+        components.html(carta, height=1100, scrolling=True)
 
 
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
@@ -1289,6 +1864,13 @@ st.sidebar.markdown("---")
 if seccion == SECCION_TERMINAL:
     st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('eye', color='#d4af37', size=16)}Experiencia de Usuario</h3>", unsafe_allow_html=True)
     st.sidebar.toggle("Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
+
+# Sprint 2 · Modo de Lectura: se pinta en ambas secciones para que el tamaño de letra acompañe al usuario.
+st.sidebar.radio("Modo de Lectura", MODO_LECTURA_OPCIONES, key="modo_lectura", horizontal=True,
+                 help="Senior: letra más grande, números claros y sin tecnicismos (Beta, VaR, Sharpe).")
+MODO_SENIOR = st.session_state.get("modo_lectura", "Junior") == "Senior"
+if MODO_SENIOR:
+    st.markdown(ESTILOS_SENIOR, unsafe_allow_html=True)
 
 with st.sidebar.expander("Estrategia y Perfil", expanded=False):
     st.markdown("<p style='font-size:0.8rem; color:#8b949e;'>Personaliza tu experiencia financiera.</p>", unsafe_allow_html=True)
@@ -1765,6 +2347,7 @@ if not cash_df.empty:
         df_hoy = pd.DataFrame({"fecha": [pd.to_datetime(datetime.today().date())], "capital_acumulado": [df_hist["capital_acumulado"].iloc[-1]]})
         df_hist = pd.concat([df_hist, df_hoy], ignore_index=True)
 
+        _bola_v2 = construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, tasa_libre_riesgo(), senior=MODO_SENIOR)   # Sprint 2
         fig_snow = go.Figure()
         fig_snow.add_trace(go.Scatter(
             x=df_hist["fecha"], y=df_hist["capital_acumulado"], fill='tozeroy', mode='lines+markers',
@@ -1781,7 +2364,12 @@ if not cash_df.empty:
         fig_snow.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10, b=10, l=10, r=10), height=320, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
         fig_snow.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
         fig_snow.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
-        st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
+        if _bola_v2 is not None:   # Sprint 2 · Capital vs Valor vs CETES; si falla, se pinta la gráfica original intacta
+            fig_snow_v2, resumen_bola = _bola_v2
+            st.markdown(resumen_bola, unsafe_allow_html=True)
+            st.plotly_chart(fig_snow_v2, use_container_width=True, config=plotly_config)
+        else:
+            st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
     else: st.info("Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
 else: st.info("Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
 
@@ -1883,6 +2471,13 @@ with col_g3:
 st.markdown("---")
 
 # ==========================================
+# 8.2 SPRINT 2 · TABLA DE POSICIONES PREMIUM (visible en Modo Fácil y en Modo Pro)
+# ==========================================
+metricas_riesgo = {}   # Sprint 3 · la llena el Módulo de Riesgo (Modo Pro) y la consume la Carta CMA
+render_tabla_posiciones(summary, senior=MODO_SENIOR)
+st.markdown("---")
+
+# ==========================================
 # RAMIFICACIÓN MODO PRO vs MODO FÁCIL
 # ==========================================
 if st.session_state.get("modo_pro_toggle", False):
@@ -1913,8 +2508,9 @@ if st.session_state.get("modo_pro_toggle", False):
                 f"<p class='metric-title'>Fricción Financiera <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fric}</span></span></p>"
                 f"<p style='color:#94a3b8;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>${total_friccion:,.2f} MXN</p></div>"
                 f"<div class='pos-box notranslate' translate='no'>"
-                f"<p class='metric-title'>Rentabilidad Ponderada (XIRR) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p>"
+                f"<p class='metric-title'>{'Tu rendimiento real al año' if MODO_SENIOR else 'Rentabilidad Ponderada (XIRR)'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p>"
                 f"<p style='color:#00f0ff;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>{calc_xirr()}</p></div>"
+                f"{html_le_ganaste_a_cetes(xirr_portafolio(cash_df, total_portafolio), tasa_libre_riesgo(), MODO_SENIOR)}"   # Sprint 2
             ),
             unsafe_allow_html=True
         )
@@ -2188,7 +2784,12 @@ if st.session_state.get("modo_pro_toggle", False):
             drawdowns = (cum_rets - rolling_max) / rolling_max
             max_dd = drawdowns.min() * 100
 
-            col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+            metricas_riesgo.update({"beta": port_beta, "sharpe": sharpe_ratio, "max_dd": max_dd, "var_95_mxn": var_95_mxn})   # Sprint 3
+            if MODO_SENIOR:   # Sprint 2 · mismos números en lenguaje llano; las 4 tarjetas técnicas no se pintan
+                render_riesgo_senior(var_95_mxn, max_dd, port_beta)
+                col_k1 = col_k2 = col_k3 = col_k4 = _CONTENEDOR_SILENCIOSO
+            else:
+                col_k1, col_k2, col_k3, col_k4 = st.columns(4)
             beta_c = "text-neon-red" if port_beta > 1.2 else ("text-neon-cyan" if port_beta < 0.8 else "text-neon-green")
             tt_beta = "Mide la volatilidad frente al mercado. >1 es más agresivo, <1 es más defensivo."
             col_k1.markdown(f"<div class='metric-card'><div class='metric-title'>Beta (Volatilidad) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_beta}</span></span></div><div class='metric-value {beta_c}' style='font-size:1.8rem;'>{port_beta:.2f}</div><div class='metric-subtext'>Vs S&P 500</div></div>", unsafe_allow_html=True)
@@ -2214,10 +2815,14 @@ if st.session_state.get("modo_pro_toggle", False):
                 
             with col_r2:
                 tt_corr = "Mide cómo se mueven tus activos entre sí. Un valor cercano a +1 significa que se mueven igual, -1 en direcciones opuestas (buena diversificación), y 0 que no tienen relación."
-                st.markdown(f"<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Matriz de Correlación (Diversificación Real) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_corr}</span></span></p>", unsafe_allow_html=True)
-                if len(tickers_list) > 1:
+                st.markdown(f"<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>{'Diversificación' if MODO_SENIOR else 'Matriz de Correlación (Diversificación Real)'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_corr}</span></span></p>", unsafe_allow_html=True)
+                if MODO_SENIOR and len(tickers_list) > 1:   # Sprint 2 · Senior: sin mapa de calor
+                    render_diversificacion_senior(returns_df.corr())
+                elif len(tickers_list) > 1:
                     corr_matrix = returns_df.corr()
-                    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale=[[0, '#94a3b8'], [0.5, '#d4af37'], [1, '#34d399']], aspect="auto")
+                    # Sprint 2 · -1 verde (diversifica), 0 oro (neutral), +1 gris (se mueven igual). zmin/zmax fijan la escala.
+                    # Alternativa con rojo explícito: [[0, '#34d399'], [0.5, '#d4af37'], [1, '#b45454']]
+                    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale=[[0, '#34d399'], [0.5, '#d4af37'], [1, '#94a3b8']], zmin=-1, zmax=1, aspect="auto")
                     fig_corr.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10,b=10,l=10,r=10), height=350)
                     st.plotly_chart(fig_corr, use_container_width=True, config=plotly_config)
                 else: st.info("Necesitas al menos 2 activos en tu portafolio para generar el mapa de calor de correlación.")
@@ -2392,3 +2997,17 @@ with tab_caja:
         )
     else: 
         st.caption("Aún no tienes movimientos de caja registrados.")
+
+# ==========================================
+# 11. SPRINT 3 · CMA FINANCIAL LETTER (carta de banca privada, imprimible a PDF)
+# ==========================================
+render_carta_cma({
+    "nombre": active_username, "patrimonio": float(total_portafolio), "capital": float(total_invertido),
+    "pnl": float(pnl_global), "retorno_pct": float(retorno_global), "liquidez": float(liquidez_mxn),
+    "salario_invisible": float(salario_invisible), "proyeccion_5a": float(proyeccion_5a),
+    "xirr": xirr_portafolio(cash_df, total_portafolio), "rf": tasa_libre_riesgo(),
+    "posiciones": posiciones_para_carta(summary), "riesgo": metricas_riesgo,
+    "racha": racha_actual, "rango": rango_txt, "frecuencia": user_freq,
+    "meta_nombre": meta_nombre, "meta_monto": float(meta_actual), "progreso_meta": float(progreso_meta),
+    "faltante": float(faltante), "cio": st.session_state.get("cio_report"),
+})
