@@ -139,6 +139,29 @@ def get_live_usd():
 
 live_usd_rate = get_live_usd()
 
+# --- Sprint 0 · FX: moneda REAL de cotización ---------------------------------
+# Evita multiplicar por USD/MXN algo que ya cotiza en pesos (ej. AMXB.MX, WALMEX.MX, BTC-MXN).
+# Camino rápido sin red: .MX / -MXN -> MXN; -USD o sin sufijo (listado de EE.UU.) -> USD.
+# Solo los sufijos ambiguos (.L, .DE, .AS...) consultan fast_info.currency, cacheado 1 día.
+@st.cache_data(ttl=86400, max_entries=500, show_spinner=False)
+def moneda_cotizacion(yf_symbol):
+    s = str(yf_symbol or "").upper().strip()
+    if not s:
+        return "USD"
+    if s.endswith(".MX") or s.endswith("-MXN"):
+        return "MXN"
+    if s.endswith("-USD") or ("." not in s and "=" not in s and not s.startswith("^")):
+        return "USD"
+    try:
+        moneda = yf.Ticker(s).fast_info.currency
+        return str(moneda).strip() if moneda else "USD"   # se respeta "GBp" (peniques) vs "GBP"
+    except Exception:
+        return "USD"   # sin dato: mismo supuesto que antes (USD)
+
+def _factor_a_mxn(moneda, fx_mxn, usd):
+    """Pesos por 1 unidad de la moneda de cotización. Moneda desconocida -> USD (comportamiento previo)."""
+    return fx_mxn.get(moneda, usd)
+
 # --- POOL DE CONEXIONES (PostgreSQL / Neon) ---------------------------------
 @st.cache_resource
 def get_pool():
@@ -214,6 +237,13 @@ def hash_password(password: str) -> str: return hashlib.sha256(password.encode()
 
 @st.cache_resource
 def init_db():
+    # Sprint 0 · Seguridad: sin secreto de admin la app se detiene (antes caía en "clave_temporal_local").
+    try: admin_pwd = str(st.secrets["admin_password"]).strip()
+    except Exception: admin_pwd = os.environ.get("CMA_ADMIN_PASSWORD", "").strip()
+    if not admin_pwd or admin_pwd == "clave_temporal_local":
+        st.error("Configuración incompleta: define `admin_password` en .streamlit/secrets.toml "
+                 "(o la variable de entorno CMA_ADMIN_PASSWORD). La app no arranca sin ella.")
+        st.stop()
     with db_conn(autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -223,9 +253,7 @@ def init_db():
             """)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dca_frequency TEXT DEFAULT 'MENSUAL'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS goal_name TEXT DEFAULT 'Libertad Financiera'")
-            try: admin_pwd = st.secrets["admin_password"]
-            except Exception: admin_pwd = os.environ.get("CMA_ADMIN_PASSWORD", "clave_temporal_local")
-            cur.execute("INSERT INTO users (user_id, username, password_hash, dca_frequency, goal_name) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING", ("USR-001", "alex_admin", hash_password(admin_pwd), "MENSUAL", "Fondo Institucional"))
+            cur.execute("INSERT INTO users (user_id, username, password_hash, dca_frequency, goal_name) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING", ("USR-001", "alex_admin", hash_password_seguro(admin_pwd), "MENSUAL", "Fondo Institucional"))   # Sprint 0: bcrypt
     return True
 
 init_db()
@@ -947,17 +975,45 @@ def _fp_render_estado(dl):
         st.caption("Para que el cálculo sea exacto al centavo, registra de vez en cuando tu saldo real (tipo «Saldo de hoy»).")
 
 
+# --- Sprint 1 · Re-renders parciales -----------------------------------------
+# Con @st.fragment, "Registrar", "Deshacer" y "Quitar" solo vuelven a ejecutar este bloque, no las ~2,300 líneas.
+# Compatible con versiones viejas: st.experimental_fragment o, si no existe, función normal (rerun completo).
+# Alternativa más amplia (descartada por seguridad): envolver también la tarjeta de Dinero Libre y la columna
+# derecha; ahí viven ui_boton_compromisos/ui_boton_bolsas, que abren diálogos propios de otros módulos.
+_fp_fragmento = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None) or (lambda f: f)
+
+def _fp_rerun_parcial():
+    """Rerun solo del fragmento; si la versión de Streamlit no lo soporta, rerun completo (comportamiento previo).
+    La señal interna de rerun de Streamlit es BaseException, así que el except no la intercepta."""
+    try:
+        st.rerun(scope="fragment")
+    except Exception:
+        st.rerun()
+
+
 def _fp_render_registro(uid, hoy):
     _fp_titulo("Registro rápido", "spark")
-    ui_boton_importacion(db_conn, uid)
+    ui_boton_importacion(db_conn, uid)   # fuera del fragmento: abre su propio diálogo
+    _fp_render_captura(uid, hoy)         # Sprint 1 · fragmento: formulario + últimos movimientos
+
+
+@_fp_fragmento
+def _fp_render_captura(uid, hoy):
     ultimo = st.session_state.get("fp_ultimo_registro")
     if ultimo and ultimo.get("uid") == uid:
         c1, c2 = st.columns([3, 1])
-        c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {ultimo['texto']}</p>", unsafe_allow_html=True)
+        libre_txt = ""
+        try:   # la tarjeta de arriba se refresca en la siguiente carga completa; aquí va el dato al instante
+            dl_post = fp_dinero_libre(uid, hoy)
+            if dl_post and dl_post.get("estado") != "SIN_BASE":
+                libre_txt = f" · Dinero libre ahora: {fp_dinero(dl_post['dinero_libre'])}"
+        except Exception:
+            pass
+        c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {ultimo['texto']}{libre_txt}</p>", unsafe_allow_html=True)
         if c2.button("Deshacer", key="fp_deshacer_ultimo", use_container_width=True):
             fp_descartar(uid, ultimo["movimiento_id"])
             st.session_state.pop("fp_ultimo_registro", None)
-            st.rerun()
+            _fp_rerun_parcial()
 
     tipo_txt = st.radio("Tipo de movimiento", ["Gasto", "Ingreso", "Saldo de hoy"], horizontal=True,
                         key="fp_tipo_registro", label_visibility="collapsed")
@@ -1007,7 +1063,9 @@ def _fp_render_registro(uid, hoy):
                     detalle = f" · {concepto}" if concepto and tipo != "AJUSTE" else ""
                     st.session_state["fp_ultimo_registro"] = {"uid": uid, "movimiento_id": movimiento_id,
                                                               "texto": f"{etiqueta} de {fp_dinero(monto)}{detalle}"}
-                    st.rerun()
+                    _fp_rerun_parcial()   # Sprint 1
+
+    _fp_render_ultimos(uid)   # Sprint 1 · dentro del fragmento: se actualiza junto con el registro
 
 
 def _fp_render_ultimos(uid):
@@ -1033,7 +1091,7 @@ def _fp_render_ultimos(uid):
                     f"<div class='fp-fila-sub'>{sub}</div></div><div>{monto_html}</div></div>", unsafe_allow_html=True)
         if c2.button("Quitar", key=f"fp_quitar_{m['movimiento_id']}", help="Lo descarta de tus números (no se borra del historial)."):
             fp_descartar(uid, m["movimiento_id"])
-            st.rerun()
+            _fp_rerun_parcial()   # Sprint 1
 
 
 def _fp_render_proximos(uid, dl, hoy):
@@ -1110,8 +1168,7 @@ def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
 
     col_izq, col_der = st.columns([1.35, 1], gap="large")
     with col_izq:
-        _fp_render_registro(uid, hoy)
-        _fp_render_ultimos(uid)
+        _fp_render_registro(uid, hoy)   # Sprint 1: incluye "Últimos movimientos" dentro de su fragmento
     with col_der:
         _fp_render_proximos(uid, dl, hoy)
         _fp_render_bolsas(uid)
@@ -1209,9 +1266,10 @@ if user_id == "USR-001":
                 if new_usr and new_pwd:
                     try:
                         with db_conn() as conn, conn.cursor() as cur:
-                            cur.execute("INSERT INTO users (user_id, username, password_hash) VALUES (%s, %s, %s)", (f"USR-{int(datetime.now().timestamp())}", new_usr, hash_password(new_pwd)))
+                            cur.execute("INSERT INTO users (user_id, username, password_hash) VALUES (%s, %s, %s)", (f"USR-{uuid.uuid4().hex}", new_usr.strip(), hash_password_seguro(new_pwd)))   # Sprint 0
                         st.success("Creado con éxito. Recarga la página.")
-                    except: st.error("El usuario ya existe.")
+                    except psycopg2.IntegrityError: st.error("El usuario ya existe.")
+                    except Exception: st.error("No se pudo crear el perfil. Intenta de nuevo.")
 else:
     active_client_id = user_id
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
@@ -1308,13 +1366,15 @@ if active_client_id == "USR-001":
                         p = tk_data.fast_info.last_price
                         if p:
                             st.session_state["val_ticker"] = tk_sym; st.session_state["val_price"] = float(p)
-                            st.sidebar.success(f"${p:.2f}")
+                            st.session_state["val_moneda"] = moneda_cotizacion(tk_sym)   # Sprint 0 · FX
+                            st.sidebar.success(f"${p:.2f} {st.session_state['val_moneda']}")
                         else: st.sidebar.error("Sin datos.")
                     except: st.sidebar.error("Inválido.")
             else: st.sidebar.warning("Escribe un ticker.")
 
     val_t = st.session_state.get("val_ticker", "")
     val_p = float(st.session_state.get("val_price", 0.0))
+    val_m = st.session_state.get("val_moneda", "")   # Sprint 0 · FX
 
     with st.sidebar.expander("Registrar Operación", expanded=True):
         with st.form("form_nueva_compra"):
@@ -1322,7 +1382,8 @@ if active_client_id == "USR-001":
             f_ticker = st.text_input("Activo (Ticker)", value=val_t)
             f_clase = st.selectbox("Clase de Activo", ["ACCION", "ETF", "FIBRA/REIT", "CRIPTO"])
             f_plat = st.selectbox("Plataforma", ["GBM_SIC", "GBM_USA", "BINGX", "BITSO"])
-            f_moneda = st.selectbox("Moneda", ["MXN", "USD"])
+            f_moneda = st.selectbox("Moneda", ["MXN", "USD"], index=1 if val_m == "USD" else 0,
+                                    help="Se detecta sola al validar el ticker. En MXN no se aplica tipo de cambio.")
             f_titulos = st.number_input("Títulos / Fracción", min_value=0.00000, format="%.5f", step=0.01)
             f_precio = st.number_input("Precio Unitario", min_value=0.0, value=val_p, format="%.2f", step=1.0)
             f_comision = st.number_input("Comisión", min_value=0.0, format="%.2f")
@@ -1333,16 +1394,17 @@ if active_client_id == "USR-001":
             if st.form_submit_button("Ejecutar Operación", use_container_width=True):
                 f_ticker_clean = sanitize_ticker(f_ticker)
                 if f_ticker_clean and f_titulos > 0 and f_precio > 0:
-                    valor_bruto_mxn = (f_titulos * f_precio) * f_tc
-                    costos_mxn = (f_comision + f_iva) * f_tc
+                    tc_efectivo = 1.0 if f_moneda == "MXN" else float(f_tc)   # Sprint 0 · FX: lo que ya está en MXN no se reconvierte
+                    valor_bruto_mxn = (f_titulos * f_precio) * tc_efectivo
+                    costos_mxn = (f_comision + f_iva) * tc_efectivo
                     if f_tipo_op == "COMPRA": total_mxn = valor_bruto_mxn + costos_mxn; imp_caja = -total_mxn; t_fin = f_titulos
                     else: total_mxn = valor_bruto_mxn - costos_mxn; imp_caja = total_mxn; t_fin = -f_titulos
                         
                     ts_id = datetime.now().timestamp()
                     with db_conn() as conn, conn.cursor() as cur:
-                        cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, f_tc, total_mxn))
+                        cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, tc_efectivo, total_mxn))
                         cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
-                    st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0
+                    st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0; st.session_state["val_moneda"] = ""
                     st.success(f"{f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
                 else: st.error("Verifica el Ticker, Títulos y Precio.")
 
@@ -1447,6 +1509,11 @@ def get_prices_and_sparklines(tickers, fallback):
         except Exception: return 0.0
 
     usd = get_latest("USDMXN=X") or 18.50
+    # Sprint 0 · FX: pesos por unidad de cada moneda de cotización
+    fx_mxn = {"MXN": 1.0, "USD": usd}
+    _gbp, _eur = get_latest("GBPMXN=X"), get_latest("EURMXN=X")
+    if _gbp: fx_mxn.update({"GBP": _gbp, "GBp": _gbp / 100.0, "GBX": _gbp / 100.0})   # LSE cotiza a veces en peniques
+    if _eur: fx_mxn["EUR"] = _eur
     pxs_mxn, pxs_usd, spark_data = {}, {}, {}
     if tickers:
         for t in tickers:
@@ -1456,9 +1523,10 @@ def get_prices_and_sparklines(tickers, fallback):
                 if raw_usd_series.empty:
                     pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
                     continue
-                hist_prices_mxn = (raw_usd_series * usd).tolist()
+                factor_mxn = _factor_a_mxn(moneda_cotizacion(yf_symbol), fx_mxn, usd)   # Sprint 0 · FX
+                hist_prices_mxn = (raw_usd_series * factor_mxn).tolist()
                 spark_data[t] = hist_prices_mxn
-                pxs_usd[t] = raw_usd_series.iloc[-1]
+                pxs_usd[t] = float(raw_usd_series.iloc[-1]) * factor_mxn / usd
                 pxs_mxn[t] = hist_prices_mxn[-1] if hist_prices_mxn else fallback.get(t, 0.0)
             except Exception: 
                 pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
@@ -1480,16 +1548,39 @@ def get_prices_and_sparklines(tickers, fallback):
         
     return pxs_mxn, pxs_usd, spark_data, usd, macro_data
 
+_YIELD_MAXIMO = 0.25   # >25 % anual se descarta como dato corrupto (no infla el Salario Invisible)
+
+def _yield_fraccion(inf):
+    """Rendimiento anual por dividendo como FRACCIÓN (0.035 = 3.5 %), con fuentes en orden de confiabilidad."""
+    def _pos(v):
+        try:
+            f = float(v)
+            return f if np.isfinite(f) and f > 0 else None
+        except (TypeError, ValueError):
+            return None
+    precio = _pos(inf.get("regularMarketPrice")) or _pos(inf.get("previousClose")) or _pos(inf.get("currentPrice"))
+    tasa = _pos(inf.get("dividendRate")) or _pos(inf.get("trailingAnnualDividendRate"))
+    candidatos = [
+        (tasa / precio) if (tasa and precio) else None,   # $ por acción / precio: misma moneda, fracción pura
+        _pos(inf.get("trailingAnnualDividendYield")),       # yfinance: fracción
+        _pos(inf.get("yield")),                             # ETFs (fund yield): fracción
+        (_pos(inf.get("dividendYield")) or 0) / 100 or None,  # yfinance >= 0.2.54: PORCENTAJE -> se divide entre 100
+    ]
+    return next((c for c in candidatos if c and c <= _YIELD_MAXIMO), 0.0)
+
 @st.cache_data(ttl=86400, max_entries=50)
 def get_asset_yields(tickers):
+    """{ticker: fracción anual}. Sprint 0: ya no mezcla porcentajes con fracciones."""
     yields = {}
     for t in tickers:
+        if t == "BTC":
+            yields[t] = 0.0   # cripto no paga dividendos: sin llamada de red
+            continue
         try:
-            yf_sym = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
-            inf = yf.Ticker(yf_sym).info
-            y = inf.get('dividendYield') or inf.get('trailingAnnualDividendYield') or 0.0
-            yields[t] = float(y)
-        except: yields[t] = 0.0
+            yf_sym = f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t
+            yields[t] = float(_yield_fraccion(yf.Ticker(yf_sym).info or {}))
+        except Exception:
+            yields[t] = 0.0
     return yields
 
 def _yf_symbol(t):
@@ -1749,7 +1840,19 @@ if user_freq == "SEMANAL": pmt, n_periodos, r_periodo = aportacion_promedio, 5 *
 elif user_freq == "QUINCENAL": pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 24, tasa_anual / 24
 else: pmt, n_periodos, r_periodo = aportacion_promedio, 5 * 12, tasa_anual / 12
 
-proyeccion_5a = (total_portafolio * ((1 + r_periodo)**n_periodos)) + (pmt * (((1 + r_periodo)**n_periodos - 1) / r_periodo)) if pmt > 0 else total_portafolio
+# Sprint 0 · Proyección honesta (continua en la aportación):
+#   · lo invertido capitaliza a tasa_anual; el efectivo (liquidez) NO rinde 10 % por estar parado;
+#   · las aportaciones solo existen si hay racha activa (pmt > 0).
+# Alternativa conservadora: sin racha, no proyectar rendimiento alguno -> proyeccion_5a = total_portafolio
+factor_5a = (1 + r_periodo) ** n_periodos
+aportes_5a = pmt * ((factor_5a - 1) / r_periodo) if (pmt > 0 and r_periodo > 0) else 0.0
+proyeccion_5a = (total_activos * factor_5a) + liquidez_mxn + aportes_5a
+if pmt > 0:
+    txt_proyeccion = (f"Si mantienes tu racha {txt_frecuencia.lower()} de <b>${aportacion_promedio:,.0f}</b> "
+                      f"y lo invertido rinde 10% anual. Tu efectivo no se capitaliza.")
+else:
+    txt_proyeccion = ("Sin racha activa: solo tu capital ya invertido crece al 10% anual. "
+                      "No sumo aportaciones ni rendimiento a tu efectivo.")
 
 col_g1, col_g2, col_g3 = st.columns([1.2, 1.5, 1.2])
 with col_g1:
@@ -1775,7 +1878,7 @@ with col_g3:
         f"<div class='metric-card notranslate' translate='no' style='border-color:#c084fc40; background:rgba(192, 132, 252, 0.02) !important;'>"
         f"<div class='metric-title' style='color:#c084fc !important;'>Tu Futuro en 5 Años</div>"
         f"<div style='font-family:\"Playfair Display\", serif; font-size:1.6rem; font-weight:400; color:white; margin:10px 0;'>${proyeccion_5a:,.2f}</div>"
-        f"<div class='metric-subtext'>Si mantienes tu racha {txt_frecuencia.lower()} de <b>${aportacion_promedio:,.0f}</b> a una tasa del 10% anual.</div></div>", unsafe_allow_html=True
+        f"<div class='metric-subtext'>{txt_proyeccion}</div></div>", unsafe_allow_html=True
     )
 st.markdown("---")
 
