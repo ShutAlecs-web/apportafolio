@@ -254,13 +254,26 @@ def init_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dca_frequency TEXT DEFAULT 'MENSUAL'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS goal_name TEXT DEFAULT 'Libertad Financiera'")
             cur.execute("INSERT INTO users (user_id, username, password_hash, dca_frequency, goal_name) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING", ("USR-001", "alex_admin", hash_password_seguro(admin_pwd), "MENSUAL", "Fondo Institucional"))   # Sprint 0: bcrypt
+            # P0-B · Roles: CLIENTE por omisión; el gestor original (USR-001) siempre es ADMIN.
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS rol TEXT DEFAULT 'CLIENTE'")
+            cur.execute("UPDATE users SET rol = 'ADMIN' WHERE user_id = 'USR-001' AND rol IS DISTINCT FROM 'ADMIN'")
     return True
+
+def es_admin(uid):
+    """P0-B · El rol se lee de la base en cada rerun (nunca de session_state, que el cliente no controla pero sí persiste)."""
+    if not uid: return False
+    if uid == "USR-001": return True
+    try:
+        df = read_df("SELECT rol FROM users WHERE user_id=%s", (uid,))
+        return (not df.empty) and str(df["rol"].iloc[0] or "").upper() == "ADMIN"
+    except Exception:
+        return False
 
 init_db()
 
 PROMPT_MAESTRO = """
 ROL
-Eres el "Motor Algorítmico V5" de APortafolio: analista senior de un Multi-Family Office con doble especialidad en análisis cuantitativo-técnico y análisis fundamental. Tu mandato es emitir un veredicto accionable: agresivo cuando los datos lo justifican, defensivo cuando no. El inversionista es mexicano y su moneda base es MXN.
+Eres el "Motor Algorítmico V5" de APortafolio: analista senior de un Multi-Family Office con doble especialidad en análisis cuantitativo-técnico y análisis fundamental. Tu mandato es emitir una LECTURA ANALÍTICA E INFORMATIVA de las señales observadas: describes escenarios y parámetros cuantitativos, nunca instruyes al inversionista a comprar, vender o mantener. El inversionista es mexicano y su moneda base es MXN.
 
 FECHA DE ANÁLISIS: {fecha_hoy}
 
@@ -298,7 +311,7 @@ D. Riesgo de cartera: peso > 20% = riesgo de concentración (el veredicto máxim
 E. Costo promedio: con pérdida y tesis intacta, promediar a la baja es válido; con tesis rota, no lo es. Con ganancia amplia (> 40%) y sobrecompra, evalúa tomar utilidades parciales.
 F. Noticias: úsalas solo como catalizador o riesgo. No inventes hechos, cifras, fechas de reporte ni eventos que no estén en los titulares o en los datos.
 
-VEREDICTO (elige EXACTAMENTE uno y que sea coherente con el rating)
+CATEGORÍA DE SEÑAL (elige EXACTAMENTE una y que sea coherente con el rating; son etiquetas internas de clasificación cuantitativa, no instrucciones al inversionista)
 - "COMPRA AGRESIVA" (rating 9 o 10): confluencia técnica, de valuación y de catalizador; asimetría clara al alza.
 - "DCA FUERTE" (rating 7 u 8): tesis sólida con timing o valuación imperfectos; acumular de forma escalonada.
 - "HOLD ESTRATÉGICO" (rating 4 a 6): relación riesgo-beneficio neutral; mantener y esperar un mejor punto de entrada.
@@ -308,13 +321,44 @@ REGLAS DE REDACCIÓN
 - Español profesional con tono de comité de inversión: directo, cuantitativo, sin relleno ni frases genéricas.
 - Cada argumento debe citar al menos una cifra del bloque de datos (porcentajes, múltiplos o niveles de precio).
 - bull_points y bear_points: de 2 a 4 elementos cada uno, máximo 20 palabras por elemento.
-- macro_synthesis: un solo párrafo de 4 a 6 oraciones (máximo 120 palabras) que (1) describa la estructura técnica, (2) la contraste con la valuación, (3) integre noticias y agenda macro, (4) pondere la posición en cartera y (5) cierre con la acción concreta y su ejecución (escalonar, niveles de referencia como MA50, MA200 o extremos del rango).
-- Prohibido: markdown, asteriscos, emojis, disclaimers legales, mencionar que eres una IA o señalar que faltan datos.
+- macro_synthesis: un solo párrafo de 4 a 6 oraciones (máximo 120 palabras) que (1) describa la estructura técnica, (2) la contraste con la valuación, (3) integre noticias y agenda macro, (4) pondere la posición en cartera y (5) cierre con escenarios condicionales ("si el precio..., se observaría...") y niveles de referencia cuantitativos (MA50, MA200 o extremos del rango).
+- Lenguaje informativo y condicional: "se observa", "el escenario sugiere", "los parámetros indican". Prohibido el imperativo y las instrucciones de inversión ("compra", "vende", "acumula", "mantén", "recorta").
+- Prohibido: markdown, asteriscos, emojis, mencionar que eres una IA o señalar que faltan datos. El aviso legal lo agrega la aplicación.
 
 FORMATO DE SALIDA
 Responde ÚNICA Y EXCLUSIVAMENTE con un objeto JSON válido (sin texto antes ni después y sin bloques de código) con exactamente estas claves:
 {{"verdict": "DCA FUERTE", "rating": 7, "bull_points": ["...", "..."], "bear_points": ["...", "..."], "macro_synthesis": "..."}}
 """
+
+# P0-B · Blindaje legal. Las categorías internas del Motor V5 se muestran como escenarios, no como órdenes.
+ETIQUETA_LECTURA_V5 = {
+    "COMPRA AGRESIVA": "Señales favorables con alta confluencia",
+    "DCA FUERTE": "Señales favorables moderadas",
+    "HOLD ESTRATÉGICO": "Señales mixtas / neutrales",
+    "REDUCIR POSICIÓN": "Señales desfavorables o de concentración",
+}
+
+AVISO_LECTURA_V5 = (
+    "Aviso legal · Lectura cuantitativa con fines exclusivamente informativos y educativos. No constituye una "
+    "recomendación personalizada, asesoría en inversiones ni una oferta o invitación a comprar, vender o mantener "
+    "valores. Las señales se calculan de forma automatizada con datos públicos de mercado que pueden contener errores "
+    "o retrasos, y no consideran su perfil de riesgo, horizonte ni situación financiera. Los rendimientos pasados no "
+    "garantizan resultados futuros; invertir implica riesgo, incluida la pérdida del capital. Toda decisión de "
+    "inversión es responsabilidad exclusiva del inversionista, quien puede consultar a un asesor en inversiones autorizado."
+)
+
+AVISO_BOLETIN_CIO = (
+    "Aviso legal · Boletín generado automáticamente con apoyo de modelos de inteligencia artificial a partir de "
+    "información pública. Es de carácter general e informativo: no evalúa la situación financiera, fiscal ni el perfil "
+    "de riesgo de ninguna persona y no constituye recomendación de inversión, asesoría fiscal ni contable. Las fechas "
+    "de reportes trimestrales, dividendos y eventos macroeconómicos deben verificarse en fuentes oficiales antes de "
+    "tomar cualquier decisión. Invertir implica riesgo, incluida la pérdida del capital."
+)
+
+def html_aviso_legal(texto, margen_sup=12):
+    return (f"<div class='notranslate' translate='no' style='margin-top:{margen_sup}px; padding:10px 14px; "
+            f"border-left:2px solid rgba(212,175,55,0.45); background:rgba(8,11,19,0.45); border-radius:6px; "
+            f"color:#8b949e; font-size:0.72rem; line-height:1.5;'>{_html.escape(texto)}</div>")
 
 ASSET_CLASS = {"ISAC": "ETF", "XNAS": "ETF", "XDWH": "ETF", "EIMI": "ETF", "NUCL": "ETF", "GOOGL": "Acción", "MELI": "Acción", "NOW": "Acción", "ASML": "Acción", "NVO": "Acción", "MA": "Acción", "V": "Acción", "BTC": "Cripto"}
 ASSET_SECTOR = {"ISAC": "Renta Variable Global", "XNAS": "Tecnología (Índice)", "XDWH": "Salud Global", "EIMI": "Mercados Emergentes", "NUCL": "Energía/Utilities", "GOOGL": "Servicios de Comunicación", "MELI": "Comercio Electrónico", "NOW": "Software B2B", "ASML": "Semiconductores", "NVO": "Biotecnología / Salud", "MA": "Servicios Financieros", "V": "Servicios Financieros", "BTC": "Criptoactivos"}
@@ -524,7 +568,7 @@ def _sintesis_local_v5(ticker, t, pe, eps, veredicto, is_owned, peso, ret_pct):
     cambio = f", con un desempeño de {t['cambio_1y']:+.1f}% en 12 meses" if t["cambio_1y"] is not None else ""
     if ma50 and ma200:
         if p > ma50 > ma200: frases.append(f"La estructura de medias es alcista (precio sobre MA50 y MA200){cambio}.")
-        elif p < ma50 < ma200: frases.append(f"La estructura de medias es bajista (precio bajo MA50 y MA200){cambio}, lo que exige confirmar piso antes de ampliar exposición.")
+        elif p < ma50 < ma200: frases.append(f"La estructura de medias es bajista (precio bajo MA50 y MA200){cambio}; en este escenario aún no se observa confirmación de piso.")
         else: frases.append(f"Las medias móviles describen una fase de transición{cambio}, sin una tendencia primaria dominante.")
 
     rsi, vol = t["rsi14"], t["vol_anual"]
@@ -547,16 +591,16 @@ def _sintesis_local_v5(ticker, t, pe, eps, veredicto, is_owned, peso, ret_pct):
         s = f"La posición representa {peso:.1f}% del portafolio con un retorno acumulado de {ret_pct:+.1f}%"
         frases.append(s + (", nivel que ya implica riesgo de concentración." if peso > 20 else "."))
     else:
-        frases.append("El activo no forma parte de la cartera y se evalúa como candidato de entrada.")
+        frases.append("El activo no forma parte de la cartera y se analiza únicamente como referencia de observación.")
 
+    # P0-B · Cierres informativos y condicionales (sin instrucciones de compra/venta).
     cierres = {
-        "COMPRA AGRESIVA": "En conjunto, la confluencia técnica y de valuación favorece una acumulación decidida, escalonando entradas para administrar la volatilidad.",
-        "DCA FUERTE": ("En conjunto, las métricas respaldan una acumulación disciplinada vía DCA, priorizando entradas en retrocesos hacia la MA50."
-                       if (ma50 and p >= ma50) else "En conjunto, las métricas respaldan una acumulación disciplinada vía DCA, escalonando entradas mientras el precio consolida por debajo de la MA50."),
-        "HOLD ESTRATÉGICO": ("En conjunto, las métricas técnicas sugieren cautela a corto plazo: mantener la exposición actual y esperar una mejor relación riesgo-beneficio antes de incrementar."
-                             if is_owned else "En conjunto, las métricas técnicas sugieren cautela a corto plazo: conviene esperar un punto de entrada con mejor relación riesgo-beneficio."),
-        "REDUCIR POSICIÓN": ("En conjunto, el balance técnico-fundamental sugiere recortar exposición y proteger capital hasta que mejore la estructura."
-                             if is_owned else "En conjunto, no se justifica abrir posición en este momento; conviene mantenerlo en observación."),
+        "COMPRA AGRESIVA": "En conjunto, se observa una confluencia técnica y de valuación favorable; históricamente, escenarios así conviven con volatilidad, por lo que la MA50 funciona como nivel de referencia.",
+        "DCA FUERTE": ("En conjunto, los parámetros muestran señales favorables moderadas; si el precio retrocediera hacia la MA50, el escenario se mantendría dentro de su tendencia vigente."
+                       if (ma50 and p >= ma50) else "En conjunto, los parámetros muestran señales favorables moderadas mientras el precio consolida por debajo de la MA50, nivel que marcaría un cambio de escenario si se recupera."),
+        "HOLD ESTRATÉGICO": "En conjunto, las señales son mixtas: la relación riesgo-beneficio observada es neutral y el escenario dependerá de la ruptura de la MA50 o de los extremos del rango.",
+        "REDUCIR POSICIÓN": ("En conjunto, el balance técnico-fundamental es desfavorable" + (" y la concentración en cartera eleva la sensibilidad del portafolio a este activo." if is_owned else ".")
+                             + " Una mejora de la estructura de medias modificaría este escenario."),
     }
     frases.append(cierres.get(veredicto, cierres["HOLD ESTRATÉGICO"]))
     return " ".join(frases)
@@ -1600,26 +1644,29 @@ def render_anillos_salud(uid, dl, hoy):
 
 # --- 6. CMA FINANCIAL LETTER (entregable imprimible a PDF) --------------------
 def _siguientes_acciones_carta(ctx):
-    acciones = []
+    """P0-B · Escenarios observados: describe parámetros cuantitativos del portafolio, sin prescribir acciones."""
+    escenarios = []
     patrimonio = ctx["patrimonio"] or 0
     for p in ctx["posiciones"]:
         if p["peso"] > 20:
-            acciones.append(f"Concentración: {_html.escape(p['ticker'])} representa {p['peso']:.1f}% del patrimonio. "
-                            f"Sugerimos dirigir las próximas aportaciones a otros activos hasta equilibrarlo.")
+            escenarios.append(f"Concentración: {_html.escape(p['ticker'])} representa {p['peso']:.1f}% del patrimonio, "
+                              f"por encima del umbral de referencia de 20%. En este escenario, la variación de un solo "
+                              f"activo tiene un peso relevante en el resultado total.")
             break
     if patrimonio > 0 and ctx["liquidez"] / patrimonio > 0.20:
-        acciones.append(f"Liquidez: {ctx['liquidez'] / patrimonio * 100:.0f}% de su patrimonio está en efectivo. "
-                        f"Conviene definir qué parte es colchón y cuál puede invertirse gradualmente.")
+        escenarios.append(f"Liquidez: {ctx['liquidez'] / patrimonio * 100:.0f}% del patrimonio se mantiene en efectivo. "
+                          f"Este parámetro reduce la volatilidad del conjunto y, a la vez, la parte expuesta a rendimientos de mercado.")
     if ctx["xirr"] is not None and ctx["xirr"] < ctx["rf"]:
-        acciones.append("Rendimiento: su tasa real anualizada está por debajo de CETES. Revisemos costos, "
-                        "concentración y horizonte antes de la siguiente aportación.")
+        escenarios.append(f"Rendimiento: la tasa real anualizada observada ({ctx['xirr'] * 100:+.2f}%) se ubica por debajo de "
+                          f"la tasa libre de riesgo de referencia ({ctx['rf'] * 100:.2f}%). Costos, concentración y horizonte "
+                          f"son los parámetros que explican habitualmente esta brecha.")
     if ctx["racha"] == 0:
-        acciones.append("Disciplina: no registramos aportaciones en el periodo actual. Retomar la aportación "
-                        "periódica es la palanca de mayor impacto en su proyección.")
-    if not acciones:
-        acciones.append("Mantener el plan: la estructura actual es coherente con su disciplina de aportación. "
-                        "El siguiente paso es sostener la racha y revisar la asignación trimestralmente.")
-    return acciones[:3]
+        escenarios.append("Disciplina: no se registran aportaciones en el periodo actual. En la proyección a 5 años, "
+                          "el supuesto de aportación periódica es el parámetro de mayor sensibilidad.")
+    if not escenarios:
+        escenarios.append("Sin alertas cuantitativas: la concentración, la liquidez y la disciplina de aportación se "
+                          "ubican dentro de los umbrales de referencia utilizados en este reporte.")
+    return escenarios[:3]
 
 
 def generar_carta_cma(ctx):
@@ -1652,7 +1699,8 @@ def generar_carta_cma(ctx):
             f"<tr><td>Caída máxima desde un punto alto</td><td class='n'>{r.get('max_dd', 0):.1f}%</td></tr>"
             f"<tr><td>Pérdida diaria que solo se supera 1 de cada 20 días (VaR 95%)</td><td class='n'>{m(r.get('var_95_mxn', 0))}</td></tr>"
             "</table>")
-    bloque_cio = (f"<h2>Nota del CIO Virtual</h2><div class='cio'>{e(ctx['cio'])}</div>" if ctx.get("cio") else "")
+    bloque_cio = (f"<h2>Boletín del CIO Virtual (informativo)</h2><div class='cio'>{e(ctx['cio'])}</div>"
+                  f"<p class='legal' style='margin-top:8px;'>{e(AVISO_BOLETIN_CIO)}</p>" if ctx.get("cio") else "")
     acciones = "".join(f"<li>{a}</li>" for a in _siguientes_acciones_carta(ctx))
     color_pnl = "pos" if ctx["pnl"] >= 0 else "neg"
     return f"""<!DOCTYPE html>
@@ -1702,14 +1750,14 @@ construido con <b>{m(ctx['capital'])}</b> de capital aportado. El resultado no r
 <h2>Disciplina y metas</h2>
 <p>Racha de aportaciones: <b>{ctx['racha']}</b> periodo(s) seguidos con frecuencia {e(str(ctx['frecuencia']).lower())} (nivel {e(ctx['rango'])}).
 Meta «{e(ctx['meta_nombre'])}»: hito de {m(ctx['meta_monto'])}, avance de {ctx['progreso_meta']:.1f}%; faltan {m(ctx['faltante'])}.</p>
-<h2>Siguiente mejor acción</h2>
+<h2>Escenarios observados</h2>
 <ul>{acciones}</ul>
 {bloque_cio}
 <div class="firma"><p>Quedamos a sus órdenes para revisar cualquier punto.</p><p><b>CMA · Private Wealth</b><br>
 <span style="color:#6b7280;">Terminal APPortafolio</span></p></div>
 <p class="legal">Documento informativo generado automáticamente con datos registrados por el cliente y cotizaciones de mercado
 (Yahoo Finance). Los rendimientos son no realizados y no garantizan resultados futuros. Las proyecciones usan supuestos explícitos
-y no constituyen una recomendación personalizada de inversión.</p>
+y no constituyen una recomendación personalizada de inversión.<br><br>{e(AVISO_LECTURA_V5)}</p>
 </div></body></html>"""
 
 
@@ -1823,9 +1871,10 @@ if st.session_state["user_id"] is None:
 # 5. GESTIÓN MULTI-CLIENTE Y SIDEBAR
 # ==========================================
 user_id = st.session_state["user_id"]
-all_users = read_df("SELECT user_id, username FROM users")
+all_users = read_df("SELECT user_id, username FROM users ORDER BY username")
+ES_ADMIN = es_admin(user_id)   # P0-B · rol leído de la base en cada rerun
 
-if user_id == "USR-001":
+if ES_ADMIN:
     st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic; display:flex; align-items:center;'>{svg_icon('shield', color='#d4af37', size=18)}Panel de Gestor</h3>", unsafe_allow_html=True)
     client_dict = dict(zip(all_users["username"], all_users["user_id"]))
     selected_client_name = st.sidebar.selectbox("Cliente Activo:", list(client_dict.keys()))
@@ -1918,7 +1967,24 @@ if seccion == SECCION_FP:
     st.stop()   # la Terminal (cotizaciones, riesgo, IA) no se calcula mientras no se abra
 
 st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('download', color='#d4af37', size=16)}Reportes Institucionales</h3>", unsafe_allow_html=True)
-export_df = read_df("SELECT * FROM transactions WHERE user_id=%s", (active_client_id,))
+# P0-B · Lectura única y explícita de las tablas de la Terminal, siempre filtrada por el cliente activo
+# (cliente = su propio user_id; admin = el cliente elegido en el Panel de Gestor). La reutilizan reportes, home e historial.
+_TX_COLS = ("id, user_id, timestamp, fecha, tipo_operacion, ticker, clase, plataforma, moneda, "
+            "titulos, precio_unitario, comision, iva, tipo_cambio, total_mxn")
+
+def cargar_tablas_terminal(uid):
+    tx = read_df(f"SELECT {_TX_COLS} FROM transactions WHERE user_id=%s ORDER BY fecha, timestamp", (uid,))
+    caja = read_df("SELECT id, user_id, fecha, tipo, concepto, monto_mxn FROM cash_movements WHERE user_id=%s ORDER BY fecha, id", (uid,))
+    for col in ("titulos", "precio_unitario", "comision", "iva", "total_mxn"):
+        tx[col] = pd.to_numeric(tx[col], errors="coerce").fillna(0.0)
+    tx["tipo_cambio"] = pd.to_numeric(tx["tipo_cambio"], errors="coerce").fillna(1.0)
+    caja["monto_mxn"] = pd.to_numeric(caja["monto_mxn"], errors="coerce").fillna(0.0)
+    caja["tipo"] = caja["tipo"].fillna("").astype(str).str.upper().str.strip()
+    caja["concepto"] = caja["concepto"].fillna("")
+    return tx, caja
+
+tx_df, cash_df = cargar_tablas_terminal(active_client_id)
+export_df = tx_df
 
 if not export_df.empty:
     clean_df = export_df.drop(columns=["id", "user_id", "timestamp"], errors="ignore")
@@ -1990,23 +2056,57 @@ if active_client_id == "USR-001":
                     st.success(f"{f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
                 else: st.error("Verifica el Ticker, Títulos y Precio.")
 
-    with st.sidebar.expander("Tesorería (Ingresos/Egresos)", expanded=False):
-        with st.form("form_nuevo_deposito"):
-            c_tipo_op = st.selectbox("Tipo de Movimiento", ["DEPOSITO", "RETIRO"])
-            f_concepto = st.text_input("Concepto", placeholder="Ej: Fondeo DCA")
-            f_monto = st.number_input("Monto (MXN)", min_value=1.0, step=500.0)
-            f_dep_fecha = st.date_input("Fecha de Registro", value=datetime.today())
-            if st.form_submit_button("Actualizar Tesorería", use_container_width=True):
-                monto_final = f_monto if c_tipo_op == "DEPOSITO" else -f_monto
-                with db_conn() as conn, conn.cursor() as cur:
-                    cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-TES-{datetime.now().timestamp()}", active_client_id, str(f_dep_fecha), c_tipo_op, f_concepto, float(monto_final)))
-                st.success("Caja actualizada exitosamente."); st.rerun()
+# 5.2 P0-B · REGISTRO DE MOVIMIENTOS (depósitos y retiros) para todos los perfiles.
+#   · Cliente: el destino es SIEMPRE su propio user_id de sesión (no hay selector que manipular).
+#   · Admin: elige el cliente destino; la elección se revalida contra la tabla users al guardar.
+def destino_registro_caja(es_admin_flag, uid_sesion, uid_elegido, usuarios_validos):
+    if not es_admin_flag:
+        return uid_sesion
+    return uid_elegido if uid_elegido in usuarios_validos else None
+
+def registrar_movimiento_caja(uid_destino, tipo, concepto, monto, fecha):
+    """DEPOSITO positivo / RETIRO negativo: misma convención de signo que el resto de la Terminal."""
+    monto_final = abs(float(monto)) if tipo == "DEPOSITO" else -abs(float(monto))
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO cash_movements (id, user_id, fecha, tipo, concepto, monto_mxn) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (f"CMV-TES-{uuid.uuid4().hex}", uid_destino, str(fecha), tipo, concepto, monto_final))
+
+with st.sidebar.expander("Registro de Movimientos (Depósitos / Retiros)", expanded=False):
+    if st.session_state.get("flash_caja"):
+        st.success(st.session_state.pop("flash_caja"))
+    usuarios_validos = dict(zip(all_users["user_id"], all_users["username"]))
+    with st.form("form_nuevo_deposito", clear_on_submit=True):
+        if ES_ADMIN:
+            opciones_destino = list(usuarios_validos.keys())
+            c_destino = st.selectbox("Registrar a nombre de", opciones_destino,
+                                     index=opciones_destino.index(active_client_id) if active_client_id in opciones_destino else 0,
+                                     format_func=lambda u: usuarios_validos.get(u, u),
+                                     help="Modo Admin: elige el cliente al que se le registra el movimiento.")
+        else:
+            c_destino = user_id
+            st.caption(f"Se registrará en tu cuenta: {active_username}")
+        c_tipo_op = st.selectbox("Tipo de Movimiento", ["DEPOSITO", "RETIRO"])
+        f_concepto = st.text_input("Concepto", placeholder="Ej: Fondeo DCA", max_chars=120)
+        f_monto = st.number_input("Monto (MXN)", min_value=1.0, step=500.0)
+        f_dep_fecha = st.date_input("Fecha de Registro", value=datetime.today(), max_value=datetime.today())
+        if st.form_submit_button("Registrar Movimiento", use_container_width=True):
+            uid_destino = destino_registro_caja(ES_ADMIN, user_id, c_destino, usuarios_validos)
+            if not uid_destino:
+                st.error("El cliente elegido ya no existe. Recarga la página.")
+            else:
+                try:
+                    registrar_movimiento_caja(uid_destino, c_tipo_op, (f_concepto or "").strip() or c_tipo_op.title(), f_monto, f_dep_fecha)
+                    quien = "" if uid_destino == user_id else f" a {usuarios_validos.get(uid_destino, uid_destino)}"
+                    st.session_state["flash_caja"] = f"{c_tipo_op.title()} de ${f_monto:,.2f} registrado{quien}."
+                    st.rerun()
+                except psycopg2.Error:
+                    log_app.exception("Registro de caja · no se pudo guardar")
+                    st.error("No se pudo registrar el movimiento. Intenta de nuevo.")
 
 # ==========================================
 # 6. CARGA DE DATOS Y MATEMÁTICAS
 # ==========================================
-tx_df = read_df("SELECT * FROM transactions WHERE user_id=%s", (active_client_id,))
-cash_df = read_df("SELECT * FROM cash_movements WHERE user_id=%s", (active_client_id,))
+# tx_df y cash_df ya se cargaron una sola vez en la sección 5 (cargar_tablas_terminal); todo escritura hace st.rerun().
 
 def calc_liquidez_real(df_caja):
     if df_caja.empty: return 0.0
@@ -2315,6 +2415,15 @@ tt_cap = "El dinero exacto que ha salido de tu bolsillo hacia la aplicación."
 tt_liq = "Dinero en efectivo listo para aprovechar oportunidades en el mercado."
 tt_pnl = "Profit & Loss (Pérdidas o Ganancias Totales de tus inversiones)."
 
+# P0-B · Jerarquía del home: (1) contexto + métricas clave, (2) gráficas, (3) detalle de movimientos al final.
+_titulo_home = f"Mesa del Gestor · {active_username}" if ES_ADMIN else f"Resumen de tu Portafolio · {active_username}"
+_ultimo_mov = max([str(x) for x in list(tx_df["fecha"]) + list(cash_df["fecha"]) if x] or ["—"])
+st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:10px;' "
+            f"class='notranslate' translate='no'><h3 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-style:italic; "
+            f"font-weight:400; margin:0;'>{html_seguro(_titulo_home)}</h3>"
+            f"<span style='color:#64748b; font-size:0.8rem;'>{len(tx_df)} operaciones · {len(cash_df)} movimientos de caja · "
+            f"último registro: {html_seguro(_ultimo_mov)}</span></div>", unsafe_allow_html=True)
+
 k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
 k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{'Capital Invertido' if st.session_state.get('modo_pro_toggle', False) else 'Dinero de tu Bolsillo'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
@@ -2328,7 +2437,7 @@ else:
     c_gan = "text-neon-green" if ganancia_neta >= 0 else "text-neon-red"
     texto_simple = "Ganancia Generada" if ganancia_neta >= 0 else "Pérdida Temporal"
     k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Efectivo Libre <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
-    k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div></div>", unsafe_allow_html=True)
+    k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div><div class='metric-subtext {c_gan}'>{retorno_global:+.2f}% de rendimiento</div></div>", unsafe_allow_html=True)
 
 # 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN
 st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('trend', color='#d4af37', size=18)}La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
@@ -2370,8 +2479,8 @@ if not cash_df.empty:
             st.plotly_chart(fig_snow_v2, use_container_width=True, config=plotly_config)
         else:
             st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
-    else: st.info("Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
-else: st.info("Realiza tu primer depósito en la Tesorería para ver crecer tu Bola de Nieve.")
+    else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
+else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
 
 st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
 user_freq, meta_nombre = get_user_profile(active_client_id)
@@ -2536,7 +2645,7 @@ if st.session_state.get("modo_pro_toggle", False):
 
     if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
 
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Radiografía Individual y Rating de Compra (Motor V5)</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Radiografía Individual y Lectura Cuantitativa (Motor V5)</h4>", unsafe_allow_html=True)
     if not summary.empty:
         selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para análisis a profundidad:", sorted(summary["ticker"].tolist()) + ["+ Buscar nuevo ticker (Ej: AAPL, SPY)"], label_visibility="collapsed")
         if selected_asset.startswith("+ Buscar"):
@@ -2689,9 +2798,9 @@ if st.session_state.get("modo_pro_toggle", False):
                         (
                             f"<div class='pos-box notranslate' translate='no' style='border-top: 2px solid {score_color};'>"
                             f"<div style='display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid rgba(212, 175, 55, 0.15);padding-bottom:15px;margin-bottom:15px;'>"
-                            f"<div><p class='metric-title'>Veredicto Algorítmico V5</p>"
-                            f"<h3 style='color:{score_color};margin:0;font-size:2rem;font-weight:400;font-family:\"Playfair Display\", serif;font-style:italic;'>{html_seguro(ai_verdict)}</h3></div>"
-                            f"<div style='background:transparent;color:{score_color};border:1px solid {score_color};font-weight:600;font-size:1.4rem;padding:5px 15px;border-radius:20px;display:flex;align-items:center;'>"
+                            f"<div><p class='metric-title'>Lectura Cuantitativa V5 · Escenario observado</p>"
+                            f"<h3 style='color:{score_color};margin:0;font-size:1.6rem;font-weight:400;font-family:\"Playfair Display\", serif;font-style:italic;'>{html_seguro(ETIQUETA_LECTURA_V5.get(ai_verdict, ai_verdict))}</h3></div>"
+                            f"<div title='Puntaje de confluencia de señales (no es una calificación de compra)' style='background:transparent;color:{score_color};border:1px solid {score_color};font-weight:600;font-size:1.4rem;padding:5px 15px;border-radius:20px;display:flex;align-items:center;'>"
                             f"{ai_rating}<span style='font-size:0.9rem;margin-left:2px;opacity:0.8;'>/10</span></div></div>"
                             f"<div style='display:flex;gap:20px;margin-bottom:15px;'>"
                             f"<div style='flex:1;background:rgba(52, 211, 153, 0.05);border:1px solid rgba(52, 211, 153, 0.2);border-radius:12px;padding:15px;'>"
@@ -2703,6 +2812,7 @@ if st.session_state.get("modo_pro_toggle", False):
                             f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
                             f"<p class='metric-title'>Síntesis Macroeconómica</p>"
                             f"<p style='color:#e5e7eb;font-size:0.9rem;margin:0;line-height:1.6;'><i>\"{html_seguro(ai_macro)}\"</i></p></div></div>"
+                            f"{html_aviso_legal(AVISO_LECTURA_V5)}"   # P0-B · deslinde legal pegado a la lectura del activo
                         ),
                         unsafe_allow_html=True
                     )
@@ -2729,7 +2839,7 @@ if st.session_state.get("modo_pro_toggle", False):
                             unsafe_allow_html=True
                         )
                     else: 
-                        st.markdown(f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'><h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Estado de Cartera</h3><p style='color:#8b949e;font-size:0.85rem;'>Actualmente no posees {target_asset} en tu portafolio. Este activo es un candidato de observación.</p></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'><h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Estado de Cartera</h3><p style='color:#8b949e;font-size:0.85rem;'>Actualmente no posees {html_seguro(target_asset)} en tu portafolio. La lectura se muestra solo como referencia de observación.</p></div>", unsafe_allow_html=True)
 
                     if isinstance(pe_ratio, float): pe_ratio = f"{pe_ratio:.2f}x"
                     if isinstance(eps, float): eps = f"${eps:.2f}"
@@ -2829,8 +2939,8 @@ if st.session_state.get("modo_pro_toggle", False):
     else: st.info("Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
 
     st.markdown("---")
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:5px; letter-spacing:1px;' class='notranslate' translate='no'>CIO Virtual: Reportes y Earnings</h4>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Cruza datos de dividendos y reportes trimestrales con el entorno macroeconómico para generar tu informe ejecutivo semanal.</p>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:5px; letter-spacing:1px;' class='notranslate' translate='no'>Boletín CIO Virtual: Reportes y Earnings</h4>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Boletín informativo que cruza calendarios de dividendos y reportes trimestrales con el entorno macroeconómico.</p>", unsafe_allow_html=True)
     
     if not summary.empty:
         if st.button("Generar Reporte de Earnings & Macro", use_container_width=True):
@@ -2847,14 +2957,16 @@ if st.session_state.get("modo_pro_toggle", False):
                         Eres el 'CIO Virtual' (Chief Investment Officer) de un Multi-Family Office. 
                         El portafolio tiene exposición a estos activos: {assets_list}.
                         
-                        Instrucción: Escribe un 'Resumen Ejecutivo Semanal' enfocado en Earnings (Reportes Trimestrales) y Dividendos de estos activos.
-                        Cruza esta información con los eventos macroeconómicos más relevantes del momento para anticipar movimientos del mercado. 
-                        Mantén un tono institucional, claro y directo. Usa viñetas para la legibilidad.
-                        
+                        Instrucción: Escribe un 'Boletín Informativo Semanal' enfocado en Earnings (Reportes Trimestrales) y Dividendos de estos activos.
+                        Contextualiza esta información con los eventos macroeconómicos más relevantes del momento, describiendo escenarios posibles.
+                        Mantén un tono institucional, claro y analítico. Usa viñetas para la legibilidad.
+                        Lenguaje informativo y condicional ("se observa", "en caso de", "los datos indican"). No emitas recomendaciones
+                        de compra, venta o mantenimiento, ni instrucciones fiscales; no uses el imperativo. El aviso legal lo agrega la aplicación.
+
                         Estructura estricta (sin usar asteriscos de markdown):
                         RESUMEN MACROECONÓMICO: [1 párrafo del panorama global actual]
-                        EXPECTATIVAS DE EARNINGS: [Menciona 2 o 3 activos clave del portafolio que deban vigilarse pronto]
-                        ESTRATEGIA DE DIVIDENDOS E IMPUESTOS: [Cómo preparar estos ingresos pasivos para la próxima etapa contable]
+                        CALENDARIO DE EARNINGS: [2 o 3 activos del portafolio con reportes próximos y qué parámetros suelen observarse]
+                        DIVIDENDOS Y CONSIDERACIONES FISCALES (INFORMATIVO): [Fechas y conceptos generales a verificar con un especialista]
                         """
                         
                         texto_cio, err_cio = llamar_gemini(prompt_cio, backend_api_key, temperature=0.3, presupuesto_s=90)
@@ -2868,16 +2980,17 @@ if st.session_state.get("modo_pro_toggle", False):
                 else: st.warning("Configura tu API Key de Gemini para activar al CIO Virtual.")
                     
         if st.session_state.get("cio_report"):
-            st.markdown(f"<div class='pos-box'><p style='color:#e5e7eb; font-size:0.95rem; line-height:1.6; white-space:pre-wrap;'>{st.session_state['cio_report']}</p></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='pos-box'><p style='color:#e5e7eb; font-size:0.95rem; line-height:1.6; white-space:pre-wrap;'>{html_seguro(st.session_state['cio_report'])}</p>"
+                        f"{html_aviso_legal(AVISO_BOLETIN_CIO)}</div>", unsafe_allow_html=True)   # P0-B · texto de IA escapado + deslinde
 
     st.markdown("---")
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA (Rebalanceo)</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA · Simulador de Rebalanceo</h4>", unsafe_allow_html=True)
     if not summary.empty:
         c_tgt1, c_tgt2, c_tgt3, c_dca = st.columns(4)
-        with c_tgt1: tgt_etf = st.number_input("Objetivo ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0)
-        with c_tgt2: tgt_acc = st.number_input("Objetivo Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0)
-        with c_tgt3: tgt_cripto = st.number_input("Objetivo Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0)
-        with c_dca: new_capital = st.number_input("Capital a Inyectar", min_value=0.0, value=5000.0, step=500.0)
+        with c_tgt1: tgt_etf = st.number_input("Parámetro ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0)
+        with c_tgt2: tgt_acc = st.number_input("Parámetro Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0)
+        with c_tgt3: tgt_cripto = st.number_input("Parámetro Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0)
+        with c_dca: new_capital = st.number_input("Capital hipotético", min_value=0.0, value=5000.0, step=500.0)
 
         if (tgt_etf + tgt_acc + tgt_cripto) == 100.0:
             tgt_dict = {"ETF": tgt_etf, "Acción": tgt_acc, "Cripto": tgt_cripto}
@@ -2890,7 +3003,16 @@ if st.session_state.get("modo_pro_toggle", False):
             tot_def = sum(deficits.values())
             for cls in tgt_dict: comp_sug[cls] = new_capital * (deficits[cls] / tot_def) if tot_def > 0 else new_capital * (tgt_dict[cls]/100)
             
-            st.markdown(f"<div class='m-card'><div class='m-title'>Ruta Óptima de Capital</div><div class='pos-row'><span class='pos-label'>ETF:</span><span class='pos-val c-grn'>${comp_sug['ETF']:,.2f}</span></div><div class='pos-row'><span class='pos-label'>Acciones:</span><span class='pos-val c-grn'>${comp_sug['Acción']:,.2f}</span></div><div class='pos-row'><span class='pos-label'>Cripto:</span><span class='pos-val c-grn'>${comp_sug['Cripto']:,.2f}</span></div></div>", unsafe_allow_html=True)
+            # P0-B · Antes "Ruta Óptima de Capital": ahora es un escenario aritmético, no una instrucción de inversión.
+            st.markdown(
+                f"<div class='m-card'><div class='m-title'>Escenario de Distribución · Parámetros Cuantitativos</div>"
+                f"<div class='pos-row'><span class='pos-label'>ETF (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['ETF']:,.2f}</span></div>"
+                f"<div class='pos-row'><span class='pos-label'>Acciones (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['Acción']:,.2f}</span></div>"
+                f"<div class='pos-row'><span class='pos-label'>Cripto (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['Cripto']:,.2f}</span></div>"
+                f"<p style='color:#8b949e;font-size:0.75rem;margin:8px 0 0 0;'>Cálculo aritmético: reparte el capital hipotético en proporción "
+                f"a la brecha entre la asignación observada y los porcentajes que tú definiste. No considera precios, riesgo, "
+                f"costos ni tu perfil de inversionista.</p></div>"
+                f"{html_aviso_legal(AVISO_LECTURA_V5)}", unsafe_allow_html=True)
         else: st.warning("Los objetivos deben sumar 100%.")
 
 else:
@@ -2970,7 +3092,8 @@ with tab_ops:
             filtro_t = st.selectbox("Filtrar por Activo", tickers_disp, key="filtro_ticker_hist")
         
         df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
-        
+        df_mostrar_tx = df_mostrar_tx.iloc[::-1]   # P0-B · lo más reciente arriba
+
         st.dataframe(
             df_mostrar_tx[["fecha", "tipo_operacion", "ticker", "clase", "titulos", "precio_unitario", "tipo_cambio", "total_mxn"]].rename(
                 columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Ticker", "clase": "Clase", "titulos": "Títulos", "precio_unitario": "Precio U.", "tipo_cambio": "T.C.", "total_mxn": "Total MXN"}
@@ -2988,7 +3111,8 @@ with tab_caja:
             filtro_c = st.selectbox("Filtrar por Tipo", tipos_disp, key="filtro_tipo_caja")
             
         df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
-        
+        df_mostrar_cash = df_mostrar_cash.iloc[::-1]   # P0-B · lo más reciente arriba
+
         st.dataframe(
             df_mostrar_cash[["fecha", "tipo", "concepto", "monto_mxn"]].rename(
                 columns={"fecha": "Fecha", "tipo": "Tipo", "concepto": "Concepto", "monto_mxn": "Monto MXN"}
