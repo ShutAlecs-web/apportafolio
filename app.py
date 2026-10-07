@@ -47,49 +47,162 @@ plotly_config = {
     'toImageButtonOptions': {'format': 'png', 'filename': 'Grafica_Apportafolio'}
 }
 
+# Paleta institucional para Plotly (espejo de las variables CSS --ap-* y de .streamlit/config.toml).
+AP_COLORS = {
+    "bg": "#05070c",
+    "surface": "#0b0f17",
+    "surface_2": "#111723",
+    "border": "#1c2331",
+    "border_strong": "#2a3344",
+    "grid": "rgba(139, 148, 167, 0.10)",
+    "text": "#e6e9ef",
+    "text_muted": "#8b94a7",
+    "text_faint": "#5b6475",
+    "gold": "#d4af37",
+    "gold_fill": "rgba(212, 175, 55, 0.15)",
+    "positive": "#34d399",
+    "positive_fill": "rgba(52, 211, 153, 0.12)",
+    "negative": "#94a3b8",
+    "negative_fill": "rgba(148, 163, 184, 0.12)",
+    "info": "#c084fc",
+}
+AP_FONT_SANS = "Inter, -apple-system, Segoe UI, sans-serif"
+AP_FONT_SERIF = "Playfair Display, Georgia, serif"
+
+
+def style_financial_figure(fig, height=None, title=None, senior=False, showlegend=None, margin=None,
+                           xgrid=False, ygrid=True):
+    """Estética institucional común a todas las gráficas: fondo transparente, tipografía Inter/Playfair,
+    grids discretos (solo el eje de valores por defecto) y tooltips oscuros. No toca trazas ni datos;
+    cada gráfica puede sobrescribir después lo que necesite (hovermode, tickprefix, ejes secundarios)."""
+    base = 15 if senior else 12
+    layout = dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family=AP_FONT_SANS, color=AP_COLORS["text_muted"], size=base),
+        margin=margin or dict(t=40 if title else 10, b=10, l=10, r=10),
+        hoverlabel=dict(bgcolor=AP_COLORS["surface_2"], bordercolor=AP_COLORS["border_strong"],
+                        font=dict(family=AP_FONT_SANS, color=AP_COLORS["text"], size=base)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    bgcolor="rgba(0,0,0,0)", font=dict(color=AP_COLORS["text_muted"], size=base - 1)),
+    )
+    if height: layout["height"] = height
+    if showlegend is not None: layout["showlegend"] = showlegend
+    if title:
+        layout["title"] = dict(text=title, x=0, xanchor="left",
+                               font=dict(family=AP_FONT_SERIF, size=base + 4, color=AP_COLORS["text"]))
+    fig.update_layout(**layout)
+    ejes = dict(gridcolor=AP_COLORS["grid"], zerolinecolor=AP_COLORS["border_strong"],
+                linecolor=AP_COLORS["border"], tickfont=dict(color=AP_COLORS["text_faint"]))
+    fig.update_xaxes(showgrid=xgrid, **ejes)
+    fig.update_yaxes(showgrid=ygrid, **ejes)
+    if fig.layout.coloraxis.colorscale is not None:   # px.imshow / px.sunburst con escala continua
+        fig.update_coloraxes(colorbar=dict(outlinewidth=0, thickness=10,
+                                           tickfont=dict(color=AP_COLORS["text_faint"], size=base - 1)))
+    return fig
+
 # ==========================================
-# 2. ESTILOS GLOBAL & QUIET LUXURY FINTECH
+# 2. ESTILOS GLOBALES · PRIVATE WEALTH TERMINAL
 # ==========================================
+# Paleta centralizada en variables CSS (:root). Los mismos valores viven en
+# .streamlit/config.toml (tema nativo) y en AP_COLORS (gráficas Plotly).
 st.markdown("""
 <style translate="no" class="notranslate">
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400;600&display=swap');
 
-[data-testid="stAppViewContainer"], .stApp { background-color: #03050a !important; font-family: 'Inter', sans-serif !important; color: #cbd5e1; }
-header[data-testid="stHeader"] { background-color: transparent !important; }
+:root {
+    --ap-bg: #05070c;
+    --ap-surface: #0b0f17;
+    --ap-surface-2: #111723;
+    --ap-border: #1c2331;
+    --ap-border-strong: #2a3344;
+    --ap-text: #e6e9ef;
+    --ap-text-muted: #8b94a7;
+    --ap-text-faint: #5b6475;
+    --ap-gold: #d4af37;
+    --ap-gold-soft: rgba(212, 175, 55, 0.10);
+    --ap-gold-line: rgba(212, 175, 55, 0.28);
+    --ap-positive: #34d399;
+    --ap-negative: #94a3b8;
+    --ap-info: #c084fc;
+    --ap-cyan: #00f0ff;
+    --ap-font-sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    --ap-font-serif: 'Playfair Display', Georgia, serif;
+    --ap-radius: 14px;
+    --ap-radius-sm: 8px;
+    --ap-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 10px 30px rgba(0,0,0,0.35);
+}
 
-/* Tooltips Móviles ⓘ */
-.tooltip-container { position: relative; display: inline-block; cursor: pointer; margin-left: 6px; color: #d4af37; font-weight: bold; font-family: 'Inter', sans-serif; font-size: 0.85rem;}
-.tooltip-text { 
-    visibility: hidden; background-color: #080b13; color: #cbd5e1; text-align: left; 
-    padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3);
-    position: absolute; z-index: 100; bottom: 130%; left: 50%; transform: translateX(-50%); 
-    font-size: 0.8rem; width: 220px; box-shadow: 0 10px 20px rgba(0,0,0,0.6); 
-    opacity: 0; transition: opacity 0.3s; text-transform: none; letter-spacing: normal; font-weight: normal; line-height: 1.4;
+/* Lienzo base */
+[data-testid="stAppViewContainer"], .stApp { background-color: var(--ap-bg) !important; font-family: var(--ap-font-sans) !important; color: var(--ap-text); }
+[data-testid="stSidebar"] { background-color: #080b12 !important; border-right: 1px solid var(--ap-border) !important; }
+.block-container { padding-top: 2.2rem !important; }
+
+/* Limpieza del cromo nativo de Streamlit */
+header[data-testid="stHeader"] { background: transparent !important; height: 2.6rem; }
+[data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
+#MainMenu { visibility: hidden; } footer { visibility: hidden; height: 0; }
+hr { border-color: var(--ap-border) !important; }
+
+/* Tooltips ⓘ (táctiles y con foco de teclado) */
+.tooltip-container { position: relative; display: inline-block; cursor: pointer; margin-left: 6px; color: var(--ap-gold); font-weight: 500; font-family: var(--ap-font-sans); font-size: 0.8rem; opacity: 0.85; }
+.tooltip-text {
+    visibility: hidden; background-color: var(--ap-surface-2); color: var(--ap-text); text-align: left;
+    padding: 10px 12px; border-radius: var(--ap-radius-sm); border: 1px solid var(--ap-border-strong);
+    position: absolute; z-index: 100; bottom: 130%; left: 50%; transform: translateX(-50%);
+    font-size: 0.78rem; width: 230px; box-shadow: 0 12px 28px rgba(0,0,0,0.55);
+    opacity: 0; transition: opacity 0.2s; text-transform: none; letter-spacing: normal; font-weight: 400; line-height: 1.45;
 }
 .tooltip-container:hover .tooltip-text, .tooltip-container:focus .tooltip-text, .tooltip-container:active .tooltip-text { visibility: visible; opacity: 1; }
 
-div[data-testid="stTabs"] button { background-color: #080b13 !important; border-radius: 20px !important; border: 1px solid rgba(255,255,255,0.03) !important; color: #64748b !important; padding: 8px 18px !important; font-family: 'Inter', sans-serif !important; font-weight: 400 !important; font-size: 0.95rem !important; margin-right: 10px !important; transition: all 0.3s ease; }
-div[data-testid="stTabs"] button[aria-selected="true"] { background-color: rgba(212, 175, 55, 0.05) !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.3) !important; font-family: 'Playfair Display', serif !important; font-style: italic; letter-spacing: 1px; box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important; }
+/* Pestañas: subrayado sobrio en lugar de píldoras */
+div[data-testid="stTabs"] [role="tablist"] { border-bottom: 1px solid var(--ap-border); gap: 4px; }
+div[data-testid="stTabs"] button { background: transparent !important; border: none !important; border-radius: 0 !important; color: var(--ap-text-muted) !important; padding: 10px 16px !important; font-family: var(--ap-font-sans) !important; font-weight: 500 !important; font-size: 0.9rem !important; letter-spacing: 0.3px; transition: color 0.2s ease; }
+div[data-testid="stTabs"] button:hover { color: var(--ap-text) !important; }
+div[data-testid="stTabs"] button[aria-selected="true"] { color: var(--ap-gold) !important; }
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color: var(--ap-gold) !important; height: 2px !important; }
 
-.metric-card, .pos-box { background: linear-gradient(145deg, #080b13 0%, #0a0e17 100%) !important; border-radius: 24px !important; border: 1px solid rgba(212, 175, 55, 0.15) !important; padding: 24px !important; margin-bottom: 16px !important; box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important; transition: transform 0.2s ease;}
-.metric-card:hover { transform: translateY(-2px); border-color: rgba(212, 175, 55, 0.3) !important; }
+/* Tarjetas de métricas y cajas de detalle (sobrias, sin glassmorphism) */
+.metric-card, .pos-box { background: var(--ap-surface) !important; border-radius: var(--ap-radius) !important; border: 1px solid var(--ap-border) !important; padding: 22px 24px !important; margin-bottom: 16px !important; box-shadow: var(--ap-shadow) !important; transition: border-color 0.2s ease; }
+.metric-card:hover { border-color: var(--ap-border-strong) !important; }
+.metric-card--primary { background: linear-gradient(180deg, var(--ap-surface-2) 0%, var(--ap-surface) 100%) !important; border-color: var(--ap-gold-line) !important; position: relative; overflow: hidden; }
+.metric-card--primary::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--ap-gold); }
+.metric-card--primary .metric-value { font-size: 3.1rem !important; }
+.metric-card--primary:hover { border-color: var(--ap-gold) !important; }
 
-.metric-title { color: #8b949e !important; font-size: 0.75rem !important; font-weight: 400 !important; text-transform: uppercase !important; letter-spacing: 2px !important; margin-bottom: 8px !important; font-family: 'Inter', sans-serif !important; display: flex; align-items: center;}
-.metric-value { font-family: 'Playfair Display', serif !important; font-size: 2.6rem !important; font-weight: 400 !important; color: #ffffff !important; letter-spacing: -0.5px !important; line-height: 1.1 !important; margin: 10px 0 !important;}
-.metric-subtext { font-size: 0.9rem !important; margin-top: 8px !important; font-weight: 300 !important; color: #64748b !important; font-family: 'Inter', sans-serif !important; }
+.metric-title { color: var(--ap-text-muted) !important; font-size: 0.7rem !important; font-weight: 500 !important; text-transform: uppercase !important; letter-spacing: 1.8px !important; margin-bottom: 6px !important; font-family: var(--ap-font-sans) !important; display: flex; align-items: center; }
+.metric-value { font-family: var(--ap-font-serif) !important; font-size: 2.4rem !important; font-weight: 400 !important; color: #ffffff !important; letter-spacing: -0.5px !important; line-height: 1.1 !important; margin: 8px 0 !important; font-variant-numeric: tabular-nums; }
+.metric-subtext { font-size: 0.85rem !important; margin-top: 6px !important; font-weight: 400 !important; color: var(--ap-text-faint) !important; font-family: var(--ap-font-sans) !important; }
 
-.text-neon-green, .pos-green { color: #34d399 !important; } 
-.text-neon-red, .pos-red { color: #94a3b8 !important; } 
-.text-neon-cyan { color: #00f0ff !important; }
-.text-neon-purple { color: #c084fc !important; } 
-.text-neon-gold { color: #d4af37 !important; }
+/* Colores semánticos (se conservan los nombres de clase heredados) */
+.text-neon-green, .pos-green { color: var(--ap-positive) !important; }
+.text-neon-red, .pos-red { color: var(--ap-negative) !important; }
+.text-neon-cyan { color: var(--ap-cyan) !important; }
+.text-neon-purple { color: var(--ap-info) !important; }
+.text-neon-gold { color: var(--ap-gold) !important; }
 
-.pos-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem;}
-.pos-label { color: #8b949e; font-weight: 400;}
-.pos-val { color: #ffffff; font-weight: 500; font-family: 'Inter', sans-serif;}
+.pos-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem; }
+.pos-label { color: var(--ap-text-muted); font-weight: 400; }
+.pos-val { color: #ffffff; font-weight: 500; font-family: var(--ap-font-sans); font-variant-numeric: tabular-nums; }
 
-#MainMenu {visibility: hidden;} footer {visibility: hidden;}
+/* Cabecera editorial del home */
+.ap-masthead { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 10px 24px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--ap-border); }
+.ap-eyebrow { font-family: var(--ap-font-sans); font-size: 0.68rem !important; font-weight: 600; letter-spacing: 2.6px; text-transform: uppercase; color: var(--ap-gold); margin: 0 0 6px 0; }
+.ap-masthead h3 { font-family: var(--ap-font-serif); font-style: italic; font-weight: 400; color: #ffffff; margin: 0; padding: 0; font-size: 1.75rem; line-height: 1.15; }
+.ap-meta { display: flex; gap: 22px; flex-wrap: wrap; }
+.ap-meta-item { display: flex; flex-direction: column; align-items: flex-end; }
+.ap-meta-label { font-size: 0.64rem; letter-spacing: 1.8px; text-transform: uppercase; color: var(--ap-text-faint); }
+.ap-meta-value { font-size: 0.95rem; color: var(--ap-text); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Widgets nativos */
+.stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] button { font-family: var(--ap-font-sans) !important; font-weight: 500 !important; letter-spacing: 0.3px; }
+[data-testid="stExpander"] details { border-color: var(--ap-border) !important; border-radius: var(--ap-radius-sm) !important; background: var(--ap-surface); }
+
+@media (max-width: 800px) {
+    .metric-value { font-size: 2rem !important; }
+    .metric-card--primary .metric-value { font-size: 2.4rem !important; }
+    .ap-meta-item { align-items: flex-start; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1394,8 +1507,8 @@ def construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, rf, senior=False):
         hay_historia = df["valor"].notna().sum() > 1
 
         fig = go.Figure()
-        color_valor = "#34d399" if valor_hoy >= capital_hoy else "#94a3b8"
-        relleno_valor = "rgba(52, 211, 153, 0.12)" if valor_hoy >= capital_hoy else "rgba(148, 163, 184, 0.12)"
+        color_valor = AP_COLORS["positive"] if valor_hoy >= capital_hoy else AP_COLORS["negative"]
+        relleno_valor = AP_COLORS["positive_fill"] if valor_hoy >= capital_hoy else AP_COLORS["negative_fill"]
         if hay_historia:
             fig.add_trace(go.Scatter(
                 x=df.index, y=df["valor"], fill="tozeroy", mode="lines", name="Valor del Portafolio",
@@ -1403,11 +1516,11 @@ def construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, rf, senior=False):
                 hovertemplate="<b>Valor del portafolio:</b> $%{y:,.2f} MXN<extra></extra>"))
         fig.add_trace(go.Scatter(
             x=df.index, y=df["capital"], fill="tozeroy", mode="lines", name="Capital Invertido",
-            line=dict(color="#d4af37", width=2.5, shape="hv"), fillcolor="rgba(212, 175, 55, 0.15)",
+            line=dict(color=AP_COLORS["gold"], width=2.5, shape="hv"), fillcolor=AP_COLORS["gold_fill"],
             hovertemplate="<b>Capital aportado:</b> $%{y:,.2f} MXN<extra></extra>"))
         fig.add_trace(go.Scatter(
             x=df.index, y=df["cetes"], mode="lines", name=f"Si lo hubieras dejado en CETES ({rf * 100:.2f}%)",
-            line=dict(color="#c084fc", width=2, dash="dot"),
+            line=dict(color=AP_COLORS["info"], width=2, dash="dot"),
             hovertemplate="<b>En CETES:</b> $%{y:,.2f} MXN<extra></extra>"))
         if not hay_historia:   # sin precios históricos: mismo marcador que la versión original
             fig.add_trace(go.Scatter(
@@ -1415,12 +1528,9 @@ def construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, rf, senior=False):
                 line=dict(color=color_valor, width=2, dash="dash"),
                 hovertemplate="<b>Valor actual:</b> $%{y:,.2f} MXN<extra></extra>"))
 
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font=dict(color="#9ca3af", size=15 if senior else 12), margin=dict(t=10, b=10, l=10, r=10),
-                          height=380 if senior else 340, showlegend=True, hovermode="x unified",
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        fig.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
-        fig.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
+        style_financial_figure(fig, height=380 if senior else 340, senior=senior, showlegend=True)
+        fig.update_layout(hovermode="x unified")
+        fig.update_yaxes(tickprefix="$")
 
         dif = valor_hoy - cetes_hoy
         veredicto = (f"<b style='color:#34d399;'>le ganas a CETES por ${dif:,.0f}</b>" if dif >= 0
@@ -1803,68 +1913,82 @@ def render_carta_cma(ctx):
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 # ==========================================
-# 4. PORTADA DIVIDIDA ESTRELLADA Y ORO (RESPONSIVA)
+# 4. PORTADA · ACCESO DE CLIENTES (DOS COLUMNAS, RESPONSIVA)
 # ==========================================
 if st.session_state["user_id"] is None:
     st.markdown("""
     <style>
     [data-testid="stAppViewContainer"], .stApp {
-        background: linear-gradient(rgba(2, 5, 10, 0.75), rgba(2, 5, 10, 0.95)), 
-                    url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
-        background-size: cover !important;
+        background:
+            radial-gradient(1200px 600px at 12% 18%, rgba(212, 175, 55, 0.06), transparent 60%),
+            radial-gradient(900px 500px at 88% 90%, rgba(122, 162, 214, 0.04), transparent 60%),
+            var(--ap-bg) !important;
     }
-    
-    .portada-title {
-        font-family: 'Montserrat', sans-serif;
-        font-weight: 200;
-        font-size: clamp(2.5rem, 8vw, 4.5rem); 
-        letter-spacing: 0.15em;
-        text-align: left;
-        line-height: 1.1;
-        margin-bottom: 5px;
-        background: linear-gradient(to right, #bf953f 0%, #fcf6ba 25%, #b38728 50%, #fbf5b7 75%, #aa771c 100%);
-        background-size: 200% auto;
-        color: #000;
-        background-clip: text;
-        text-fill-color: transparent;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        animation: shine 6s linear infinite;
-    }
-    @keyframes shine { to { background-position: 200% center; } }
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+    .block-container { padding-top: 8vh !important; max-width: 1180px !important; }
 
-    .portada-subtitle { font-family: 'Playfair Display', serif; font-style: italic; color: #8b949e; text-align: left; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 40px; margin-top: 10px; }
+    .login-brand { padding: 4vh 2vw 0 0; }
+    .login-mark { display: inline-flex; align-items: center; gap: 10px; font-family: var(--ap-font-sans); font-size: 0.72rem !important; font-weight: 600;
+                  letter-spacing: 3px; text-transform: uppercase; color: var(--ap-gold); margin: 0 0 28px 0; }
+    .login-mark::before { content: ""; width: 26px; height: 1px; background: var(--ap-gold); }
+    .login-title { font-family: var(--ap-font-serif); font-weight: 400; color: #ffffff; font-size: clamp(2.4rem, 5vw, 3.6rem);
+                   line-height: 1.05; letter-spacing: -0.5px; margin: 0 0 18px 0; padding: 0; }
+    .login-title em { color: var(--ap-gold); font-style: italic; }
+    .login-lede { font-family: var(--ap-font-sans); color: var(--ap-text-muted); font-size: 1rem !important; line-height: 1.6; max-width: 440px; margin: 0 0 36px 0; }
+    .login-pillars { display: flex; gap: 28px; flex-wrap: wrap; padding-top: 22px; border-top: 1px solid var(--ap-border); max-width: 480px; }
+    .login-pillar span { display: block; font-size: 0.62rem; letter-spacing: 2px; text-transform: uppercase; color: var(--ap-text-faint); margin-bottom: 4px; }
+    .login-pillar b { font-family: var(--ap-font-sans); font-weight: 500; color: var(--ap-text); font-size: 0.9rem; }
+
+    .login-card-head { margin: 0 0 4px 0; }
+    .login-card-head p { margin: 0; }
+    .login-card-eyebrow { font-size: 0.66rem !important; font-weight: 600; letter-spacing: 2.4px; text-transform: uppercase; color: var(--ap-text-faint); }
+    .login-card-title { font-family: var(--ap-font-serif); font-size: 1.6rem !important; line-height: 1.2; color: #ffffff; font-style: italic; margin-top: 4px !important; }
 
     [data-testid="stForm"] {
-        background: rgba(9, 23, 46, 0.2) !important; border: 1px solid rgba(191, 149, 63, 0.25) !important; border-radius: 16px !important;
-        backdrop-filter: blur(15px) !important; -webkit-backdrop-filter: blur(15px) !important; padding: 3rem 2.5rem !important;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important; margin-top: 20px;
+        background: var(--ap-surface) !important; border: 1px solid var(--ap-border) !important; border-radius: var(--ap-radius) !important;
+        padding: 2.2rem 2rem 1.8rem 2rem !important; box-shadow: 0 24px 60px rgba(0,0,0,0.45) !important; margin-top: 6vh;
     }
-    [data-testid="stForm"] label { display: none !important; }
-    [data-testid="stForm"] input { background: transparent !important; border: none !important; border-bottom: 1px solid #1f2937 !important; color: #ffffff !important; border-radius: 0 !important; font-family: 'Inter', sans-serif !important; font-weight: 300 !important; padding: 1rem 0 !important; font-size: 0.9rem !important; transition: border-color 0.5s ease !important; text-align: center; }
-    [data-testid="stForm"] input::placeholder { color: #8b949e !important; text-align: center; letter-spacing: 2px; text-transform: uppercase;}
-    [data-testid="stForm"] input:focus { border-bottom: 1px solid #d4af37 !important; box-shadow: none !important; outline: none !important; background: transparent !important; }
-    [data-testid="stFormSubmitButton"] button { background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important; color: #02050a !important; font-weight: 600 !important; font-family: 'Montserrat', sans-serif !important; letter-spacing: 3px !important; text-transform: uppercase !important; border: none !important; border-radius: 8px !important; padding: 0.8rem !important; margin-top: 40px !important; width: 100%; transition: all 0.3s ease !important;}
-    [data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important; }
-    
-    @media (max-width: 800px) { .portada-title { text-align: center; letter-spacing: 0.1em; } .portada-subtitle { text-align: center; } }
+    [data-testid="stForm"] label p { font-size: 0.68rem !important; letter-spacing: 1.8px; text-transform: uppercase; color: var(--ap-text-muted) !important; font-weight: 500 !important; }
+    [data-testid="stForm"] input { background: var(--ap-bg) !important; color: #ffffff !important; font-family: var(--ap-font-sans) !important; font-size: 0.95rem !important; }
+    [data-testid="stForm"] input::placeholder { color: var(--ap-text-faint) !important; }
+    [data-testid="stFormSubmitButton"] button { background: var(--ap-gold) !important; color: #05070c !important; border: 1px solid var(--ap-gold) !important;
+        font-weight: 600 !important; letter-spacing: 2px !important; text-transform: uppercase !important; padding: 0.7rem !important; margin-top: 14px !important; transition: background 0.2s ease !important; }
+    [data-testid="stFormSubmitButton"] button:hover { background: #e2c575 !important; border-color: #e2c575 !important; }
+    .login-foot { font-size: 0.72rem !important; color: var(--ap-text-faint); text-align: center; margin-top: 14px; letter-spacing: 0.4px; }
+
+    @media (max-width: 800px) {
+        .block-container { padding-top: 3vh !important; }
+        .login-brand { padding: 0; }
+        .login-lede { margin-bottom: 20px; }
+        [data-testid="stForm"] { margin-top: 12px; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
-    c_izq, c_der = st.columns([1.3, 1])
+    c_izq, c_der = st.columns([1.15, 0.85], gap="large")
     with c_izq:
-        st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        st.markdown("<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='portada-subtitle'>Exclusivo y personalizado para ti.</p>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='login-brand notranslate' translate='no'>"
+            "<p class='login-mark'>CMA Wealth · Private Client Terminal</p>"
+            "<h1 class='login-title'>Tu patrimonio,<br><em>con criterio institucional.</em></h1>"
+            "<p class='login-lede'>Posiciones, caja, riesgo y rendimiento en una sola mesa de trabajo. "
+            "Exclusivo y personalizado para ti.</p>"
+            "<div class='login-pillars'>"
+            "<div class='login-pillar'><span>Portafolio</span><b>Consolidado</b></div>"
+            "<div class='login-pillar'><span>Riesgo</span><b>Cuantitativo</b></div>"
+            "<div class='login-pillar'><span>Acceso</span><b>Privado</b></div>"
+            "</div></div>", unsafe_allow_html=True)
     with c_der:
-        st.markdown("<br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
-            usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
-            pwd = st.text_input("Contraseña", type="password", placeholder="CLAVE DE ACCESO")
-            if st.form_submit_button("ACCEDER", use_container_width=True):
+            st.markdown("<div class='login-card-head notranslate' translate='no'><p class='login-card-eyebrow'>Acceso de clientes</p>"
+                        "<p class='login-card-title'>Iniciar sesión</p></div>", unsafe_allow_html=True)
+            usr = st.text_input("Usuario", placeholder="Identificador")
+            pwd = st.text_input("Contraseña", type="password", placeholder="Clave de acceso")
+            if st.form_submit_button("Acceder", use_container_width=True):
                 uid_ok = autenticar(db_conn, usr, pwd)
                 if uid_ok: st.session_state["user_id"] = uid_ok; st.rerun()
                 else: st.error("Credenciales incorrectas.")
+        st.markdown("<p class='login-foot'>Sesión privada · Uso exclusivo de clientes</p>", unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
@@ -2418,14 +2542,16 @@ tt_pnl = "Profit & Loss (Pérdidas o Ganancias Totales de tus inversiones)."
 # P0-B · Jerarquía del home: (1) contexto + métricas clave, (2) gráficas, (3) detalle de movimientos al final.
 _titulo_home = f"Mesa del Gestor · {active_username}" if ES_ADMIN else f"Resumen de tu Portafolio · {active_username}"
 _ultimo_mov = max([str(x) for x in list(tx_df["fecha"]) + list(cash_df["fecha"]) if x] or ["—"])
-st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:10px;' "
-            f"class='notranslate' translate='no'><h3 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-style:italic; "
-            f"font-weight:400; margin:0;'>{html_seguro(_titulo_home)}</h3>"
-            f"<span style='color:#64748b; font-size:0.8rem;'>{len(tx_df)} operaciones · {len(cash_df)} movimientos de caja · "
-            f"último registro: {html_seguro(_ultimo_mov)}</span></div>", unsafe_allow_html=True)
+st.markdown(f"<div class='ap-masthead notranslate' translate='no'>"
+            f"<div><p class='ap-eyebrow'>CMA Wealth · Private Client Terminal</p><h3>{html_seguro(_titulo_home)}</h3></div>"
+            f"<div class='ap-meta'>"
+            f"<div class='ap-meta-item'><span class='ap-meta-label'>Operaciones</span><span class='ap-meta-value'>{len(tx_df)}</span></div>"
+            f"<div class='ap-meta-item'><span class='ap-meta-label'>Movimientos de caja</span><span class='ap-meta-value'>{len(cash_df)}</span></div>"
+            f"<div class='ap-meta-item'><span class='ap-meta-label'>Último registro</span><span class='ap-meta-value'>{html_seguro(_ultimo_mov)}</span></div>"
+            f"</div></div>", unsafe_allow_html=True)
 
-k1, k2, k3, k4 = st.columns(4)
-k1.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
+k1, k2, k3, k4 = st.columns([1.45, 1, 1, 1])
+k1.markdown(f"<div class='metric-card metric-card--primary notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
 k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{'Capital Invertido' if st.session_state.get('modo_pro_toggle', False) else 'Dinero de tu Bolsillo'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
 
 if st.session_state.get("modo_pro_toggle", False):
@@ -2470,9 +2596,9 @@ if not cash_df.empty:
             mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
         ))
 
-        fig_snow.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10, b=10, l=10, r=10), height=320, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
-        fig_snow.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True)
-        fig_snow.update_yaxes(gridcolor="#1f2937", zerolinecolor="#1f2937", showgrid=True, tickprefix="$")
+        style_financial_figure(fig_snow, height=320, showlegend=True)
+        fig_snow.update_layout(hovermode="x unified")
+        fig_snow.update_yaxes(tickprefix="$")
         if _bola_v2 is not None:   # Sprint 2 · Capital vs Valor vs CETES; si falla, se pinta la gráfica original intacta
             fig_snow_v2, resumen_bola = _bola_v2
             st.markdown(resumen_bola, unsafe_allow_html=True)
@@ -2635,8 +2761,9 @@ if st.session_state.get("modo_pro_toggle", False):
                     y=attr_df["ticker"], x=attr_df["pnl"], orientation="h", marker_color=attr_df["color_pnl"],
                     text=attr_df["pnl"].apply(lambda x: f"${x:+,.0f}"), textposition="outside"
                 ))
-                fig_attr.update_layout(title=dict(text="Atribución Neta por Activo (MXN)", font=dict(size=14, color="#8b949e")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=30, b=0, l=10, r=10), showlegend=False, xaxis_title="", yaxis_title="", height=280)
-                fig_attr.update_xaxes(gridcolor="#1f2937", zerolinecolor="#1f2937")
+                style_financial_figure(fig_attr, height=280, title="Atribución Neta por Activo (MXN)", showlegend=False,
+                                       margin=dict(t=36, b=0, l=10, r=10), xgrid=True, ygrid=False)
+                fig_attr.update_layout(xaxis_title="", yaxis_title="")
                 st.plotly_chart(fig_attr, use_container_width=True, config=plotly_config)
             else: st.info("Aún no hay P&L registrado.")
         else: st.info("Adquiere activos para medir atribución.")
@@ -2789,7 +2916,8 @@ if st.session_state.get("modo_pro_toggle", False):
                     fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
                     fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 148}, {211 if pct_change_1y>=0 else 163}, {153 if pct_change_1y>=0 else 184}, 0.15)"), row=1, col=1)
                     fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
-                    fig_deep.update_layout(title=dict(text=f"{target_asset} | Análisis de 1 Año", font=dict(family="Playfair Display", size=18, color="#cbd5e1")), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=40,b=10,l=10,r=10), showlegend=False, xaxis2=dict(showgrid=False), yaxis=dict(gridcolor="#1f2937"), yaxis2=dict(showgrid=False, showticklabels=False))
+                    style_financial_figure(fig_deep, title=f"{target_asset} | Análisis de 1 Año", showlegend=False)
+                    fig_deep.update_layout(yaxis2=dict(showgrid=False, showticklabels=False))
                     st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
                     
                     bulls_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bulls])
@@ -2933,7 +3061,7 @@ if st.session_state.get("modo_pro_toggle", False):
                     # Sprint 2 · -1 verde (diversifica), 0 oro (neutral), +1 gris (se mueven igual). zmin/zmax fijan la escala.
                     # Alternativa con rojo explícito: [[0, '#34d399'], [0.5, '#d4af37'], [1, '#b45454']]
                     fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale=[[0, '#34d399'], [0.5, '#d4af37'], [1, '#94a3b8']], zmin=-1, zmax=1, aspect="auto")
-                    fig_corr.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=10,b=10,l=10,r=10), height=350)
+                    style_financial_figure(fig_corr, height=350, xgrid=False, ygrid=False)
                     st.plotly_chart(fig_corr, use_container_width=True, config=plotly_config)
                 else: st.info("Necesitas al menos 2 activos en tu portafolio para generar el mapa de calor de correlación.")
     else: st.info("Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
@@ -3071,7 +3199,8 @@ else:
             color_continuous_scale=[[0, '#94a3b8'], [0.5, '#d4af37'], [1, '#34d399']],
             color_continuous_midpoint=0
         )
-        fig_sun.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9ca3af"), margin=dict(t=20, b=20, l=10, r=10), height=550)
+        style_financial_figure(fig_sun, height=550, margin=dict(t=20, b=20, l=10, r=10))
+        fig_sun.update_traces(marker=dict(line=dict(color=AP_COLORS["bg"], width=1)))
         st.plotly_chart(fig_sun, use_container_width=True, config=plotly_config)
         
     else:

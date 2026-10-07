@@ -1,0 +1,48 @@
+# ==========================================
+# CMA Wealth · Private Client Terminal
+# Tema global: paleta oscura institucional y tipografía Inter / Playfair Display.
+# Los mismos valores viven como variables CSS (:root) en app.py y en AP_COLORS (Plotly).
+# ==========================================
+
+[theme]
+base = "dark"
+
+# Superficies
+backgroundColor = "#05070c"
+secondaryBackgroundColor = "#0b0f17"
+textColor = "#e6e9ef"
+borderColor = "#1c2331"
+dataframeBorderColor = "#1c2331"
+dataframeHeaderBackgroundColor = "#0b0f17"
+showWidgetBorder = true
+showSidebarBorder = true
+
+# Acento y semánticos
+primaryColor = "#d4af37"
+linkColor = "#d4af37"
+linkUnderline = false
+greenColor = "#34d399"
+redColor = "#d16a6a"
+yellowColor = "#d4af37"
+violetColor = "#c084fc"
+blueColor = "#7aa2d6"
+grayColor = "#94a3b8"
+
+# Tipografía
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap"
+headingFont = "Playfair Display:https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap"
+codeFont = "monospace"
+baseFontSize = 15
+baseRadius = "0.6rem"
+buttonRadius = "0.5rem"
+
+# Gráficas nativas de Streamlit (st.line_chart, st.bar_chart…)
+chartCategoricalColors = ["#d4af37", "#34d399", "#c084fc", "#7aa2d6", "#94a3b8", "#e2c575"]
+
+[theme.sidebar]
+backgroundColor = "#080b12"
+secondaryBackgroundColor = "#0f141e"
+borderColor = "#1c2331"
+
+[client]
+toolbarMode = "minimal"
