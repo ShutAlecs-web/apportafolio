@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 import unicodedata
 import uuid
 from contextlib import contextmanager
@@ -169,11 +170,22 @@ def _consulta(db_conn, q, params=None):
         return [dict(zip(cols, fila)) for fila in cur.fetchall()]
 
 
+_CACHE_COLUMNAS, _TTL_COLUMNAS_S = {}, 600
+
+
 def _columnas(cur, tabla):
+    """Columnas de la tabla. Se cachean 10 min por proceso: information_schema es lento en Neon y el
+    esquema no cambia en tiempo de ejecución. Un resultado vacío (tabla inexistente) no se cachea."""
+    guardado = _CACHE_COLUMNAS.get(tabla)
+    if guardado and time.monotonic() - guardado[0] < _TTL_COLUMNAS_S:
+        return dict(guardado[1])
     cur.execute(
         "SELECT column_name, data_type FROM information_schema.columns "
         "WHERE table_name = %s AND table_schema = ANY(current_schemas(false))", (tabla,))
-    return {n: t for n, t in cur.fetchall()}
+    cols = {n: t for n, t in cur.fetchall()}
+    if cols:
+        _CACHE_COLUMNAS[tabla] = (time.monotonic(), dict(cols))
+    return cols
 
 
 def _elegir(cols, candidatos):

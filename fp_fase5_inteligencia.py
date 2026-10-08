@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import logging
 import math
+import time
 import unicodedata
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -55,7 +56,7 @@ _NIVELES = {  # alertas de 4 niveles del Blueprint (punto 15)
 }
 
 __all__ = ["siguiente_mejor_accion", "semaforo_preparacion", "evaluar_inteligencia", "ui_panel_inteligencia",
-           "recolectar_contexto"]
+           "recolectar_contexto", "limpiar_cache"]
 
 
 # ==========================================
@@ -109,10 +110,22 @@ def _opcional(conn, nombre, fn, default):
             return default
 
 
+_CACHE_COLUMNAS, _TTL_COLUMNAS_S = {}, 600
+
+
 def _columnas(cur, tabla):
-    cur.execute("SELECT column_name, data_type FROM information_schema.columns "
-                "WHERE table_name = %s AND table_schema = ANY(current_schemas(false))", (tabla,))
-    return {n: t for n, t in cur.fetchall()}
+    """Columnas de la tabla. Se cachean 10 min por proceso: information_schema es lento en Neon y el
+    esquema no cambia en tiempo de ejecución. Un resultado vacío (tabla inexistente) no se cachea."""
+    guardado = _CACHE_COLUMNAS.get(tabla)
+    if guardado and time.monotonic() - guardado[0] < _TTL_COLUMNAS_S:
+        return dict(guardado[1])
+    cur.execute(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_name = %s AND table_schema = ANY(current_schemas(false))", (tabla,))
+    cols = {n: t for n, t in cur.fetchall()}
+    if cols:
+        _CACHE_COLUMNAS[tabla] = (time.monotonic(), dict(cols))
+    return cols
 
 
 def _elegir(cols, candidatos):
@@ -621,9 +634,20 @@ def _nba(m, s):
 # ==========================================
 # 6. API PÚBLICA
 # ==========================================
+@st.cache_data(ttl=30, show_spinner=False)
+def _contexto_cacheado(_db_conn, uid, hoy):
+    """Contexto por (uid, día), 30 s. `_db_conn` no entra en la clave. app.py lo invalida tras cada escritura;
+    lo que registre el bot por Telegram aparece a más tardar en 30 s."""
+    return recolectar_contexto(_db_conn, uid, hoy)
+
+
+def limpiar_cache():
+    _contexto_cacheado.clear()
+
+
 def evaluar_inteligencia(db_conn, uid, hoy=None):
     """Una sola lectura de datos → {'accion', 'semaforo', 'metricas'}."""
-    m = calcular_metricas(recolectar_contexto(db_conn, uid, hoy))
+    m = calcular_metricas(_contexto_cacheado(db_conn, uid, hoy or _hoy()))
     s = _semaforo(m)
     return {"accion": _nba(m, s), "semaforo": s, "metricas": m}
 

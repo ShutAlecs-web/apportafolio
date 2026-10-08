@@ -5,7 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-import psycopg2 
+import psycopg2
+import psycopg2.extensions
 from psycopg2 import pool as pg_pool
 import hashlib
 from contextlib import contextmanager
@@ -26,7 +27,7 @@ from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro, 
 from telegram_deeplink import render_boton_telegram
 from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
-from fp_fase5_inteligencia import ui_panel_inteligencia
+from fp_fase5_inteligencia import ui_panel_inteligencia, limpiar_cache as limpiar_cache_inteligencia
 from fp_fase6_ui_importacion import ui_boton_importacion
 
 log_app = logging.getLogger("apportafolio.terminal")
@@ -297,6 +298,45 @@ def _cupos_pool():
     las sesiones hagan fila (con tope de tiempo) en lugar de fallar al instante."""
     return threading.BoundedSemaphore(POOL_MAX_CONEXIONES)
 
+# --- CACHÉ DE LECTURAS + INVALIDACIÓN AUTOMÁTICA ------------------------------
+# Las lecturas por cliente se cachean (st.cache_data, siempre con uid en la clave). Cualquier escritura
+# confirmada por db_conn() (INSERT/UPDATE/DELETE/DDL o funciones fp_* que escriben) limpia esas cachés,
+# venga de app.py o de los módulos fp_*. Lo que registre el bot por Telegram aparece al vencer el TTL.
+_ESCRITURA_RE = re.compile(
+    r"^\s*(INSERT|UPDATE|DELETE|MERGE|ALTER|CREATE|DROP|TRUNCATE)\b"
+    r"|^\s*WITH\b[\s\S]*\b(INSERT|UPDATE|DELETE)\b"
+    r"|\bfp_(generar_codigo_vinculacion|revocar_vinculo_telegram)\s*\(", re.IGNORECASE)
+_hilo_db = threading.local()   # cada sesión de Streamlit corre en su propio hilo
+_CACHES_LECTURA = []
+
+class _CursorRastreador(psycopg2.extensions.cursor):
+    """Cursor normal que anota si la transacción en curso escribió algo."""
+    def _anotar(self, query):
+        if getattr(_hilo_db, "escritura", False): return
+        try:
+            texto = query.decode() if isinstance(query, bytes) else (query if isinstance(query, str) else query.as_string(self.connection))
+        except Exception:
+            texto = "INSERT"   # consulta no legible: se asume escritura (invalidar de más es seguro)
+        if _ESCRITURA_RE.search(texto): _hilo_db.escritura = True
+    def execute(self, query, vars=None):
+        self._anotar(query)
+        return super().execute(query, vars)
+    def executemany(self, query, vars_list):
+        self._anotar(query)
+        return super().executemany(query, vars_list)
+
+def lectura_cacheada(ttl):
+    """st.cache_data para lecturas de Neon. La función decorada DEBE recibir el uid si lee datos de un cliente."""
+    def deco(fn):
+        cacheada = st.cache_data(ttl=ttl, show_spinner=False)(fn)
+        _CACHES_LECTURA.append(cacheada)
+        return cacheada
+    return deco
+
+def invalidar_lecturas():
+    for fn in _CACHES_LECTURA: fn.clear()
+    limpiar_cache_inteligencia()
+
 def _conexion_valida(conn):
     try:
         if conn.closed: return False
@@ -335,17 +375,21 @@ def db_conn(autocommit=False):
         if conn is None:
             raise RuntimeError("No fue posible obtener una conexión válida a la base de datos.")
         rota = False
+        _hilo_db.escritura = False
         try:
             conn.autocommit = autocommit
+            conn.cursor_factory = _CursorRastreador
             yield conn
             if not autocommit: conn.commit()
+            if _hilo_db.escritura: invalidar_lecturas()
         except Exception as e:
             rota = isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError))
             try: conn.rollback()
             except Exception: rota = True
             raise
         finally:
-            try: conn.autocommit = False
+            _hilo_db.escritura = False
+            try: conn.autocommit = False; conn.cursor_factory = None
             except Exception: rota = True
             if rota or conn.closed:
                 _descartar_conexion(pool, conn)
@@ -363,6 +407,7 @@ def read_df(sql, params=None):
             filas = cur.fetchall()
     return pd.DataFrame(filas, columns=columnas)
 
+@lectura_cacheada(ttl=300)
 def get_user_profile(uid):
     try:
         with db_conn() as conn, conn.cursor() as cur:
@@ -408,6 +453,7 @@ def init_db():
             cur.execute("UPDATE users SET rol = 'ADMIN' WHERE user_id = 'USR-001' AND rol IS DISTINCT FROM 'ADMIN'")
     return True
 
+@lectura_cacheada(ttl=60)
 def es_admin(uid):
     """P0-B · El rol se lee de la base en cada rerun (nunca de session_state, que el cliente no controla pero sí persiste)."""
     if not uid: return False
@@ -863,6 +909,7 @@ def _fp_consulta(sql, params=None):
         return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
 
 
+@lectura_cacheada(ttl=30)
 def fp_dinero_libre(uid, hoy):
     filas = _fp_consulta("SELECT * FROM fp_dinero_libre(%s, %s)", (uid, hoy))
     if not filas:
@@ -873,18 +920,21 @@ def fp_dinero_libre(uid, hoy):
     return dl
 
 
+@lectura_cacheada(ttl=60)
 def fp_bolsas(uid):
     return _fp_consulta(
         "SELECT nombre, tipo, aporte_periodo, saldo_acumulado, monto_objetivo FROM fp_bolsas "
         "WHERE user_id = %s AND activa ORDER BY prioridad, nombre", (uid,))
 
 
+@lectura_cacheada(ttl=60)
 def fp_proximos(uid, desde, hasta):
     return _fp_consulta(
         "SELECT fecha, nombre, tipo_movimiento, monto FROM fp_ocurrencias(%s, %s, %s) "
         "ORDER BY fecha, tipo_movimiento, nombre LIMIT 8", (uid, desde, hasta))
 
 
+@lectura_cacheada(ttl=30)
 def fp_ultimos(uid):
     return _fp_consulta(
         """
@@ -899,11 +949,13 @@ def fp_ultimos(uid):
         """, (uid,))
 
 
+@lectura_cacheada(ttl=300)
 def fp_categorias(uid):
     return _fp_consulta(
         "SELECT categoria_id, nombre FROM fp_categorias WHERE user_id = %s OR user_id IS NULL ORDER BY nombre", (uid,))
 
 
+@lectura_cacheada(ttl=300)
 def fp_cuentas(uid):
     return _fp_consulta(
         "SELECT cuenta_id, nombre FROM fp_cuentas WHERE user_id = %s AND activa ORDER BY nombre", (uid,))
@@ -940,6 +992,7 @@ def fp_descartar(uid, movimiento_id):
                     (movimiento_id, uid))
 
 
+@lectura_cacheada(ttl=30)
 def fp_vinculo_activo(uid):
     filas = _fp_consulta(
         "SELECT telegram_username, vinculado_en FROM fp_telegram_links WHERE user_id = %s AND estado = 'ACTIVO'", (uid,))
@@ -987,7 +1040,7 @@ def render_fp_telegram(uid):
         return
 
     if vinculo:
-        usuario_tg = f"@{vinculo['telegram_username']}" if vinculo.get("telegram_username") else "tu Telegram"
+        usuario_tg = f"@{html_seguro(vinculo['telegram_username'])}" if vinculo.get("telegram_username") else "tu Telegram"
         desde = vinculo["vinculado_en"].astimezone(ZONA_MX).strftime("%d/%m/%Y") if vinculo.get("vinculado_en") else ""
         st.markdown(f"<p class='fp-nota'>Conectado con <b style='color:#34d399;'>{usuario_tg}</b>"
                     f"{' desde el ' + desde if desde else ''}.</p>", unsafe_allow_html=True)
@@ -1015,7 +1068,7 @@ def render_fp_telegram(uid):
             return
         minutos = max(1, int((guardado["vence"] - ahora).total_seconds() // 60))
         hora = guardado["vence"].astimezone(ZONA_MX).strftime("%H:%M")
-        st.markdown(f"<div class='fp-codigo notranslate' translate='no'>{guardado['codigo']}</div>"
+        st.markdown(f"<div class='fp-codigo notranslate' translate='no'>{html_seguro(guardado['codigo'])}</div>"
                     f"<p class='fp-nota' style='text-align:center;'>Vence a las {hora} ({minutos} min). "
                     f"Envía este mensaje al bot:</p>", unsafe_allow_html=True)
         st.code(f"/vincular {guardado['codigo']}", language=None)
@@ -1202,7 +1255,7 @@ def _fp_render_captura(uid, hoy):
                 libre_txt = f" · Dinero libre ahora: {fp_dinero(dl_post['dinero_libre'])}"
         except Exception:
             pass
-        c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {ultimo['texto']}{libre_txt}</p>", unsafe_allow_html=True)
+        c1.markdown(f"<p class='fp-nota' style='margin-top:8px;'>Registrado: {html_seguro(ultimo['texto'])}{libre_txt}</p>", unsafe_allow_html=True)
         if c2.button("Deshacer", key="fp_deshacer_ultimo", use_container_width=True):
             fp_descartar(uid, ultimo["movimiento_id"])
             st.session_state.pop("fp_ultimo_registro", None)
@@ -1277,10 +1330,10 @@ def _fp_render_ultimos(uid):
         else:
             monto_html = f"<span style='color:#e5e7eb;'>-{fp_dinero(m['monto'])}</span>"
             titulo = m["concepto"] or m["categoria"] or "Gasto"
-        sub = " · ".join(x for x in (f"{m['fecha']:%d/%m}", m["categoria"] if m["tipo"] != "AJUSTE" else "",
-                                     _FP_FUENTES.get(m["fuente"], m["fuente"])) if x)
+        sub = html_seguro(" · ".join(x for x in (f"{m['fecha']:%d/%m}", m["categoria"] if m["tipo"] != "AJUSTE" else "",
+                                                 _FP_FUENTES.get(m["fuente"], m["fuente"])) if x))
         c1, c2 = st.columns([6, 1])
-        c1.markdown(f"<div class='fp-fila notranslate' translate='no'><div><div style='color:#e5e7eb;'>{titulo}</div>"
+        c1.markdown(f"<div class='fp-fila notranslate' translate='no'><div><div style='color:#e5e7eb;'>{html_seguro(titulo)}</div>"
                     f"<div class='fp-fila-sub'>{sub}</div></div><div>{monto_html}</div></div>", unsafe_allow_html=True)
         if c2.button("Quitar", key=f"fp_quitar_{m['movimiento_id']}", help="Lo descarta de tus números (no se borra del historial)."):
             fp_descartar(uid, m["movimiento_id"])
@@ -1301,7 +1354,7 @@ def _fp_render_proximos(uid, dl, hoy):
         es_ingreso = e["tipo_movimiento"] == "INGRESO"
         color = "#34d399" if es_ingreso else "#e5e7eb"
         signo = "+" if es_ingreso else "-"
-        filas += (f"<div class='fp-fila'><div><div style='color:#e5e7eb;'>{e['nombre']}</div>"
+        filas += (f"<div class='fp-fila'><div><div style='color:#e5e7eb;'>{html_seguro(e['nombre'])}</div>"
                   f"<div class='fp-fila-sub'>{_FP_DIAS[e['fecha'].weekday()][:3]} {e['fecha']:%d/%m}</div></div>"
                   f"<div style='color:{color};'>{signo}{fp_dinero(e['monto'])}</div></div>")
     st.markdown(f"<div class='pos-box notranslate' translate='no'>{filas}</div>", unsafe_allow_html=True)
@@ -1326,7 +1379,7 @@ def _fp_render_bolsas(uid):
             barra = (f"<div style='width:100%; height:6px; background:#111827; border-radius:3px; margin-top:6px;'>"
                      f"<div style='width:{avance:.1f}%; height:100%; background:rgba(212,175,55,0.7); border-radius:3px;'></div></div>")
         html += (f"<div class='fp-fila' style='display:block;'><div style='display:flex; justify-content:space-between;'>"
-                 f"<span style='color:#e5e7eb;'>{b['nombre']}</span><span style='color:#d4af37;'>{fp_dinero(aporte)}</span></div>"
+                 f"<span style='color:#e5e7eb;'>{html_seguro(b['nombre'])}</span><span style='color:#d4af37;'>{fp_dinero(aporte)}</span></div>"
                  f"<div class='fp-fila-sub'>{detalle}</div>{barra}</div>")
     st.markdown(f"<div class='pos-box notranslate' translate='no'>{html}</div>", unsafe_allow_html=True)
 
@@ -1694,6 +1747,7 @@ def render_diversificacion_senior(corr_matrix):
 
 
 # --- 4. ANILLOS DIARIOS & HEALTH SCORE (Tu dinero hoy) ------------------------
+@lectura_cacheada(ttl=60)
 def fp_actividad_registro(uid, hoy):
     """(días con al menos un registro en los últimos 7, ¿registró hoy?). Lee fp_financial_ledger (mismo esquema del bot)."""
     filas = _fp_consulta(
@@ -1955,83 +2009,73 @@ if st.session_state["user_id"] is None:
     st.markdown("""
     <style>
     [data-testid="stAppViewContainer"], .stApp {
-        background:
-            radial-gradient(1200px 600px at 12% 18%, rgba(212, 175, 55, 0.06), transparent 60%),
-            radial-gradient(900px 500px at 88% 90%, rgba(122, 162, 214, 0.04), transparent 60%),
-            var(--ap-bg) !important;
+        background: linear-gradient(rgba(2, 5, 10, 0.75), rgba(2, 5, 10, 0.95)), 
+                    url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
+        background-size: cover !important;
     }
-    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
-    .block-container { padding-top: 8vh !important; max-width: 1180px !important; }
+    
+    .portada-title {
+        font-family: 'Montserrat', sans-serif;
+        font-weight: 200;
+        font-size: clamp(2.5rem, 8vw, 4.5rem); 
+        letter-spacing: 0.15em;
+        text-align: left;
+        line-height: 1.1;
+        margin-bottom: 5px;
+        background: linear-gradient(to right, #bf953f 0%, #fcf6ba 25%, #b38728 50%, #fbf5b7 75%, #aa771c 100%);
+        background-size: 200% auto;
+        color: #000;
+        background-clip: text;
+        text-fill-color: transparent;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: shine 6s linear infinite;
+    }
+    @keyframes shine { to { background-position: 200% center; } }
 
-    .login-brand { padding: 4vh 2vw 0 0; }
-    .login-mark { display: inline-flex; align-items: center; gap: 10px; font-family: var(--ap-font-sans); font-size: 0.72rem !important; font-weight: 600;
-                  letter-spacing: 3px; text-transform: uppercase; color: var(--ap-gold); margin: 0 0 28px 0; }
-    .login-mark::before { content: ""; width: 26px; height: 1px; background: var(--ap-gold); }
-    .login-title { font-family: var(--ap-font-serif); font-weight: 400; color: #ffffff; font-size: clamp(2.4rem, 5vw, 3.6rem);
-                   line-height: 1.05; letter-spacing: -0.5px; margin: 0 0 18px 0; padding: 0; }
-    .login-title em { color: var(--ap-gold); font-style: italic; }
-    .login-lede { font-family: var(--ap-font-sans); color: var(--ap-text-muted); font-size: 1rem !important; line-height: 1.6; max-width: 440px; margin: 0 0 36px 0; }
-    .login-pillars { display: flex; gap: 28px; flex-wrap: wrap; padding-top: 22px; border-top: 1px solid var(--ap-border); max-width: 480px; }
-    .login-pillar span { display: block; font-size: 0.62rem; letter-spacing: 2px; text-transform: uppercase; color: var(--ap-text-faint); margin-bottom: 4px; }
-    .login-pillar b { font-family: var(--ap-font-sans); font-weight: 500; color: var(--ap-text); font-size: 0.9rem; }
-
-    .login-card-head { margin: 0 0 4px 0; }
-    .login-card-head p { margin: 0; }
-    .login-card-eyebrow { font-size: 0.66rem !important; font-weight: 600; letter-spacing: 2.4px; text-transform: uppercase; color: var(--ap-text-faint); }
-    .login-card-title { font-family: var(--ap-font-serif); font-size: 1.6rem !important; line-height: 1.2; color: #ffffff; font-style: italic; margin-top: 4px !important; }
+    .portada-subtitle { font-family: 'Playfair Display', serif; font-style: italic; color: #8b949e; text-align: left; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 40px; margin-top: 10px; }
 
     [data-testid="stForm"] {
-        background: var(--ap-surface) !important; border: 1px solid var(--ap-border) !important; border-radius: var(--ap-radius) !important;
-        padding: 2.2rem 2rem 1.8rem 2rem !important; box-shadow: 0 24px 60px rgba(0,0,0,0.45) !important; margin-top: 6vh;
+        background: rgba(9, 23, 46, 0.2) !important; border: 1px solid rgba(191, 149, 63, 0.25) !important; border-radius: 16px !important;
+        backdrop-filter: blur(15px) !important; -webkit-backdrop-filter: blur(15px) !important; padding: 3rem 2.5rem !important;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important; margin-top: 20px;
     }
-    [data-testid="stForm"] label p { font-size: 0.68rem !important; letter-spacing: 1.8px; text-transform: uppercase; color: var(--ap-text-muted) !important; font-weight: 500 !important; }
-    [data-testid="stForm"] input { background: var(--ap-bg) !important; color: #ffffff !important; font-family: var(--ap-font-sans) !important; font-size: 0.95rem !important; }
-    [data-testid="stForm"] input::placeholder { color: var(--ap-text-faint) !important; }
-    [data-testid="stFormSubmitButton"] button { background: var(--ap-gold) !important; color: #05070c !important; border: 1px solid var(--ap-gold) !important;
-        font-weight: 600 !important; letter-spacing: 2px !important; text-transform: uppercase !important; padding: 0.7rem !important; margin-top: 14px !important; transition: background 0.2s ease !important; }
-    [data-testid="stFormSubmitButton"] button:hover { background: #e2c575 !important; border-color: #e2c575 !important; }
-    .login-foot { font-size: 0.72rem !important; color: var(--ap-text-faint); text-align: center; margin-top: 14px; letter-spacing: 0.4px; }
-
-    @media (max-width: 800px) {
-        .block-container { padding-top: 3vh !important; }
-        .login-brand { padding: 0; }
-        .login-lede { margin-bottom: 20px; }
-        [data-testid="stForm"] { margin-top: 12px; }
-    }
+    [data-testid="stForm"] label { display: none !important; }
+    [data-testid="stForm"] input { background: transparent !important; border: none !important; border-bottom: 1px solid #1f2937 !important; color: #ffffff !important; border-radius: 0 !important; font-family: 'Inter', sans-serif !important; font-weight: 300 !important; padding: 1rem 0 !important; font-size: 0.9rem !important; transition: border-color 0.5s ease !important; text-align: center; }
+    [data-testid="stForm"] input::placeholder { color: #8b949e !important; text-align: center; letter-spacing: 2px; text-transform: uppercase;}
+    [data-testid="stForm"] input:focus { border-bottom: 1px solid #d4af37 !important; box-shadow: none !important; outline: none !important; background: transparent !important; }
+    [data-testid="stFormSubmitButton"] button { background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important; color: #02050a !important; font-weight: 600 !important; font-family: 'Montserrat', sans-serif !important; letter-spacing: 3px !important; text-transform: uppercase !important; border: none !important; border-radius: 8px !important; padding: 0.8rem !important; margin-top: 40px !important; width: 100%; transition: all 0.3s ease !important;}
+    [data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important; }
+    
+    @media (max-width: 800px) { .portada-title { text-align: center; letter-spacing: 0.1em; } .portada-subtitle { text-align: center; } }
     </style>
     """, unsafe_allow_html=True)
 
-    c_izq, c_der = st.columns([1.15, 0.85], gap="large")
+    c_izq, c_der = st.columns([1.3, 1])
     with c_izq:
-        st.markdown(
-            "<div class='login-brand notranslate' translate='no'>"
-            "<p class='login-mark'>CMA Wealth · Private Client Terminal</p>"
-            "<h1 class='login-title'>Tu patrimonio,<br><em>con criterio institucional.</em></h1>"
-            "<p class='login-lede'>Posiciones, caja, riesgo y rendimiento en una sola mesa de trabajo. "
-            "Exclusivo y personalizado para ti.</p>"
-            "<div class='login-pillars'>"
-            "<div class='login-pillar'><span>Portafolio</span><b>Consolidado</b></div>"
-            "<div class='login-pillar'><span>Riesgo</span><b>Cuantitativo</b></div>"
-            "<div class='login-pillar'><span>Acceso</span><b>Privado</b></div>"
-            "</div></div>", unsafe_allow_html=True)
+        st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+        st.markdown("<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='portada-subtitle'>Exclusivo y personalizado para ti.</p>", unsafe_allow_html=True)
     with c_der:
+        st.markdown("<br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
-            st.markdown("<div class='login-card-head notranslate' translate='no'><p class='login-card-eyebrow'>Acceso de clientes</p>"
-                        "<p class='login-card-title'>Iniciar sesión</p></div>", unsafe_allow_html=True)
-            usr = st.text_input("Usuario", placeholder="Identificador")
-            pwd = st.text_input("Contraseña", type="password", placeholder="Clave de acceso")
-            if st.form_submit_button("Acceder", use_container_width=True):
+            usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
+            pwd = st.text_input("Contraseña", type="password", placeholder="CLAVE DE ACCESO")
+            if st.form_submit_button("ACCEDER", use_container_width=True):
                 uid_ok = autenticar(db_conn, usr, pwd)
                 if uid_ok: st.session_state["user_id"] = uid_ok; st.rerun()
                 else: st.error("Credenciales incorrectas.")
-        st.markdown("<p class='login-foot'>Sesión privada · Uso exclusivo de clientes</p>", unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
 # 5. GESTIÓN MULTI-CLIENTE Y SIDEBAR
 # ==========================================
 user_id = st.session_state["user_id"]
-all_users = read_df("SELECT user_id, username FROM users ORDER BY username")
+@lectura_cacheada(ttl=300)
+def listar_usuarios():
+    return read_df("SELECT user_id, username FROM users ORDER BY username")
+
+all_users = listar_usuarios()
 ES_ADMIN = es_admin(user_id)   # P0-B · rol leído de la base en cada rerun
 
 if ES_ADMIN:
@@ -2057,8 +2101,15 @@ if ES_ADMIN:
 else:
     active_client_id = user_id
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
-    st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {active_username}</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {html_seguro(active_username)}</h3>", unsafe_allow_html=True)
     ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=st.sidebar)   # botón en el menú lateral
+
+# Privacidad · Aislamiento de IA: las lecturas V5 y el Boletín CIO pertenecen a UN cliente. Si el gestor cambia
+# de cliente se descartan en esta misma ejecución, antes de pintar nada (no pueden filtrarse a otro perfil).
+if st.session_state.get("ia_cliente") != active_client_id:
+    for _clave_ia in ("ai_memory", "cio_report"):
+        st.session_state.pop(_clave_ia, None)
+    st.session_state["ia_cliente"] = active_client_id
 
 # 5.1 NAVEGACIÓN PRINCIPAL (Fase 3): "Tu dinero hoy" es el home; la Terminal sigue intacta.
 if "modo_pro_toggle" in st.session_state:
@@ -2131,6 +2182,7 @@ st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-seri
 _TX_COLS = ("id, user_id, timestamp, fecha, tipo_operacion, ticker, clase, plataforma, moneda, "
             "titulos, precio_unitario, comision, iva, tipo_cambio, total_mxn")
 
+@lectura_cacheada(ttl=60)
 def cargar_tablas_terminal(uid):
     tx = read_df(f"SELECT {_TX_COLS} FROM transactions WHERE user_id=%s ORDER BY fecha, timestamp", (uid,))
     caja = read_df("SELECT id, user_id, fecha, tipo, concepto, monto_mxn FROM cash_movements WHERE user_id=%s ORDER BY fecha, id", (uid,))
@@ -2332,24 +2384,25 @@ def _serie_cierre(data, symbol):
     except Exception:
         return pd.Series(dtype=float)
 
-@st.cache_data(ttl=300, max_entries=50)
-def get_prices_and_sparklines(tickers, fallback):
-    yf_tickers = []
-    if tickers:
-        for t in tickers:
-            if t == "BTC": yf_tickers.append("BTC-USD")
-            elif t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"]: yf_tickers.append(f"{t}.L")
-            else: yf_tickers.append(t)
-    
-    macro_tickers = ["USDMXN=X", "EURMXN=X", "GBPMXN=X", "^GSPC", "^NDX", "^DJI", "GC=F", "BTC-USD"]
-    download_list = list(set(yf_tickers + macro_tickers))
+_MACRO_TICKERS = ("USDMXN=X", "EURMXN=X", "GBPMXN=X", "^GSPC", "^NDX", "^DJI", "GC=F", "BTC-USD")
+
+@st.cache_data(ttl=300, max_entries=200, show_spinner=False)
+def _cierres_30d(simbolos):
+    """Cierres de 1 mes por símbolo de Yahoo (+ macro/FX). Solo datos de mercado: la caché se comparte entre
+    clientes sin exponer nada personal (el costo promedio de respaldo se aplica fuera, en get_prices_and_sparklines)."""
+    todos = list(dict.fromkeys(tuple(simbolos) + _MACRO_TICKERS))
     try:
-        data = yf.download(download_list, period="1mo", progress=False)
+        data = yf.download(todos, period="1mo", progress=False)
     except Exception:
         data = pd.DataFrame()
-    
+    return {sym: _serie_cierre(data, sym) for sym in todos}
+
+def get_prices_and_sparklines(tickers, fallback):
+    cierres = _cierres_30d(tuple(sorted({_yf_symbol(t) for t in (tickers or [])})))
+    vacia = pd.Series(dtype=float)
+
     def get_latest(symbol):
-        s = _serie_cierre(data, symbol)
+        s = cierres.get(symbol, vacia)
         try: return float(s.iloc[-1]) if not s.empty else 0.0
         except Exception: return 0.0
 
@@ -2360,27 +2413,26 @@ def get_prices_and_sparklines(tickers, fallback):
     if _gbp: fx_mxn.update({"GBP": _gbp, "GBp": _gbp / 100.0, "GBX": _gbp / 100.0})   # LSE cotiza a veces en peniques
     if _eur: fx_mxn["EUR"] = _eur
     pxs_mxn, pxs_usd, spark_data = {}, {}, {}
-    if tickers:
-        for t in tickers:
-            try:
-                yf_symbol = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
-                raw_usd_series = _serie_cierre(data, yf_symbol)
-                if raw_usd_series.empty:
-                    pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
-                    continue
-                factor_mxn = _factor_a_mxn(moneda_cotizacion(yf_symbol), fx_mxn, usd)   # Sprint 0 · FX
-                hist_prices_mxn = (raw_usd_series * factor_mxn).tolist()
-                spark_data[t] = hist_prices_mxn
-                pxs_usd[t] = float(raw_usd_series.iloc[-1]) * factor_mxn / usd
-                pxs_mxn[t] = hist_prices_mxn[-1] if hist_prices_mxn else fallback.get(t, 0.0)
-            except Exception: 
+    for t in (tickers or []):
+        try:
+            yf_symbol = _yf_symbol(t)
+            raw_usd_series = cierres.get(yf_symbol, vacia)
+            if raw_usd_series.empty:
                 pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
-                
+                continue
+            factor_mxn = _factor_a_mxn(moneda_cotizacion(yf_symbol), fx_mxn, usd)   # Sprint 0 · FX
+            hist_prices_mxn = (raw_usd_series * factor_mxn).tolist()
+            spark_data[t] = hist_prices_mxn
+            pxs_usd[t] = float(raw_usd_series.iloc[-1]) * factor_mxn / usd
+            pxs_mxn[t] = hist_prices_mxn[-1] if hist_prices_mxn else fallback.get(t, 0.0)
+        except Exception:
+            pxs_mxn[t] = fallback.get(t, 0.0); pxs_usd[t] = 0.0; spark_data[t] = [fallback.get(t, 0.0)] * 10
+
     macro_data = {}
-    for m in macro_tickers:
+    for m in _MACRO_TICKERS:
         macro_data[m] = {"price": 0.0, "p": 0.0, "pct": 0.0}
         try:
-            s = _serie_cierre(data, m)
+            s = cierres.get(m, vacia)
             if not s.empty:
                 last_px = float(s.iloc[-1])
                 pct = 0.0
@@ -2390,7 +2442,7 @@ def get_prices_and_sparklines(tickers, fallback):
                     macro_data[m] = {"price": last_px, "p": last_px, "pct": pct if np.isfinite(pct) else 0.0}
         except Exception:
             pass
-        
+
     return pxs_mxn, pxs_usd, spark_data, usd, macro_data
 
 _YIELD_MAXIMO = 0.25   # >25 % anual se descarta como dato corrupto (no infla el Salario Invisible)
@@ -2518,6 +2570,7 @@ total_portafolio = total_activos + liquidez_mxn
 pnl_global = total_activos - total_invertido
 retorno_global = (pnl_global / total_invertido) * 100 if total_invertido > 0 else 0.0
 summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100 if not summary.empty else 0.0
+xirr_valor = xirr_portafolio(cash_df, total_portafolio)   # una sola vez: Modo Pro, "¿Le ganaste a CETES?" y Carta CMA
 
 # ==========================================
 # 7. TICKER TAPE (BUCLE INFINITO CSS - MACRO ONLY)
@@ -2729,7 +2782,7 @@ with col_g1:
 with col_g2:
     st.markdown(
         f"<div class='metric-card notranslate' translate='no' style='display:flex; flex-direction:column; justify-content:center;'>"
-        f"<div class='metric-title' style='color:#d4af37 !important;'>{meta_nombre}</div>"
+        f"<div class='metric-title' style='color:#d4af37 !important;'>{html_seguro(meta_nombre)}</div>"
         f"<div class='metric-value' style='font-size:1.1rem;'>Hito: ${meta_actual:,.2f} MXN</div>"
         f"<div style='width:100%;background-color:#1f2937;border-radius:12px;height:22px;position:relative; overflow:hidden; border: 1px solid #374151; margin-top:8px;'>"
         f"<div style='width:{progreso_meta}%;background:linear-gradient(90deg, #d4af37 0%, #fcf6ba 100%);height:100%; border-radius:12px;'></div>"
@@ -2761,18 +2814,7 @@ if st.session_state.get("modo_pro_toggle", False):
     with perf_col1:
         total_friccion = (tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum() if not tx_df.empty else 0.0
         def calc_xirr():
-            if cash_df.empty: return "N/A"
-            try:
-                cfs = []
-                for _, r in cash_df.iterrows():
-                    monto = abs(float(r["monto_mxn"]))
-                    if r["tipo"] == "DEPOSITO": cfs.append((pd.to_datetime(r["fecha"]), -monto))
-                    elif r["tipo"] == "RETIRO": cfs.append((pd.to_datetime(r["fecha"]), monto))
-                if not cfs: return "N/A"
-                cfs.append((pd.to_datetime(datetime.today().date()), float(total_portafolio)))
-                tasa = resolver_xirr(cfs)
-                return f"{tasa * 100:+.2f}%" if tasa is not None else "N/A"
-            except: return "N/A"
+            return f"{xirr_valor * 100:+.2f}%" if xirr_valor is not None else "N/A"
 
         tt_fric = "Total pagado al bróker en comisiones operativas e impuestos (IVA)."
         tt_xirr = "Tasa Interna de Retorno. Mide el rendimiento real anualizado tomando en cuenta las fechas exactas de tus depósitos y retiros."
@@ -2784,7 +2826,7 @@ if st.session_state.get("modo_pro_toggle", False):
                 f"<div class='pos-box notranslate' translate='no'>"
                 f"<p class='metric-title'>{'Tu rendimiento real al año' if MODO_SENIOR else 'Rentabilidad Ponderada (XIRR)'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p>"
                 f"<p style='color:#00f0ff;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>{calc_xirr()}</p></div>"
-                f"{html_le_ganaste_a_cetes(xirr_portafolio(cash_df, total_portafolio), tasa_libre_riesgo(), MODO_SENIOR)}"   # Sprint 2
+                f"{html_le_ganaste_a_cetes(xirr_valor, tasa_libre_riesgo(), MODO_SENIOR)}"   # Sprint 2
             ),
             unsafe_allow_html=True
         )
@@ -2984,7 +3026,7 @@ if st.session_state.get("modo_pro_toggle", False):
                         unsafe_allow_html=True
                     )
                     if asset_news:
-                        news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{n['link']}' target='_blank' style='color:#d4af37; text-decoration:none;'>{n['title']}</a></li>" for n in asset_news])
+                        news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{html_seguro(n['link'])}' target='_blank' rel='noopener noreferrer' style='color:#d4af37; text-decoration:none;'>{html_seguro(n['title'])}</a></li>" for n in asset_news if str(n['link']).startswith(('https://', 'http://'))])
                         st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
                     
                 with col_stats:
@@ -3297,7 +3339,7 @@ render_carta_cma({
     "nombre": active_username, "patrimonio": float(total_portafolio), "capital": float(total_invertido),
     "pnl": float(pnl_global), "retorno_pct": float(retorno_global), "liquidez": float(liquidez_mxn),
     "salario_invisible": float(salario_invisible), "proyeccion_5a": float(proyeccion_5a),
-    "xirr": xirr_portafolio(cash_df, total_portafolio), "rf": tasa_libre_riesgo(),
+    "xirr": xirr_valor, "rf": tasa_libre_riesgo(),
     "posiciones": posiciones_para_carta(summary), "riesgo": metricas_riesgo,
     "racha": racha_actual, "rango": rango_txt, "frecuencia": user_freq,
     "meta_nombre": meta_nombre, "meta_monto": float(meta_actual), "progreso_meta": float(progreso_meta),
