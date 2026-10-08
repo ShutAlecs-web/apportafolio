@@ -14,13 +14,15 @@ import json
 import re
 import io
 import time
+import threading
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 import html as _html
 import logging
 import random
 import unicodedata
 import numpy as np
-from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro
+from seguridad_auth import autenticar, verificar_usuario, hash_password_seguro, bcrypt_disponible
 from telegram_deeplink import render_boton_telegram
 from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
@@ -276,12 +278,24 @@ def _factor_a_mxn(moneda, fx_mxn, usd):
     return fx_mxn.get(moneda, usd)
 
 # --- POOL DE CONEXIONES (PostgreSQL / Neon) ---------------------------------
+# Un solo pool por proceso, compartido por todas las sesiones. Una conexión rota se descarta
+# individualmente (el pool abre otra bajo demanda); nunca se cierra el pool completo.
+POOL_MIN_CONEXIONES = 2
+POOL_MAX_CONEXIONES = 10
+POOL_ESPERA_S = 15   # tiempo máximo que una sesión espera un cupo libre antes de rendirse
+
 @st.cache_resource
 def get_pool():
     return pg_pool.ThreadedConnectionPool(
-        2, 10, dsn=st.secrets["DATABASE_URL"],
+        POOL_MIN_CONEXIONES, POOL_MAX_CONEXIONES, dsn=st.secrets["DATABASE_URL"],
         connect_timeout=10, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5
     )
+
+@st.cache_resource
+def _cupos_pool():
+    """ThreadedConnectionPool lanza PoolError al agotarse en vez de esperar; el semáforo hace que
+    las sesiones hagan fila (con tope de tiempo) en lugar de fallar al instante."""
+    return threading.BoundedSemaphore(POOL_MAX_CONEXIONES)
 
 def _conexion_valida(conn):
     try:
@@ -293,41 +307,53 @@ def _conexion_valida(conn):
     except Exception:
         return False
 
+def _descartar_conexion(pool, conn):
+    """Cierra SOLO esta conexión y libera su lugar en el pool; las de otras sesiones no se tocan."""
+    try: pool.putconn(conn, close=True)
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+
 @contextmanager
 def db_conn(autocommit=False):
-    pool = get_pool()
-    conn = None
-    for intento in range(3):
-        try:
-            candidata = pool.getconn()
-        except pg_pool.PoolError:
-            time.sleep(0.3)
-            continue
-        if _conexion_valida(candidata):
-            conn = candidata
-            break
-        try: pool.putconn(candidata, close=True)
-        except Exception: pass
-        if intento == 1:
-            try: pool.closeall()
-            except Exception: pass
-            get_pool.clear()
-            pool = get_pool()
-    if conn is None:
-        raise RuntimeError("No fue posible obtener una conexión válida a la base de datos.")
+    cupos = _cupos_pool()
+    if not cupos.acquire(timeout=POOL_ESPERA_S):
+        raise RuntimeError("La base de datos está saturada: no hubo una conexión libre a tiempo.")
     try:
-        conn.autocommit = autocommit
-        yield conn
-        if not autocommit: conn.commit()
-    except Exception:
-        try: conn.rollback()
-        except Exception: pass
-        raise
+        pool = get_pool()
+        conn = None
+        for _ in range(3):
+            try:
+                candidata = pool.getconn()
+            except pg_pool.PoolError:
+                time.sleep(0.2)
+                continue
+            if _conexion_valida(candidata):
+                conn = candidata
+                break
+            _descartar_conexion(pool, candidata)   # rota: se cierra solo esta y se pide otra
+        if conn is None:
+            raise RuntimeError("No fue posible obtener una conexión válida a la base de datos.")
+        rota = False
+        try:
+            conn.autocommit = autocommit
+            yield conn
+            if not autocommit: conn.commit()
+        except Exception as e:
+            rota = isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError))
+            try: conn.rollback()
+            except Exception: rota = True
+            raise
+        finally:
+            try: conn.autocommit = False
+            except Exception: rota = True
+            if rota or conn.closed:
+                _descartar_conexion(pool, conn)
+            else:
+                try: pool.putconn(conn)
+                except Exception: pass
     finally:
-        try: conn.autocommit = False
-        except Exception: pass
-        try: pool.putconn(conn)
-        except Exception: pass
+        cupos.release()
 
 def read_df(sql, params=None):
     with db_conn() as conn:
@@ -348,6 +374,10 @@ def get_user_profile(uid):
 
 def hash_password(password: str) -> str: return hashlib.sha256(password.encode()).hexdigest()
 
+def dinero_exacto(valor, decimales=2):
+    """float/str/Decimal -> Decimal redondeado (half-up). str() evita arrastrar el error binario del float."""
+    return Decimal(str(valor)).quantize(Decimal(1).scaleb(-decimales), rounding=ROUND_HALF_UP)
+
 @st.cache_resource
 def init_db():
     # Sprint 0 · Seguridad: sin secreto de admin la app se detiene (antes caía en "clave_temporal_local").
@@ -357,12 +387,18 @@ def init_db():
         st.error("Configuración incompleta: define `admin_password` en .streamlit/secrets.toml "
                  "(o la variable de entorno CMA_ADMIN_PASSWORD). La app no arranca sin ella.")
         st.stop()
+    if not bcrypt_disponible():
+        st.error("Configuración incompleta: falta el paquete `bcrypt` (requirements.txt). "
+                 "La app no arranca sin hashing seguro de contraseñas.")
+        st.stop()
     with db_conn(autocommit=True) as conn:
         with conn.cursor() as cur:
+            # Precisión financiera: NUMERIC exacto (nunca REAL/float4). Escalas: títulos 8 (cripto fraccional),
+            # precios 6, comisiones/IVA 4 (moneda de cotización), tipo de cambio 6, montos MXN 2 (centavos).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT);
-                CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, user_id TEXT, timestamp TEXT, fecha TEXT, tipo_operacion TEXT, ticker TEXT, clase TEXT, plataforma TEXT, moneda TEXT, titulos REAL, precio_unitario REAL, comision REAL, iva REAL, tipo_cambio REAL, total_mxn REAL);
-                CREATE TABLE IF NOT EXISTS cash_movements (id TEXT PRIMARY KEY, user_id TEXT, fecha TEXT, tipo TEXT, concepto TEXT, monto_mxn REAL);
+                CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, user_id TEXT, timestamp TEXT, fecha TEXT, tipo_operacion TEXT, ticker TEXT, clase TEXT, plataforma TEXT, moneda TEXT, titulos NUMERIC(24,8), precio_unitario NUMERIC(20,6), comision NUMERIC(18,4), iva NUMERIC(18,4), tipo_cambio NUMERIC(12,6), total_mxn NUMERIC(18,2));
+                CREATE TABLE IF NOT EXISTS cash_movements (id TEXT PRIMARY KEY, user_id TEXT, fecha TEXT, tipo TEXT, concepto TEXT, monto_mxn NUMERIC(18,2));
             """)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dca_frequency TEXT DEFAULT 'MENSUAL'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS goal_name TEXT DEFAULT 'Libertad Financiera'")
@@ -2058,11 +2094,10 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
         if st.form_submit_button("Guardar Cambios", use_container_width=True):
             if not old_pwd: st.error("Ingresa tu clave actual.")
             else:
-                perfil_ok = False
-                with db_conn() as conn, conn.cursor() as cur:
-                    cur.execute("SELECT password_hash FROM users WHERE user_id=%s", (user_id,))
-                    fila_pwd = cur.fetchone()
-                    if fila_pwd and verificar_usuario(db_conn, user_id, old_pwd):
+                # La clave se verifica ANTES de abrir la conexión de escritura: nunca se retienen dos conexiones a la vez.
+                perfil_ok = verificar_usuario(db_conn, user_id, old_pwd)
+                if perfil_ok:
+                    with db_conn() as conn, conn.cursor() as cur:
                         if new_pwd and len(new_pwd) >= 6:
                             cur.execute("UPDATE users SET password_hash=%s, dca_frequency=%s, goal_name=%s WHERE user_id=%s", (hash_password_seguro(new_pwd), f_dca, f_goal, user_id))
                         else:
@@ -2166,15 +2201,18 @@ if active_client_id == "USR-001":
             if st.form_submit_button("Ejecutar Operación", use_container_width=True):
                 f_ticker_clean = sanitize_ticker(f_ticker)
                 if f_ticker_clean and f_titulos > 0 and f_precio > 0:
-                    tc_efectivo = 1.0 if f_moneda == "MXN" else float(f_tc)   # Sprint 0 · FX: lo que ya está en MXN no se reconvierte
-                    valor_bruto_mxn = (f_titulos * f_precio) * tc_efectivo
-                    costos_mxn = (f_comision + f_iva) * tc_efectivo
-                    if f_tipo_op == "COMPRA": total_mxn = valor_bruto_mxn + costos_mxn; imp_caja = -total_mxn; t_fin = f_titulos
-                    else: total_mxn = valor_bruto_mxn - costos_mxn; imp_caja = total_mxn; t_fin = -f_titulos
-                        
+                    # Precisión financiera: aritmética en Decimal con las mismas escalas que las columnas NUMERIC.
+                    d_titulos, d_precio = dinero_exacto(f_titulos, 8), dinero_exacto(f_precio, 6)
+                    d_comision, d_iva = dinero_exacto(f_comision, 4), dinero_exacto(f_iva, 4)
+                    tc_efectivo = Decimal(1) if f_moneda == "MXN" else dinero_exacto(f_tc, 6)   # Sprint 0 · FX: lo que ya está en MXN no se reconvierte
+                    valor_bruto_mxn = d_titulos * d_precio * tc_efectivo
+                    costos_mxn = (d_comision + d_iva) * tc_efectivo
+                    if f_tipo_op == "COMPRA": total_mxn = dinero_exacto(valor_bruto_mxn + costos_mxn); imp_caja = -total_mxn; t_fin = d_titulos
+                    else: total_mxn = dinero_exacto(valor_bruto_mxn - costos_mxn); imp_caja = total_mxn; t_fin = -d_titulos
+
                     ts_id = datetime.now().timestamp()
                     with db_conn() as conn, conn.cursor() as cur:
-                        cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, f_precio, f_comision, f_iva, tc_efectivo, total_mxn))
+                        cur.execute("INSERT INTO transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"TXN-{ts_id}", active_client_id, datetime.now().isoformat(), str(f_fecha), f_tipo_op, f_ticker_clean, f_clase, f_plat, f_moneda, t_fin, d_precio, d_comision, d_iva, tc_efectivo, total_mxn))
                         cur.execute("INSERT INTO cash_movements VALUES (%s,%s,%s,%s,%s,%s)", (f"CMV-{ts_id}", active_client_id, str(f_fecha), f_tipo_op, f"{f_tipo_op} {f_ticker_clean}", imp_caja))
                     st.session_state["val_ticker"] = ""; st.session_state["val_price"] = 0.0; st.session_state["val_moneda"] = ""
                     st.success(f"{f_tipo_op} de {f_ticker_clean} registrada exitosamente."); st.rerun()
@@ -2190,7 +2228,8 @@ def destino_registro_caja(es_admin_flag, uid_sesion, uid_elegido, usuarios_valid
 
 def registrar_movimiento_caja(uid_destino, tipo, concepto, monto, fecha):
     """DEPOSITO positivo / RETIRO negativo: misma convención de signo que el resto de la Terminal."""
-    monto_final = abs(float(monto)) if tipo == "DEPOSITO" else -abs(float(monto))
+    monto_abs = abs(dinero_exacto(monto))   # NUMERIC(18,2): centavos exactos
+    monto_final = monto_abs if tipo == "DEPOSITO" else -monto_abs
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO cash_movements (id, user_id, fecha, tipo, concepto, monto_mxn) VALUES (%s, %s, %s, %s, %s, %s)",
                     (f"CMV-TES-{uuid.uuid4().hex}", uid_destino, str(fecha), tipo, concepto, monto_final))

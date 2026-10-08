@@ -1,9 +1,11 @@
 """
 seguridad_auth.py — Adapter de credenciales (SHA-256 legado -> bcrypt).
-Norma 2: NO modifica ni reemplaza hash_password() de app.py; convive con ella.
-Si `bcrypt` no está instalado, todo degrada a SHA-256 y el login sigue funcionando.
+Todo hash NUEVO es bcrypt con sal aleatoria (cost 12); si `bcrypt` no está instalado se lanza
+error en lugar de degradar a SHA-256. Los hashes SHA-256 heredados solo se aceptan para iniciar
+sesión y se reescriben a bcrypt en ese mismo login.
 """
 import hashlib
+import hmac
 import re
 
 try:
@@ -13,6 +15,7 @@ except Exception:
 
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _BCRYPT_PREFIJOS = ("$2a$", "$2b$", "$2y$")
+BCRYPT_ROUNDS = 12
 
 
 def _sha256(password: str) -> str:
@@ -24,11 +27,18 @@ def _bytes72(password: str) -> bytes:
     return password.encode("utf-8")[:72]
 
 
+def bcrypt_disponible() -> bool:
+    return _bcrypt is not None
+
+
 def hash_password_seguro(password: str) -> str:
-    """Nuevo estándar de hashing. Degrada a SHA-256 si bcrypt no está disponible."""
+    """Único hashing permitido: bcrypt con sal. Nunca degrada a un hash débil."""
     if _bcrypt is None:
-        return _sha256(password)
-    return _bcrypt.hashpw(_bytes72(password), _bcrypt.gensalt(rounds=12)).decode("utf-8")
+        raise RuntimeError("bcrypt no está instalado: agrega `bcrypt` a requirements.txt. "
+                           "No se generan hashes débiles.")
+    if not password:
+        raise ValueError("La contraseña no puede estar vacía.")
+    return _bcrypt.hashpw(_bytes72(password), _bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode("utf-8")
 
 
 def es_bcrypt(h) -> bool:
@@ -50,7 +60,7 @@ def verificar_password(password: str, stored_hash) -> tuple:
             return False, False
 
     if _SHA256_RE.match(stored):
-        ok = _sha256(password) == stored.lower()
+        ok = hmac.compare_digest(_sha256(password), stored.lower())   # comparación en tiempo constante
         return ok, bool(ok and _bcrypt is not None)
 
     return False, False
