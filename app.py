@@ -1419,9 +1419,6 @@ def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
     with col_der:
         _fp_render_proximos(uid, dl, hoy)
         _fp_render_bolsas(uid)
-    st.markdown("<p style='font-size:0.75rem; color:#64748b; font-style:italic; text-align:center; margin-top:24px;'>"
-                "Los montos son estimaciones con base en lo que registras y tus pagos programados; "
-                "no sustituyen el saldo de tu banco.</p>", unsafe_allow_html=True)
 
 
 # ==========================================
@@ -2008,14 +2005,27 @@ if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if st.session_state["user_id"] is None:
     st.markdown("""
     <style>
+    /* Fondo dinámico en CSS puro: halos radiales (oro, esmeralda, burdeos) + retícula geométrica casi imperceptible */
     [data-testid="stAppViewContainer"], .stApp {
-        background: linear-gradient(rgba(2, 5, 10, 0.75), rgba(2, 5, 10, 0.95)), 
-                    url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=3000&auto=format&fit=crop') no-repeat center center fixed !important;
-        background-size: cover !important;
+        background:
+            radial-gradient(900px 520px at 14% 22%, rgba(212, 175, 55, 0.09), transparent 62%),
+            radial-gradient(760px 480px at 86% 78%, rgba(52, 211, 153, 0.05), transparent 60%),
+            radial-gradient(640px 420px at 70% 8%, rgba(128, 24, 48, 0.10), transparent 60%),
+            repeating-linear-gradient(45deg, rgba(212, 175, 55, 0.018) 0 1px, transparent 1px 56px),
+            repeating-linear-gradient(-45deg, rgba(212, 175, 55, 0.018) 0 1px, transparent 1px 56px),
+            #04060b !important;
+        background-size: 140% 140%, 140% 140%, 140% 140%, auto, auto, auto !important;
+        animation: ap-deriva 26s ease-in-out infinite alternate;
     }
+    @keyframes ap-deriva {
+        from { background-position: 0% 0%, 100% 100%, 60% 0%, 0 0, 0 0, 0 0; }
+        to   { background-position: 12% 10%, 88% 90%, 48% 12%, 0 0, 0 0, 0 0; }
+    }
+    /* Entrada suave de abajo hacia arriba */
+    @keyframes ap-sube { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
     
     .portada-title {
-        font-family: 'Montserrat', sans-serif;
+        font-family: 'Montserrat', sans-serif !important;   /* el headingFont de config.toml (Playfair) no aplica a la portada */
         font-weight: 200;
         font-size: clamp(2.5rem, 8vw, 4.5rem); 
         letter-spacing: 0.15em;
@@ -2029,25 +2039,38 @@ if st.session_state["user_id"] is None:
         text-fill-color: transparent;
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        animation: shine 6s linear infinite;
+        animation: ap-sube 0.9s ease-out both, shine 6s linear 0.9s infinite;
     }
     @keyframes shine { to { background-position: 200% center; } }
 
-    .portada-subtitle { font-family: 'Playfair Display', serif; font-style: italic; color: #8b949e; text-align: left; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 40px; margin-top: 10px; }
+    .portada-subtitle { font-family: 'Playfair Display', serif; font-style: italic; color: #8b949e; text-align: left; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 40px; margin-top: 10px; animation: ap-sube 0.9s ease-out 0.15s both; }
 
+    /* Efecto cristal: negro semitransparente, desenfoque y filo dorado solo arriba/izquierda */
     [data-testid="stForm"] {
-        background: rgba(9, 23, 46, 0.2) !important; border: 1px solid rgba(191, 149, 63, 0.25) !important; border-radius: 16px !important;
-        backdrop-filter: blur(15px) !important; -webkit-backdrop-filter: blur(15px) !important; padding: 3rem 2.5rem !important;
+        background: rgba(0, 0, 0, 0.45) !important; border: none !important;
+        border-top: 1px solid rgba(212, 175, 55, 0.2) !important; border-left: 1px solid rgba(212, 175, 55, 0.2) !important;
+        border-radius: 16px !important;
+        backdrop-filter: blur(10px) !important; -webkit-backdrop-filter: blur(10px) !important; padding: 3rem 2.5rem !important;
         box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important; margin-top: 20px;
+        animation: ap-sube 0.9s ease-out 0.3s both;
     }
     [data-testid="stForm"] label { display: none !important; }
     [data-testid="stForm"] input { background: transparent !important; border: none !important; border-bottom: 1px solid #1f2937 !important; color: #ffffff !important; border-radius: 0 !important; font-family: 'Inter', sans-serif !important; font-weight: 300 !important; padding: 1rem 0 !important; font-size: 0.9rem !important; transition: border-color 0.5s ease !important; text-align: center; }
     [data-testid="stForm"] input::placeholder { color: #8b949e !important; text-align: center; letter-spacing: 2px; text-transform: uppercase;}
     [data-testid="stForm"] input:focus { border-bottom: 1px solid #d4af37 !important; box-shadow: none !important; outline: none !important; background: transparent !important; }
+    /* Microinteracción: resplandor dorado sutil al enfocar un campo */
+    [data-testid="stForm"] [data-baseweb="input"] { transition: box-shadow 0.35s ease, border-color 0.35s ease !important; }
+    [data-testid="stForm"] [data-baseweb="input"]:focus-within {
+        border-color: rgba(212, 175, 55, 0.55) !important;
+        box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.25), 0 0 18px rgba(212, 175, 55, 0.18) !important;
+    }
     [data-testid="stFormSubmitButton"] button { background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important; color: #02050a !important; font-weight: 600 !important; font-family: 'Montserrat', sans-serif !important; letter-spacing: 3px !important; text-transform: uppercase !important; border: none !important; border-radius: 8px !important; padding: 0.8rem !important; margin-top: 40px !important; width: 100%; transition: all 0.3s ease !important;}
     [data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important; }
     
     @media (max-width: 800px) { .portada-title { text-align: center; letter-spacing: 0.1em; } .portada-subtitle { text-align: center; } }
+    @media (prefers-reduced-motion: reduce) {
+        [data-testid="stAppViewContainer"], .stApp, .portada-title, .portada-subtitle, [data-testid="stForm"] { animation: none !important; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2065,6 +2088,103 @@ if st.session_state["user_id"] is None:
                 uid_ok = autenticar(db_conn, usr, pwd)
                 if uid_ok: st.session_state["user_id"] = uid_ok; st.rerun()
                 else: st.error("Credenciales incorrectas.")
+    st.stop()
+
+# ==========================================
+# 4.1 PUERTA LEGAL · TÉRMINOS Y CONDICIONES (post-login)
+# ==========================================
+# Concentra en un solo punto de aceptación los avisos que antes vivían debajo de cada componente
+# (lectura V5, Boletín CIO, rebalanceo, ganancias no realizadas y estimaciones de "Tu dinero hoy").
+# Se acepta una vez por sesión; "Cerrar Sesión" limpia el estado y la vuelve a pedir en el siguiente acceso.
+TERMINOS_Y_CONDICIONES = [
+    ("Naturaleza de la plataforma",
+     "APortafolio es una herramienta de visualización, registro y análisis cuantitativo de su patrimonio. No es una "
+     "casa de bolsa, no custodia valores ni ejecuta órdenes: las operaciones que usted captura son registros de "
+     "control interno."),
+    ("Lecturas de inteligencia artificial",
+     "La Lectura Cuantitativa V5, el Boletín del CIO Virtual y los diagnósticos automáticos se generan con modelos "
+     "de inteligencia artificial y datos públicos de mercado. Son de carácter general, informativo y educativo: no "
+     "constituyen asesoría en inversiones, recomendación personalizada ni oferta o invitación a comprar, vender o "
+     "mantener valores, y no evalúan su perfil de riesgo, horizonte, situación financiera ni fiscal."),
+    ("Escenarios y simulaciones",
+     "Las categorías de señal, el simulador de rebalanceo, las proyecciones y los escenarios de estrés son cálculos "
+     "aritméticos con supuestos explícitos; no consideran costos, impuestos ni su perfil de inversionista y no "
+     "garantizan resultados."),
+    ("Datos y valuaciones",
+     "Las cotizaciones provienen de fuentes públicas (Yahoo Finance) y pueden contener errores o retrasos. Las "
+     "ganancias y pérdidas mostradas son no realizadas hasta que se vende la posición. Los montos de finanzas "
+     "personales son estimaciones con base en lo que usted registra y no sustituyen el saldo de su banco. Las fechas "
+     "de reportes, dividendos y eventos macroeconómicos deben verificarse en fuentes oficiales."),
+    ("Riesgo",
+     "Invertir implica riesgo, incluida la pérdida total del capital. Los rendimientos pasados no garantizan "
+     "resultados futuros. Toda decisión de inversión es responsabilidad exclusiva del usuario, quien puede consultar "
+     "a un asesor en inversiones autorizado."),
+]
+
+TYC_VERSION = "2026-10"   # cambiar al modificar los términos: obliga a todos a aceptarlos de nuevo
+
+@st.cache_resource
+def _asegurar_tabla_tyc():
+    """Bitácora de aceptaciones (una fila por usuario y versión). Idempotente; corre una vez por proceso."""
+    with db_conn(autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tyc_aceptaciones (
+                user_id     TEXT        NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                version     TEXT        NOT NULL,
+                aceptado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, version)
+            )""")
+    return True
+
+@lectura_cacheada(ttl=300)
+def tyc_aceptados_en_bd(uid, version):
+    _asegurar_tabla_tyc()
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM tyc_aceptaciones WHERE user_id = %s AND version = %s", (uid, version))
+        return cur.fetchone() is not None
+
+def registrar_aceptacion_tyc(uid, version):
+    """Guarda la aceptación con la hora del servidor de Neon (CURRENT_TIMESTAMP). Si ya existía, conserva la original."""
+    _asegurar_tabla_tyc()
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO tyc_aceptaciones (user_id, version, aceptado_en) VALUES (%s, %s, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT (user_id, version) DO NOTHING", (uid, version))
+    tyc_aceptados_en_bd.clear()   # explícito: el próximo acceso lee la aceptación recién guardada
+
+# Quien ya aceptó esta versión en Neon entra directo al dashboard (se consulta una vez por sesión).
+if not st.session_state.get("tyc_aceptados", False):
+    try:
+        st.session_state["tyc_aceptados"] = tyc_aceptados_en_bd(st.session_state["user_id"], TYC_VERSION)
+    except Exception:
+        log_app.exception("T&C · no se pudo consultar la bitácora de aceptación")
+
+if not st.session_state.get("tyc_aceptados", False):
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+    .block-container { max-width: 860px !important; padding-top: 6vh !important; }
+    .tyc-eyebrow { font-size: 0.7rem; letter-spacing: 2.6px; text-transform: uppercase; color: var(--ap-gold); margin: 0 0 6px 0; }
+    .tyc-titulo { font-family: var(--ap-font-serif); font-style: italic; font-size: 2rem; color: #ffffff; margin: 0 0 18px 0; }
+    .tyc-seccion { color: var(--ap-text); font-weight: 600; font-size: 0.9rem; margin: 16px 0 4px 0; }
+    .tyc-texto { color: var(--ap-text-muted); font-size: 0.88rem; line-height: 1.65; margin: 0; }
+    </style>
+    """, unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown("<p class='tyc-eyebrow notranslate' translate='no'>CMA Wealth · Aviso legal</p>"
+                    "<p class='tyc-titulo notranslate' translate='no'>Términos y condiciones de uso</p>"
+                    + "".join(f"<p class='tyc-seccion'>{html_seguro(t)}</p><p class='tyc-texto'>{html_seguro(d)}</p>"
+                              for t, d in TERMINOS_Y_CONDICIONES)
+                    + "<p class='tyc-texto' style='margin-top:18px;'>Al continuar, usted declara haber leído y aceptado "
+                      "estos términos.</p>", unsafe_allow_html=True)
+        if st.button("Aceptar y Entrar a la Terminal", type="primary", use_container_width=True, key="tyc_aceptar"):
+            try:
+                registrar_aceptacion_tyc(st.session_state["user_id"], TYC_VERSION)
+            except Exception:
+                log_app.exception("T&C · no se pudo registrar la aceptación")
+                st.error("No pudimos registrar tu aceptación. Intenta de nuevo en un momento.")   # sin registro no se entra
+            else:
+                st.session_state["tyc_aceptados"] = True
+                st.rerun()
     st.stop()
 
 # ==========================================
@@ -3021,7 +3141,6 @@ if st.session_state.get("modo_pro_toggle", False):
                             f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
                             f"<p class='metric-title'>Síntesis Macroeconómica</p>"
                             f"<p style='color:#e5e7eb;font-size:0.9rem;margin:0;line-height:1.6;'><i>\"{html_seguro(ai_macro)}\"</i></p></div></div>"
-                            f"{html_aviso_legal(AVISO_LECTURA_V5)}"   # P0-B · deslinde legal pegado a la lectura del activo
                         ),
                         unsafe_allow_html=True
                     )
@@ -3190,7 +3309,7 @@ if st.session_state.get("modo_pro_toggle", False):
                     
         if st.session_state.get("cio_report"):
             st.markdown(f"<div class='pos-box'><p style='color:#e5e7eb; font-size:0.95rem; line-height:1.6; white-space:pre-wrap;'>{html_seguro(st.session_state['cio_report'])}</p>"
-                        f"{html_aviso_legal(AVISO_BOLETIN_CIO)}</div>", unsafe_allow_html=True)   # P0-B · texto de IA escapado + deslinde
+                        f"</div>", unsafe_allow_html=True)   # texto de IA escapado
 
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA · Simulador de Rebalanceo</h4>", unsafe_allow_html=True)
@@ -3218,10 +3337,7 @@ if st.session_state.get("modo_pro_toggle", False):
                 f"<div class='pos-row'><span class='pos-label'>ETF (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['ETF']:,.2f}</span></div>"
                 f"<div class='pos-row'><span class='pos-label'>Acciones (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['Acción']:,.2f}</span></div>"
                 f"<div class='pos-row'><span class='pos-label'>Cripto (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['Cripto']:,.2f}</span></div>"
-                f"<p style='color:#8b949e;font-size:0.75rem;margin:8px 0 0 0;'>Cálculo aritmético: reparte el capital hipotético en proporción "
-                f"a la brecha entre la asignación observada y los porcentajes que tú definiste. No considera precios, riesgo, "
-                f"costos ni tu perfil de inversionista.</p></div>"
-                f"{html_aviso_legal(AVISO_LECTURA_V5)}", unsafe_allow_html=True)
+                f"</div>", unsafe_allow_html=True)
         else: st.warning("Los objetivos deben sumar 100%.")
 
 else:
@@ -3263,7 +3379,6 @@ else:
                 unsafe_allow_html=True
             )
             
-        st.markdown("<p style='font-size:0.75rem; color:#64748b; font-style:italic; text-align:center; margin-top:10px;'>* Nota legal: Las ganancias o pérdidas de tus activos son <b>NO REALIZADAS</b>. No has ganado ni perdido este dinero realmente hasta que decidas vender. Es solo una radiografía de hoy.</p>", unsafe_allow_html=True)
         
         st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; text-align:center;' class='notranslate' translate='no'>Radiografía Visual de tu Dinero</h4>", unsafe_allow_html=True)
         st.markdown("<p style='color:#64748b;font-size:0.8rem;text-align:center;'>Haz clic en el centro o en las categorías para navegar por tu portafolio.</p>", unsafe_allow_html=True)
