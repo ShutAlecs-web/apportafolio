@@ -556,6 +556,8 @@ def html_aviso_legal(texto, margen_sup=12):
             f"color:#8b949e; font-size:0.72rem; line-height:1.5;'>{_html.escape(texto)}</div>")
 
 ASSET_CLASS = {"ISAC": "ETF", "XNAS": "ETF", "XDWH": "ETF", "EIMI": "ETF", "NUCL": "ETF", "GOOGL": "Acción", "MELI": "Acción", "NOW": "Acción", "ASML": "Acción", "NVO": "Acción", "MA": "Acción", "V": "Acción", "BTC": "Cripto"}
+# Clase capturada en "Registrar Operación" -> clase de asignación (la que usan Smart DCA, sunburst y Carta CMA).
+CLASE_FORMULARIO_A_ASIGNACION = {"ACCION": "Acción", "ACCIÓN": "Acción", "ETF": "ETF", "CRIPTO": "Cripto", "FIBRA/REIT": "FIBRA/REIT"}
 ASSET_SECTOR = {"ISAC": "Renta Variable Global", "XNAS": "Tecnología (Índice)", "XDWH": "Salud Global", "EIMI": "Mercados Emergentes", "NUCL": "Energía/Utilities", "GOOGL": "Servicios de Comunicación", "MELI": "Comercio Electrónico", "NOW": "Software B2B", "ASML": "Semiconductores", "NVO": "Biotecnología / Salud", "MA": "Servicios Financieros", "V": "Servicios Financieros", "BTC": "Criptoactivos"}
 
 # ==========================================
@@ -1850,6 +1852,12 @@ def _siguientes_acciones_carta(ctx):
                               f"por encima del umbral de referencia de 20%. En este escenario, la variación de un solo "
                               f"activo tiene un peso relevante en el resultado total.")
             break
+    for a in ctx.get("asignacion") or []:
+        if a.get("parametro") is not None and abs(a.get("desviacion", 0)) >= 5:
+            lado = "por encima" if a["desviacion"] > 0 else "por debajo"
+            escenarios.append(f"Asignación: la clase {_html.escape(a['clase'])} pesa {a['peso_invertido']:.1f}% de lo invertido, "
+                              f"{abs(a['desviacion']):.1f} puntos {lado} de su parámetro de {a['parametro']:.0f}%.")
+            break
     if patrimonio > 0 and ctx["liquidez"] / patrimonio > 0.20:
         escenarios.append(f"Liquidez: {ctx['liquidez'] / patrimonio * 100:.0f}% del patrimonio se mantiene en efectivo. "
                           f"Este parámetro reduce la volatilidad del conjunto y, a la vez, la parte expuesta a rendimientos de mercado.")
@@ -1861,16 +1869,26 @@ def _siguientes_acciones_carta(ctx):
         escenarios.append("Disciplina: no se registran aportaciones en el periodo actual. En la proyección a 5 años, "
                           "el supuesto de aportación periódica es el parámetro de mayor sensibilidad.")
     if not escenarios:
-        escenarios.append("Sin alertas cuantitativas: la concentración, la liquidez y la disciplina de aportación se "
-                          "ubican dentro de los umbrales de referencia utilizados en este reporte.")
-    return escenarios[:3]
+        escenarios.append("Sin alertas cuantitativas: la concentración, la asignación, la liquidez y la disciplina de "
+                          "aportación se ubican dentro de los umbrales de referencia utilizados en este reporte.")
+    return escenarios[:4]
+
+
+SELLO_SVG = ('<svg width="54" height="54" viewBox="0 0 54 54" aria-hidden="true" style="flex-shrink:0;">'
+             '<circle cx="27" cy="27" r="25.5" fill="none" stroke="#b8962e" stroke-width="1"/>'
+             '<circle cx="27" cy="27" r="21.5" fill="none" stroke="#b8962e" stroke-width="0.6"/>'
+             '<text x="27" y="31.5" text-anchor="middle" font-family="Playfair Display, Georgia, serif" '
+             'font-size="12.5" letter-spacing="1.5" fill="#8a6d1f">CMA</text></svg>')
 
 
 def generar_carta_cma(ctx):
     """Carta de banca privada en HTML autocontenido. Se imprime a PDF desde el navegador (Ctrl+P > Guardar como PDF).
-    Alternativa (requiere agregar 'weasyprint' a requirements.txt): weasyprint.HTML(string=html).write_pdf()."""
+    Alternativa (requiere agregar 'weasyprint' a requirements.txt): weasyprint.HTML(string=html).write_pdf().
+    Las claves nuevas del ctx son opcionales (ctx.get): si faltan, su sección simplemente no se imprime."""
     e = lambda x: _html.escape(str(x if x is not None else ""))
     m = lambda v: f"${float(v or 0):,.2f}"
+    ms = lambda v: f"{'+' if float(v or 0) >= 0 else '-'}${abs(float(v or 0)):,.2f}"
+    cls = lambda v: "pos" if float(v or 0) >= 0 else "neg"
     hoy = hoy_mx()
     fecha_txt = f"Ciudad de México, {fp_fecha_larga(hoy).lower()} de {hoy.year}"
     xirr, rf = ctx["xirr"], ctx["rf"]
@@ -1882,24 +1900,98 @@ def generar_carta_cma(ctx):
     else:
         cetes_txt = (f"Su rendimiento real anualizado (XIRR) es de {xirr * 100:+.2f}%, por debajo de la tasa libre de "
                      f"riesgo de {rf * 100:.2f}% ({(xirr - rf) * 100:+.2f} puntos).")
+
+    # --- Composición detallada ---
+    def _tit(v):
+        return f"{float(v or 0):.8f}".rstrip("0").rstrip(".") or "0"
     filas_pos = "".join(
-        f"<tr><td>{e(p['ticker'])}</td><td>{e(p['clase'])}</td><td class='n'>{m(p['valor'])}</td>"
-        f"<td class='n'>{p['peso']:.1f}%</td><td class='n {'pos' if p['retorno'] >= 0 else 'neg'}'>{p['retorno']:+.2f}%</td></tr>"
-        for p in ctx["posiciones"]) or "<tr><td colspan='5'>Sin posiciones abiertas.</td></tr>"
+        f"<tr><td><b>{e(p['ticker'])}</b></td><td>{e(p['clase'])}</td><td class='n'>{_tit(p.get('titulos'))}</td>"
+        f"<td class='n'>{m(p.get('costo_promedio'))}</td><td class='n'>{m(p['valor'])}</td>"
+        f"<td class='n {cls(p.get('pnl'))}'>{ms(p.get('pnl'))}</td>"
+        f"<td class='n {cls(p['retorno'])}'>{p['retorno']:+.2f}%</td><td class='n'>{p['peso']:.1f}%</td></tr>"
+        for p in ctx["posiciones"]) or "<tr><td colspan='8'>Sin posiciones abiertas.</td></tr>"
+
+    # --- Asignación por clase vs parámetros ---
+    bloque_asig = ""
+    asig = ctx.get("asignacion") or []
+    if asig:
+        filas_asig = ""
+        for a in asig:
+            tiene_param = a.get("parametro") is not None
+            txt_param = f"{a['parametro']:.0f}%" if tiene_param else "—"
+            txt_desv = f"{a['desviacion']:+.1f} pp" if tiene_param else "—"
+            filas_asig += (f"<tr><td>{e(a['clase'])}</td><td class='n'>{m(a['valor'])}</td><td class='n'>{a['peso_patrimonio']:.1f}%</td>"
+                           f"<td class='n'>{a['peso_invertido']:.1f}%</td><td class='n'>{txt_param}</td><td class='n'>{txt_desv}</td></tr>")
+        filas_asig += (f"<tr><td>Liquidez (efectivo)</td><td class='n'>{m(ctx['liquidez'])}</td>"
+                       f"<td class='n'>{(ctx['liquidez'] / ctx['patrimonio'] * 100) if ctx['patrimonio'] else 0:.1f}%</td>"
+                       f"<td class='n'>—</td><td class='n'>—</td><td class='n'>—</td></tr>")
+        bloque_asig = ("<h2>Asignación por clase de activo</h2>"
+                       "<table><tr><th>Clase</th><th class='n'>Valor MXN</th><th class='n'>% patrimonio</th>"
+                       "<th class='n'>% invertido</th><th class='n'>Parámetro</th><th class='n'>Desviación</th></tr>"
+                       f"{filas_asig}</table><p class='nota'>Los parámetros son los definidos en el Simulador de Rebalanceo de la "
+                       "Terminal. La desviación compara el peso sobre lo invertido contra el parámetro, en puntos porcentuales.</p>")
+
+    # --- Contribución ---
+    bloque_contrib = ""
+    if len(ctx["posiciones"]) >= 2:
+        ordenadas = sorted(ctx["posiciones"], key=lambda p: p.get("pnl", 0))
+        peor, mejor = ordenadas[0], ordenadas[-1]
+        bloque_contrib = (
+            "<h2>Contribución al resultado</h2><table class='kpi'>"
+            f"<tr><td>Mayor contribución</td><td class='n'><b>{e(mejor['ticker'])}</b> · "
+            f"<span class='{cls(mejor.get('pnl'))}'>{ms(mejor.get('pnl'))} ({mejor['retorno']:+.2f}%)</span></td></tr>"
+            f"<tr><td>Menor contribución</td><td class='n'><b>{e(peor['ticker'])}</b> · "
+            f"<span class='{cls(peor.get('pnl'))}'>{ms(peor.get('pnl'))} ({peor['retorno']:+.2f}%)</span></td></tr></table>")
+
+    # --- Riesgo ---
     r = ctx.get("riesgo") or {}
     bloque_riesgo = ""
     if r:
+        beta = float(r.get("beta", 0) or 0)
+        estres = ctx["patrimonio"] * (-0.20 * beta)
         bloque_riesgo = (
             "<h2>Perfil de riesgo (últimos 12 meses)</h2><table class='kpi'>"
-            f"<tr><td>Sensibilidad al mercado (beta vs S&amp;P 500)</td><td class='n'>{r.get('beta', 0):.2f}</td></tr>"
+            f"<tr><td>Sensibilidad al mercado (beta vs S&amp;P 500)</td><td class='n'>{beta:.2f}</td></tr>"
             f"<tr><td>Rendimiento ajustado por riesgo (Sharpe)</td><td class='n'>{r.get('sharpe', 0):.2f}</td></tr>"
+            f"<tr><td>Volatilidad anualizada</td><td class='n'>{r.get('vol_anual', 0) * 100:.1f}%</td></tr>"
             f"<tr><td>Caída máxima desde un punto alto</td><td class='n'>{r.get('max_dd', 0):.1f}%</td></tr>"
             f"<tr><td>Pérdida diaria que solo se supera 1 de cada 20 días (VaR 95%)</td><td class='n'>{m(r.get('var_95_mxn', 0))}</td></tr>"
+            f"<tr><td>Escenario de estrés: S&amp;P 500 −20% (impacto estimado por beta)</td><td class='n neg'>{ms(estres)}</td></tr>"
             "</table>")
+
+    # --- Flujo de caja acumulado ---
+    bloque_flujos = ""
+    f = ctx.get("flujos") or {}
+    if f:
+        filas_f = "".join(f"<tr><td>{e(k)}</td><td class='n'>{m(v)}</td></tr>" for k, v in f.items() if v)
+        if filas_f:
+            bloque_flujos = f"<h2>Flujo de caja acumulado</h2><table class='kpi'>{filas_f}</table>"
+
+    # --- Actividad reciente ---
+    bloque_actividad = ""
+    act = ctx.get("actividad") or []
+    if act:
+        filas_act = "".join(
+            f"<tr><td>{e(a['fecha'])}</td><td>{e(a['tipo'])}</td><td><b>{e(a['ticker'])}</b></td>"
+            f"<td class='n'>{_tit(a['titulos'])}</td><td class='n'>{a['tc']:.4f}</td><td class='n'>{m(a['total'])}</td></tr>"
+            for a in act)
+        bloque_actividad = ("<h2>Operaciones recientes</h2><table><tr><th>Fecha</th><th>Tipo</th><th>Activo</th>"
+                            "<th class='n'>Títulos</th><th class='n'>T.C.</th><th class='n'>Total MXN</th></tr>"
+                            f"{filas_act}</table>")
+
     bloque_cio = (f"<h2>Boletín del CIO Virtual (informativo)</h2><div class='cio'>{e(ctx['cio'])}</div>"
                   f"<p class='legal' style='margin-top:8px;'>{e(AVISO_BOLETIN_CIO)}</p>" if ctx.get("cio") else "")
     acciones = "".join(f"<li>{a}</li>" for a in _siguientes_acciones_carta(ctx))
-    color_pnl = "pos" if ctx["pnl"] >= 0 else "neg"
+    color_pnl = cls(ctx["pnl"])
+    capital = float(ctx["capital"] or 0)
+    costo_pos = ctx.get("costo_posiciones")
+    valor_pos = ctx.get("valor_posiciones")
+    fila_opt = lambda etiqueta, valor: (f"<tr><td>{etiqueta}</td><td class='n'>{m(valor)}</td></tr>" if valor is not None else "")
+    tc_ref = ctx.get("usd_mxn")
+    # Folio: huella corta del estado reportado (cliente, fecha y cifras). Si cambia un número, cambia el folio.
+    _huella = f"{ctx['nombre']}|{hoy}|{ctx['patrimonio']:.2f}|{capital:.2f}|{ctx['pnl']:.2f}|{len(ctx['posiciones'])}"
+    folio = f"CMA-{hoy:%Y%m%d}-{hashlib.sha256(_huella.encode()).hexdigest()[:6].upper()}"
+    tc_txt = f" (USD/MXN de referencia al corte: {float(tc_ref):.4f})" if tc_ref else ""
     return f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CMA Financial Letter · {e(ctx['nombre'])}</title>
@@ -1919,37 +2011,72 @@ th {{ font-size:8pt; letter-spacing:2px; text-transform:uppercase; color:#8a7a4a
 .n {{ text-align:right; font-variant-numeric:tabular-nums; }}
 .pos {{ color:#047857; }} .neg {{ color:#6b7280; }}
 .kpi td:first-child {{ color:#4b5563; }}
+.nota {{ color:#6b7280; font-size:9pt; }}
+.sello {{ margin:34px 0 0 0; padding:22px 24px; background:#f7f3e8; border:1px solid #e3d7b5; border-top:2px solid #b8962e; page-break-inside:avoid; }}
+.sello-cab {{ display:flex; align-items:center; gap:14px; }}
+.sello-ojo {{ margin:0; color:#8a7a4a; font-size:8pt; letter-spacing:3px; text-transform:uppercase; }}
+.sello-tit {{ margin:2px 0 0 0; font-family:'Playfair Display', Georgia, serif; font-style:italic; color:#8a6d1f; font-size:14pt; }}
+.sello-lead {{ margin:14px 0 6px 0; color:#4b5563; font-size:10pt; }}
+.sello-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:4px 26px; }}
+.sello-grid div {{ padding:9px 0; border-bottom:1px solid #eadfc4; font-size:9pt; color:#4b5563; line-height:1.5; }}
+.sello-grid b {{ display:block; color:#1f2937; font-weight:600; font-size:9.5pt; margin-bottom:2px; }}
+.sello-folio {{ margin:14px 0 0 0; text-align:right; color:#8a7a4a; font-size:8pt; letter-spacing:1.5px; }}
+@media (max-width:640px) {{ .sello-grid {{ grid-template-columns:1fr; }} }}
 .cio {{ white-space:pre-wrap; background:#f7f3e8; padding:14px 16px; border-left:2px solid #b8962e; font-size:9.5pt; }}
 ul {{ padding-left:18px; }} li {{ margin-bottom:6px; }}
 .firma {{ margin-top:34px; }} .firma b {{ font-family:'Playfair Display', Georgia, serif; font-weight:400; font-size:12pt; }}
 .legal {{ margin-top:30px; font-size:7.5pt; color:#9ca3af; border-top:1px solid #eee6d3; padding-top:10px; }}
-@media print {{ body {{ background:#ffffff; }} .hoja {{ border:none; padding:0; max-width:none; }} }}
+@media print {{ body {{ background:#ffffff; }} .hoja {{ border:none; padding:0; max-width:none; }} tr {{ page-break-inside:avoid; }} }}
 </style></head><body><div class="hoja">
 <div class="marca"><h1>CMA</h1><span>Private Wealth · Financial Letter</span></div>
 <p class="fecha">{e(fecha_txt)}</p>
 <p>Estimado(a) {e(ctx['nombre'])}:</p>
 <p>Le compartimos el estado de su patrimonio al día de hoy. Su patrimonio total asciende a <b>{m(ctx['patrimonio'])}</b>,
-construido con <b>{m(ctx['capital'])}</b> de capital aportado. El resultado no realizado de sus inversiones es de
-<b class="{color_pnl}">{m(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</b>.</p>
+construido con <b>{m(capital)}</b> de capital aportado. El resultado no realizado de sus inversiones es de
+<b class="{color_pnl}">{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</b>.</p>
 <h2>Resumen patrimonial</h2>
 <table class="kpi">
-<tr><td>Patrimonio total</td><td class="n">{m(ctx['patrimonio'])}</td></tr>
-<tr><td>Capital aportado</td><td class="n">{m(ctx['capital'])}</td></tr>
+<tr><td>Patrimonio total</td><td class="n"><b>{m(ctx['patrimonio'])}</b></td></tr>
+{fila_opt("Valor de mercado de las posiciones", valor_pos)}
 <tr><td>Liquidez disponible</td><td class="n">{m(ctx['liquidez'])}</td></tr>
+<tr><td>Capital aportado (depósitos − retiros)</td><td class="n">{m(capital)}</td></tr>
+{fila_opt("Costo de las posiciones abiertas", costo_pos)}
+<tr><td>Resultado no realizado</td><td class="n {color_pnl}">{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</td></tr>
+{fila_opt("Fricción acumulada (comisiones e IVA)", ctx.get('friccion'))}
 <tr><td>Ingreso pasivo estimado por dividendos (anual)</td><td class="n">{m(ctx['salario_invisible'])}</td></tr>
 <tr><td>Proyección a 5 años (supuesto de 10% anual)</td><td class="n">{m(ctx['proyeccion_5a'])}</td></tr>
 </table>
 <h2>¿Le ganamos a CETES?</h2>
 <p>{e(cetes_txt)}</p>
+{bloque_asig}
 <h2>Composición del portafolio</h2>
-<table><tr><th>Activo</th><th>Clase</th><th class="n">Valor MXN</th><th class="n">Peso</th><th class="n">Rendimiento</th></tr>{filas_pos}</table>
+<table><tr><th>Activo</th><th>Clase</th><th class="n">Títulos</th><th class="n">Costo prom.</th><th class="n">Valor MXN</th>
+<th class="n">Resultado</th><th class="n">Rend.</th><th class="n">Peso</th></tr>{filas_pos}</table>
+{bloque_contrib}
 {bloque_riesgo}
+{bloque_flujos}
+{bloque_actividad}
 <h2>Disciplina y metas</h2>
-<p>Racha de aportaciones: <b>{ctx['racha']}</b> periodo(s) seguidos con frecuencia {e(str(ctx['frecuencia']).lower())} (nivel {e(ctx['rango'])}).
+<p>Aportaciones consecutivas: <b>{ctx['racha']}</b> periodo(s) con frecuencia {e(str(ctx['frecuencia']).lower())}.
 Meta «{e(ctx['meta_nombre'])}»: hito de {m(ctx['meta_monto'])}, avance de {ctx['progreso_meta']:.1f}%; faltan {m(ctx['faltante'])}.</p>
 <h2>Escenarios observados</h2>
 <ul>{acciones}</ul>
 {bloque_cio}
+<div class="sello">
+<div class="sello-cab">{SELLO_SVG}<div><p class="sello-ojo">Estándar CMA</p>
+<p class="sello-tit">Nuestro compromiso con su patrimonio</p></div></div>
+<p class="sello-lead">Cada cifra de esta carta se construye con el mismo cuidado con el que usted construyó su patrimonio.
+Estos son los principios que respaldan cada número que lee.</p>
+<div class="sello-grid">
+<div><b>Precisión al centavo</b>Su costo se calcula con el tipo de cambio que usted realmente pagó en cada operación, con comisiones e impuestos incluidos.</div>
+<div><b>Valuación transparente</b>Cada posición se valúa con precios de cierre de mercado y el tipo de cambio del día{tc_txt}. Las ganancias se presentan como no realizadas hasta la venta.</div>
+<div><b>Rendimiento real</b>Su tasa anual (XIRR) considera la fecha exacta de cada depósito y retiro, y se contrasta contra CETES como referencia libre de riesgo.</div>
+<div><b>Riesgo medido, no supuesto</b>Doce meses de datos diarios: sensibilidad al mercado, caída máxima y pérdida diaria de referencia (VaR 95%).</div>
+<div><b>Confidencialidad</b>Su información se resguarda en una base de datos privada con acceso protegido por credenciales cifradas. Solo usted y su gestor la consultan.</div>
+<div><b>Información, no promesas</b>Este documento es un registro fiel de su patrimonio. Toda proyección declara sus supuestos y ninguna cifra se presenta como garantía.</div>
+</div>
+<p class="sello-folio">Emitido el {hoy:%d/%m/%Y} · Folio {folio}</p>
+</div>
 <div class="firma"><p>Quedamos a sus órdenes para revisar cualquier punto.</p><p><b>CMA · Private Wealth</b><br>
 <span style="color:#6b7280;">Terminal APPortafolio</span></p></div>
 <p class="legal">Documento informativo generado automáticamente con datos registrados por el cliente y cotizaciones de mercado
@@ -1958,7 +2085,7 @@ y no constituyen una recomendación personalizada de inversión.<br><br>{e(AVISO
 </div></body></html>"""
 
 
-def posiciones_para_carta(summary, limite=12):
+def posiciones_para_carta(summary, limite=15):
     """Top de posiciones por valor, con números limpios (sin NaN) para la carta."""
     salida = []
     if summary is None or summary.empty:
@@ -1971,8 +2098,71 @@ def posiciones_para_carta(summary, limite=12):
             return 0.0
     for _, r in summary.sort_values("valor_actual", ascending=False).head(limite).iterrows():
         salida.append({"ticker": str(r["ticker"]), "clase": str(r.get("Clase", "") or ""), "valor": _n(r["valor_actual"]),
-                       "peso": _n(r.get("ponderacion_pct", 0)), "retorno": _n(r.get("retorno_pct", 0))})
+                       "peso": _n(r.get("ponderacion_pct", 0)), "retorno": _n(r.get("retorno_pct", 0)),
+                       "titulos": _n(r.get("titulos", 0)), "costo_promedio": _n(r.get("costo_promedio", 0)),
+                       "pnl": _n(r.get("pnl", 0))})
     return salida
+
+
+def asignacion_para_carta(summary, patrimonio, parametros):
+    """Valor y peso por clase (sobre patrimonio y sobre lo invertido) contra los parámetros del simulador."""
+    if summary is None or summary.empty:
+        return []
+    invertido = float(summary["valor_actual"].sum())
+    salida = []
+    for clase, valor in summary.groupby("Clase")["valor_actual"].sum().sort_values(ascending=False).items():
+        valor = float(valor)
+        peso_inv = valor / invertido * 100 if invertido > 0 else 0.0
+        param = parametros.get(clase)
+        salida.append({"clase": str(clase), "valor": valor,
+                       "peso_patrimonio": valor / patrimonio * 100 if patrimonio > 0 else 0.0,
+                       "peso_invertido": peso_inv, "parametro": param,
+                       "desviacion": (peso_inv - param) if param is not None else 0.0})
+    return salida
+
+
+def flujos_para_carta(cash_df):
+    """Totales acumulados por tipo de movimiento de caja (valores absolutos, en MXN)."""
+    if cash_df is None or cash_df.empty:
+        return {}
+    tot = cash_df.assign(m=cash_df["monto_mxn"].astype(float).abs()).groupby("tipo")["m"].sum()
+    etiquetas = [("DEPOSITO", "Depósitos"), ("RETIRO", "Retiros"), ("COMPRA", "Compras de activos"),
+                 ("VENTA", "Ventas de activos"), ("DIVIDENDO", "Dividendos cobrados")]
+    return {txt: float(tot.get(k, 0.0)) for k, txt in etiquetas}
+
+
+def actividad_para_carta(tx_df, limite=10):
+    if tx_df is None or tx_df.empty:
+        return []
+    recientes = tx_df.sort_values(["fecha", "timestamp"], ascending=False).head(limite)
+    return [{"fecha": str(r["fecha"]), "tipo": str(r["tipo_operacion"]), "ticker": str(r["ticker"]),
+             "titulos": abs(float(r["titulos"] or 0)), "tc": float(r["tipo_cambio"] or 1),
+             "total": float(r["total_mxn"] or 0)} for _, r in recientes.iterrows()]
+
+
+def metricas_riesgo_carta(summary, total_portafolio, rf):
+    """Mismas fórmulas del Módulo de Riesgo (Modo Pro), para que la carta incluya el perfil de riesgo aunque el Modo Pro
+    esté apagado. Los cierres de 1 año vienen de una caché de 24 h compartida. Si algo falla, devuelve {}."""
+    try:
+        if summary is None or summary.empty or total_portafolio <= 0:
+            return {}
+        returns_df, returns_mxn_df, betas = get_advanced_risk_metrics(summary["ticker"].tolist())
+        if returns_mxn_df.empty:
+            return {}
+        pesos = (summary.set_index("ticker")["ponderacion_pct"] / 100).to_dict()
+        beta = float(sum(pesos.get(t, 0) * betas.get(t, 1.0) for t in summary["ticker"]))
+        port = pd.Series(0.0, index=returns_mxn_df.index)
+        for t in returns_mxn_df.columns:
+            if t in pesos: port += returns_mxn_df[t] * pesos[t]
+        vol = float(port.std() * np.sqrt(252))
+        sharpe = (float(port.mean() * 252) - rf) / vol if vol > 0 else 0.0
+        var_95 = total_portafolio * abs(float(np.percentile(port, 5)))
+        acumulado = (1 + port).cumprod()
+        max_dd = float(((acumulado - acumulado.cummax()) / acumulado.cummax()).min() * 100)
+        return {"beta": beta, "sharpe": sharpe, "max_dd": max_dd, "var_95_mxn": var_95, "vol_anual": vol}
+    except Exception as ex:
+        log_app.warning("Carta CMA · riesgo no disponible: %s", ex)
+        return {}
 
 
 def render_carta_cma(ctx):
@@ -1982,6 +2172,8 @@ def render_carta_cma(ctx):
                 f"{svg_icon('award', color='#d4af37', size=18)}CMA Financial Letter</h4>", unsafe_allow_html=True)
     st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Tu carta ejecutiva de banca privada. Descárgala y "
                 "guárdala como PDF desde el navegador (Ctrl+P → Guardar como PDF).</p>", unsafe_allow_html=True)
+    if not ctx.get("cio"):
+        st.caption("El Boletín del CIO Virtual se agrega a la carta cuando lo generas en Modo Pro durante esta sesión.")
     try:
         carta = generar_carta_cma(ctx)
     except Exception as e:
@@ -1998,6 +2190,10 @@ def render_carta_cma(ctx):
 
 
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
+
+# Leyenda de la portada (informativa, sin prometer asesoría ni rendimientos: Norma 2).
+# Anteriores: "Exclusivo y personalizado para ti." · "Su patrimonio, analizado con rigor institucional."
+LEYENDA_PORTADA = "Claridad para decidir. Rigor para construir patrimonio."
 
 # ==========================================
 # 4. PORTADA · ACCESO DE CLIENTES (DOS COLUMNAS, RESPONSIVA)
@@ -2024,11 +2220,19 @@ if st.session_state["user_id"] is None:
     /* Entrada suave de abajo hacia arriba */
     @keyframes ap-sube { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
     
+    /* Tamaño fluido del título. Montserrat es ancha: "APPORTAFOLIO" mide ~9.9em con el espaciado, así que el
+       mínimo anterior (2.5rem = 40px) pedía ~395px y en un celular de 360px se cortaba la última "O".
+       Ahora el tamaño se calcula contra el ancho real de la columna (cqi) y, si el navegador no lo soporta, contra la pantalla (vw). */
+    .portada-wrap { container-type: inline-size; width: 100%; }
     .portada-title {
         font-family: 'Montserrat', sans-serif !important;   /* el headingFont de config.toml (Playfair) no aplica a la portada */
         font-weight: 200;
-        font-size: clamp(2.5rem, 8vw, 4.5rem); 
+        font-size: clamp(1.5rem, 8.6vw, 4.5rem);
+        font-size: clamp(1.5rem, 9.6cqi, 4.5rem);
         letter-spacing: 0.15em;
+        padding-right: 0.15em;            /* el último espaciado queda dentro de la caja: el degradado ya no recorta la "O" */
+        white-space: nowrap;
+        overflow-wrap: normal;
         text-align: left;
         line-height: 1.1;
         margin-bottom: 5px;
@@ -2067,7 +2271,12 @@ if st.session_state["user_id"] is None:
     [data-testid="stFormSubmitButton"] button { background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important; color: #02050a !important; font-weight: 600 !important; font-family: 'Montserrat', sans-serif !important; letter-spacing: 3px !important; text-transform: uppercase !important; border: none !important; border-radius: 8px !important; padding: 0.8rem !important; margin-top: 40px !important; width: 100%; transition: all 0.3s ease !important;}
     [data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important; }
     
-    @media (max-width: 800px) { .portada-title { text-align: center; letter-spacing: 0.1em; } .portada-subtitle { text-align: center; } }
+    @media (max-width: 800px) {
+        .portada-title { text-align: center; letter-spacing: 0.1em; padding-right: 0.1em; }
+        .portada-subtitle { text-align: center; }
+        .portada-subtitle { font-size: 1rem; letter-spacing: 0.08em; margin-bottom: 18px; }
+        [data-testid="stForm"] { padding: 2rem 1.4rem !important; }
+    }
     @media (prefers-reduced-motion: reduce) {
         [data-testid="stAppViewContainer"], .stApp, .portada-title, .portada-subtitle, [data-testid="stForm"] { animation: none !important; }
     }
@@ -2077,8 +2286,10 @@ if st.session_state["user_id"] is None:
     c_izq, c_der = st.columns([1.3, 1])
     with c_izq:
         st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        st.markdown("<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='portada-subtitle'>Exclusivo y personalizado para ti.</p>", unsafe_allow_html=True)
+        st.markdown("<div class='portada-wrap notranslate' translate='no'>"
+                    "<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>"
+                    f"<p class='portada-subtitle'>{html_seguro(LEYENDA_PORTADA)}</p>"
+                    "</div>", unsafe_allow_html=True)
     with c_der:
         st.markdown("<br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
@@ -2201,7 +2412,12 @@ ES_ADMIN = es_admin(user_id)   # P0-B · rol leído de la base en cada rerun
 if ES_ADMIN:
     st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic; display:flex; align-items:center;'>{svg_icon('shield', color='#d4af37', size=18)}Panel de Gestor</h3>", unsafe_allow_html=True)
     client_dict = dict(zip(all_users["username"], all_users["user_id"]))
-    selected_client_name = st.sidebar.selectbox("Cliente Activo:", list(client_dict.keys()))
+    # Al iniciar sesión se abre la cartera propia del gestor (antes: el primer usuario en orden alfabético).
+    _nombres_clientes = list(client_dict.keys())
+    _ids_clientes = list(client_dict.values())
+    _idx_propio = _ids_clientes.index(user_id) if user_id in _ids_clientes else 0
+    selected_client_name = st.sidebar.selectbox("Cliente Activo:", _nombres_clientes, index=_idx_propio,
+                                                key=f"cliente_activo_{user_id}")
     active_client_id = client_dict[selected_client_name]
     active_username = selected_client_name 
     ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=st.sidebar)   # botón en el menú lateral
@@ -2330,7 +2546,9 @@ if not export_df.empty:
         except: st.download_button("Excel", data=clean_df.to_csv(index=False, sep=";").encode('latin1'), file_name=f"Portafolio_{active_username}_EXCEL.csv", mime="text/csv", use_container_width=True)
 else: st.sidebar.button("Sin datos", disabled=True, use_container_width=True)
 
-if active_client_id == "USR-001":
+# Modo Dios: el gestor registra operaciones en la cartera del cliente activo (antes solo en USR-001).
+# Alternativa (comportamiento previo): `if active_client_id == "USR-001":`
+if ES_ADMIN:
     st.sidebar.markdown("---")
     st.sidebar.markdown("<p style='font-size:0.8rem; color:#8b949e;'>1. Buscar activo y cotización</p>", unsafe_allow_html=True)
     col_b1, col_b2 = st.sidebar.columns([2, 1])
@@ -2355,20 +2573,35 @@ if active_client_id == "USR-001":
     val_p = float(st.session_state.get("val_price", 0.0))
     val_m = st.session_state.get("val_moneda", "")   # Sprint 0 · FX
 
+    # Tipo de cambio: se congela UNA vez por sesión. Antes el campo usaba value=live_usd_rate, que se refresca
+    # cada 5 min (ttl=300); al cambiar, Streamlit recreaba el widget y borraba el TC escrito a mano.
+    if "f_tc" not in st.session_state:
+        st.session_state["f_tc"] = round(float(live_usd_rate), 4)
+
+    def _tc_a_mercado():
+        st.session_state["f_tc"] = round(float(get_live_usd()), 4)
+
     with st.sidebar.expander("Registrar Operación", expanded=True):
+        st.caption(f"Se registrará en la cartera de: {active_username}")
+        st.button(f"Usar TC de mercado ({float(live_usd_rate):.4f})", on_click=_tc_a_mercado,
+                  key="btn_tc_mercado", use_container_width=True,
+                  help="Carga el USD/MXN de Yahoo Finance. Para que tu costo cuadre, escribe el TC real de tu conversión.")
         with st.form("form_nueva_compra"):
             f_tipo_op = st.selectbox("Tipo de Operación", ["COMPRA", "VENTA"])
             f_ticker = st.text_input("Activo (Ticker)", value=val_t)
             f_clase = st.selectbox("Clase de Activo", ["ACCION", "ETF", "FIBRA/REIT", "CRIPTO"])
-            f_plat = st.selectbox("Plataforma", ["GBM_SIC", "GBM_USA", "BINGX", "BITSO"])
+            f_plat = st.selectbox("Plataforma", ["GBM_SIC", "GBM_USA", "BINANCE", "BINGX", "BITSO"])
             f_moneda = st.selectbox("Moneda", ["MXN", "USD"], index=1 if val_m == "USD" else 0,
                                     help="Se detecta sola al validar el ticker. En MXN no se aplica tipo de cambio.")
-            f_titulos = st.number_input("Títulos / Fracción", min_value=0.00000, format="%.5f", step=0.01)
-            f_precio = st.number_input("Precio Unitario", min_value=0.0, value=val_p, format="%.2f", step=1.0)
-            f_comision = st.number_input("Comisión", min_value=0.0, format="%.2f")
-            f_iva = st.number_input("IVA", min_value=0.0, format="%.3f")
-            f_tc = st.number_input("Tipo de Cambio (Live)", min_value=1.0, value=live_usd_rate, format="%.4f")
-            f_fecha = st.date_input("Fecha", value=datetime.today())
+            # Escalas alineadas con las columnas NUMERIC: títulos 8 (cripto fraccional), precio 6, comisión/IVA 4.
+            f_titulos = st.number_input("Títulos / Fracción", min_value=0.0, format="%.8f", step=0.0001)
+            f_precio = st.number_input("Precio Unitario", min_value=0.0, value=val_p, format="%.4f", step=1.0)
+            f_comision = st.number_input("Comisión", min_value=0.0, format="%.4f", step=0.01,
+                                         help="En la moneda de la operación. Incluye comisiones de conversión si quieres verlas en Fricción Financiera.")
+            f_iva = st.number_input("IVA", min_value=0.0, format="%.4f", step=0.01)
+            f_tc = st.number_input("Tipo de Cambio", min_value=1.0, format="%.4f", step=0.0001, key="f_tc",
+                                   help="Pesos por dólar que realmente pagaste en tu conversión (no se reemplaza solo).")
+            f_fecha = st.date_input("Fecha", value=hoy_mx(), max_value=hoy_mx())   # fecha de CDMX, no la del servidor (UTC)
             
             if st.form_submit_button("Ejecutar Operación", use_container_width=True):
                 f_ticker_clean = sanitize_ticker(f_ticker)
@@ -2423,7 +2656,7 @@ with st.sidebar.expander("Registro de Movimientos (Depósitos / Retiros)", expan
         c_tipo_op = st.selectbox("Tipo de Movimiento", ["DEPOSITO", "RETIRO"])
         f_concepto = st.text_input("Concepto", placeholder="Ej: Fondeo DCA", max_chars=120)
         f_monto = st.number_input("Monto (MXN)", min_value=1.0, step=500.0)
-        f_dep_fecha = st.date_input("Fecha de Registro", value=datetime.today(), max_value=datetime.today())
+        f_dep_fecha = st.date_input("Fecha de Registro", value=hoy_mx(), max_value=hoy_mx())   # fecha de CDMX
         if st.form_submit_button("Registrar Movimiento", use_container_width=True):
             uid_destino = destino_registro_caja(ES_ADMIN, user_id, c_destino, usuarios_validos)
             if not uid_destino:
@@ -2661,7 +2894,11 @@ if not tx_df.empty:
     costos["costo_promedio"] = costos["total_invertido"] / costos["titulos_comprados"]
     summary = pd.merge(summary, costos[["ticker", "costo_promedio"]], on="ticker", how="left")
     summary["costo_total"] = summary["titulos"] * summary["costo_promedio"]
-    summary["Clase"] = summary["ticker"].map(lambda t: ASSET_CLASS.get(t, "Otro"))
+    # Clase: primero el mapa curado; si el ticker no está, la clase capturada en la operación (antes caía en "Otro"
+    # y el Smart DCA no lo contaba). El mapa sigue mandando para no alterar la clasificación actual.
+    _clase_capturada = (tx_df.sort_values("timestamp").groupby("ticker")["clase"].last()
+                        .map(lambda c: CLASE_FORMULARIO_A_ASIGNACION.get(str(c or "").upper().strip(), "Otro")).to_dict())
+    summary["Clase"] = summary["ticker"].map(lambda t: ASSET_CLASS.get(t, _clase_capturada.get(t, "Otro")))
     summary["Sector"] = summary["ticker"].map(lambda t: ASSET_SECTOR.get(t, "Desconocido"))
     
     fallback_dict = dict(zip(summary["ticker"], summary["costo_promedio"]))
@@ -2688,6 +2925,19 @@ else:
 
 total_portafolio = total_activos + liquidez_mxn
 pnl_global = total_activos - total_invertido
+
+# Capital aportado = depósitos − retiros (lo que de verdad salió de tu bolsillo). Antes la tarjeta "Dinero de tu
+# Bolsillo" mostraba total_invertido, que es el COSTO de las posiciones abiertas (sin efectivo): no cuadraba con el banco.
+def aportaciones_netas(df_caja):
+    if df_caja is None or df_caja.empty: return 0.0, False
+    flujos = df_caja[df_caja["tipo"].isin(["DEPOSITO", "RETIRO"])]
+    if flujos.empty: return 0.0, False
+    monto = flujos["monto_mxn"].astype(float).abs()
+    return float(np.where(flujos["tipo"] == "DEPOSITO", monto, -monto).sum()), True
+
+capital_aportado, hay_aportaciones = aportaciones_netas(cash_df)
+if not hay_aportaciones:
+    capital_aportado = total_invertido   # cliente sin depósitos registrados: se muestra el costo de sus posiciones
 retorno_global = (pnl_global / total_invertido) * 100 if total_invertido > 0 else 0.0
 summary["ponderacion_pct"] = (summary["valor_actual"] / total_portafolio) * 100 if not summary.empty else 0.0
 xirr_valor = xirr_portafolio(cash_df, total_portafolio)   # una sola vez: Modo Pro, "¿Le ganaste a CETES?" y Carta CMA
@@ -2747,7 +2997,8 @@ st.markdown(ticker_html_css, unsafe_allow_html=True)
 # 8. DASHBOARD: ESTRUCTURA LINEAL ORIGINAL
 # ==========================================
 tt_pat = "Todo el dinero que tienes actualmente, sumando tus ganancias y tu efectivo."
-tt_cap = "El dinero exacto que ha salido de tu bolsillo hacia la aplicación."
+tt_cap = ("Depósitos menos retiros: el dinero que ha salido de tu bolsillo hacia el portafolio. "
+          "Debajo se muestra cuánto costaron las posiciones que tienes hoy (sin contar el efectivo).")
 tt_liq = "Dinero en efectivo listo para aprovechar oportunidades en el mercado."
 tt_pnl = "Profit & Loss (Pérdidas o Ganancias Totales de tus inversiones)."
 
@@ -2764,7 +3015,9 @@ st.markdown(f"<div class='ap-masthead notranslate' translate='no'>"
 
 k1, k2, k3, k4 = st.columns([1.45, 1, 1, 1])
 k1.markdown(f"<div class='metric-card metric-card--primary notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
-k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{'Capital Invertido' if st.session_state.get('modo_pro_toggle', False) else 'Dinero de tu Bolsillo'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${total_invertido:,.2f}</div></div>", unsafe_allow_html=True)
+_sub_cap = (f"Costo de posiciones: ${total_invertido:,.2f}" if hay_aportaciones
+            else "Sin depósitos registrados: se muestra el costo de tus posiciones")
+k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Capital Aportado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${capital_aportado:,.2f}</div><div class='metric-subtext'>{_sub_cap}</div></div>", unsafe_allow_html=True)
 
 if st.session_state.get("modo_pro_toggle", False):
     k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Liquidez Disponible <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
@@ -3155,7 +3408,7 @@ if st.session_state.get("modo_pro_toggle", False):
                             (
                                 f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'>"
                                 f"<h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Tu Posición (MXN)</h3>"
-                                f"<div class='pos-row'><div><span class='pos-label'>Acciones / Títulos</span><br><span class='pos-val'>{p_titulos:.5f}</span></div>"
+                                f"<div class='pos-row'><div><span class='pos-label'>Acciones / Títulos</span><br><span class='pos-val'>{f'{float(p_titulos):.8f}'.rstrip('0').rstrip('.')}</span></div>"
                                 f"<div style='text-align:right;'><span class='pos-label'>Valor de Mercado</span><br><span class='pos-val'>${p_val_mercado:,.2f}</span></div></div>"
                                 f"<div class='pos-row'><div><span class='pos-label'>Costo Promedio</span><br><span class='pos-val'>${p_costo_prom:,.2f}</span></div>"
                                 f"<div style='text-align:right;'><span class='pos-label'>Diversidad Portafolio</span><br><span class='pos-val'>{p_peso:.2f}%</span></div></div>"
@@ -3208,8 +3461,7 @@ if st.session_state.get("modo_pro_toggle", False):
             for t in returns_mxn_df.columns:
                 if t in weights: port_returns += returns_mxn_df[t] * weights[t]
             
-            try: rf = float(st.secrets["RISK_FREE_RATE_MXN"])
-            except Exception: rf = 0.05
+            rf = tasa_libre_riesgo()   # misma normalización que CETES/XIRR (acepta 0.105 o 10.5)
             ann_ret = port_returns.mean() * 252
             ann_vol = port_returns.std() * np.sqrt(252)
             sharpe_ratio = (ann_ret - rf) / ann_vol if ann_vol > 0 else 0
@@ -3222,7 +3474,7 @@ if st.session_state.get("modo_pro_toggle", False):
             drawdowns = (cum_rets - rolling_max) / rolling_max
             max_dd = drawdowns.min() * 100
 
-            metricas_riesgo.update({"beta": port_beta, "sharpe": sharpe_ratio, "max_dd": max_dd, "var_95_mxn": var_95_mxn})   # Sprint 3
+            metricas_riesgo.update({"beta": port_beta, "sharpe": sharpe_ratio, "max_dd": max_dd, "var_95_mxn": var_95_mxn, "vol_anual": float(ann_vol)})   # Sprint 3
             if MODO_SENIOR:   # Sprint 2 · mismos números en lenguaje llano; las 4 tarjetas técnicas no se pintan
                 render_riesgo_senior(var_95_mxn, max_dd, port_beta)
                 col_k1 = col_k2 = col_k3 = col_k4 = _CONTENEDOR_SILENCIOSO
@@ -3314,30 +3566,61 @@ if st.session_state.get("modo_pro_toggle", False):
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA · Simulador de Rebalanceo</h4>", unsafe_allow_html=True)
     if not summary.empty:
+        # El capital se precarga con el efectivo disponible (una vez por cliente y sesión, para que el refresco de
+        # cotizaciones no borre lo que escribas). Los parámetros conservan su default 60/25/15 y ahora tienen key
+        # para que la Carta CMA use los mismos.
+        _k_cap = f"dca_capital_{active_client_id}"
+        if _k_cap not in st.session_state:
+            st.session_state[_k_cap] = float(round(max(liquidez_mxn, 0.0), 2))
         c_tgt1, c_tgt2, c_tgt3, c_dca = st.columns(4)
-        with c_tgt1: tgt_etf = st.number_input("Parámetro ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0)
-        with c_tgt2: tgt_acc = st.number_input("Parámetro Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0)
-        with c_tgt3: tgt_cripto = st.number_input("Parámetro Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0)
-        with c_dca: new_capital = st.number_input("Capital hipotético", min_value=0.0, value=5000.0, step=500.0)
+        with c_tgt1: tgt_etf = st.number_input("Parámetro ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0, key="dca_tgt_etf")
+        with c_tgt2: tgt_acc = st.number_input("Parámetro Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0, key="dca_tgt_acc")
+        with c_tgt3: tgt_cripto = st.number_input("Parámetro Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key="dca_tgt_cripto")
+        with c_dca: new_capital = st.number_input("Capital a distribuir (MXN)", min_value=0.0, step=500.0, key=_k_cap,
+                                                  help=f"Precargado con tu efectivo disponible (${liquidez_mxn:,.2f}). "
+                                                       "Cámbialo para simular otra aportación.")
 
-        if (tgt_etf + tgt_acc + tgt_cripto) == 100.0:
+        if abs((tgt_etf + tgt_acc + tgt_cripto) - 100.0) < 1e-6:
             tgt_dict = {"ETF": tgt_etf, "Acción": tgt_acc, "Cripto": tgt_cripto}
             new_tot = total_activos + new_capital
-            deficits, comp_sug = {}, {}
+            deficits, comp_sug, actual_cls = {}, {}, {}
             for cls, tgt in tgt_dict.items():
-                c_val = summary.loc[summary["Clase"]==cls, "valor_actual"].sum() if cls in summary["Clase"].values else 0.0
+                c_val = float(summary.loc[summary["Clase"] == cls, "valor_actual"].sum()) if cls in summary["Clase"].values else 0.0
+                actual_cls[cls] = c_val
                 deficits[cls] = max(0, (new_tot * (tgt / 100.0)) - c_val)
-            
+
             tot_def = sum(deficits.values())
             for cls in tgt_dict: comp_sug[cls] = new_capital * (deficits[cls] / tot_def) if tot_def > 0 else new_capital * (tgt_dict[cls]/100)
-            
-            # P0-B · Antes "Ruta Óptima de Capital": ahora es un escenario aritmético, no una instrucción de inversión.
+
+            # P0-B · Escenario aritmético (no es una instrucción de inversión). Tabla: hoy vs parámetro vs después.
+            filas_dca = ""
+            for cls, tgt in tgt_dict.items():
+                pct_hoy = (actual_cls[cls] / total_activos * 100) if total_activos > 0 else 0.0
+                pct_desp = ((actual_cls[cls] + comp_sug[cls]) / new_tot * 100) if new_tot > 0 else 0.0
+                desv = pct_hoy - tgt
+                color_desv = "#d4af37" if abs(desv) < 2 else ("#c084fc" if desv > 0 else "#94a3b8")
+                filas_dca += (f"<tr><td style='padding:8px 6px;color:#e6e9ef;'>{cls}</td>"
+                              f"<td style='padding:8px 6px;text-align:right;'>${actual_cls[cls]:,.2f}</td>"
+                              f"<td style='padding:8px 6px;text-align:right;'>{pct_hoy:.1f}%</td>"
+                              f"<td style='padding:8px 6px;text-align:right;'>{tgt:.0f}%</td>"
+                              f"<td style='padding:8px 6px;text-align:right;color:{color_desv};'>{desv:+.1f} pp</td>"
+                              f"<td style='padding:8px 6px;text-align:right;color:#ffffff;font-weight:500;'>${comp_sug[cls]:,.2f}</td>"
+                              f"<td style='padding:8px 6px;text-align:right;'>{pct_desp:.1f}%</td></tr>")
+            fuera = summary.loc[~summary["Clase"].isin(list(tgt_dict)), "ticker"].tolist()
+            nota_fuera = (f"<p class='metric-subtext' style='margin-top:10px;'>Fuera de los parámetros (clase sin asignar): "
+                          f"{html_seguro(', '.join(fuera))}.</p>" if fuera else "")
+            th = "padding:6px;text-align:right;font-size:0.68rem;letter-spacing:1.4px;text-transform:uppercase;color:#8b94a7;font-weight:500;"
             st.markdown(
-                f"<div class='m-card'><div class='m-title'>Escenario de Distribución · Parámetros Cuantitativos</div>"
-                f"<div class='pos-row'><span class='pos-label'>ETF (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['ETF']:,.2f}</span></div>"
-                f"<div class='pos-row'><span class='pos-label'>Acciones (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['Acción']:,.2f}</span></div>"
-                f"<div class='pos-row'><span class='pos-label'>Cripto (brecha vs. parámetro):</span><span class='pos-val'>${comp_sug['Cripto']:,.2f}</span></div>"
-                f"</div>", unsafe_allow_html=True)
+                f"<div class='pos-box notranslate' translate='no' style='overflow-x:auto;'>"
+                f"<p class='metric-title'>Escenario de Distribución · Parámetros Cuantitativos</p>"
+                f"<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#8b94a7;font-variant-numeric:tabular-nums;'>"
+                f"<tr style='border-bottom:1px solid #1c2331;'><th style='{th}text-align:left;'>Clase</th><th style='{th}'>Valor hoy</th>"
+                f"<th style='{th}'>Peso hoy</th><th style='{th}'>Parámetro</th><th style='{th}'>Desviación</th>"
+                f"<th style='{th}'>Distribución del capital</th><th style='{th}'>Peso después</th></tr>{filas_dca}</table>"
+                f"<p class='metric-subtext' style='margin-top:10px;'>Pesos calculados sobre tus posiciones invertidas "
+                f"(${total_activos:,.2f}); el efectivo entra solo a través del capital a distribuir (${new_capital:,.2f}). "
+                f"Desviación positiva = clase por encima de su parámetro.</p>{nota_fuera}</div>",
+                unsafe_allow_html=True)
         else: st.warning("Los objetivos deben sumar 100%.")
 
 else:
@@ -3422,7 +3705,7 @@ with tab_ops:
         st.dataframe(
             df_mostrar_tx[["fecha", "tipo_operacion", "ticker", "clase", "titulos", "precio_unitario", "tipo_cambio", "total_mxn"]].rename(
                 columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Ticker", "clase": "Clase", "titulos": "Títulos", "precio_unitario": "Precio U.", "tipo_cambio": "T.C.", "total_mxn": "Total MXN"}
-            ).style.format({"Títulos": "{:.5f}", "Precio U.": "${:,.2f}", "T.C.": "${:,.2f}", "Total MXN": "${:,.2f}"}), 
+            ).style.format({"Títulos": "{:.8f}", "Precio U.": "${:,.4f}", "T.C.": "{:,.4f}", "Total MXN": "${:,.2f}"}), 
             hide_index=True, use_container_width=True, height=280
         )
     else: 
@@ -3450,12 +3733,24 @@ with tab_caja:
 # ==========================================
 # 11. SPRINT 3 · CMA FINANCIAL LETTER (carta de banca privada, imprimible a PDF)
 # ==========================================
+# Antes la carta solo traía "Perfil de riesgo" con el Modo Pro encendido (metricas_riesgo lo llena ese módulo) y el
+# Boletín CIO solo si se había generado: por eso a veces salía más corta. Ahora el riesgo se calcula aunque el Modo Pro
+# esté apagado, y la carta suma asignación vs parámetros, detalle por posición, flujos, operaciones recientes y metodología.
+_parametros_carta = {"ETF": float(st.session_state.get("dca_tgt_etf", 60.0)),
+                     "Acción": float(st.session_state.get("dca_tgt_acc", 25.0)),
+                     "Cripto": float(st.session_state.get("dca_tgt_cripto", 15.0))}
+_friccion_carta = float((tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum()) if not tx_df.empty else 0.0
 render_carta_cma({
-    "nombre": active_username, "patrimonio": float(total_portafolio), "capital": float(total_invertido),
+    "nombre": active_username, "patrimonio": float(total_portafolio), "capital": float(capital_aportado),
+    "costo_posiciones": float(total_invertido), "valor_posiciones": float(total_activos),
     "pnl": float(pnl_global), "retorno_pct": float(retorno_global), "liquidez": float(liquidez_mxn),
     "salario_invisible": float(salario_invisible), "proyeccion_5a": float(proyeccion_5a),
-    "xirr": xirr_valor, "rf": tasa_libre_riesgo(),
-    "posiciones": posiciones_para_carta(summary), "riesgo": metricas_riesgo,
+    "xirr": xirr_valor, "rf": tasa_libre_riesgo(), "usd_mxn": float(usd_mxn) if usd_mxn else None,
+    "friccion": _friccion_carta,
+    "posiciones": posiciones_para_carta(summary),
+    "riesgo": metricas_riesgo or metricas_riesgo_carta(summary, float(total_portafolio), tasa_libre_riesgo()),
+    "asignacion": asignacion_para_carta(summary, float(total_portafolio), _parametros_carta),
+    "flujos": flujos_para_carta(cash_df), "actividad": actividad_para_carta(tx_df),
     "racha": racha_actual, "rango": rango_txt, "frecuencia": user_freq,
     "meta_nombre": meta_nombre, "meta_monto": float(meta_actual), "progreso_meta": float(progreso_meta),
     "faltante": float(faltante), "cio": st.session_state.get("cio_report"),
