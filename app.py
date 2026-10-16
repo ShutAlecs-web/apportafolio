@@ -1722,17 +1722,22 @@ def construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, rf, senior=False):
 
         g_tu, g_ce = valor_hoy - capital_hoy, cetes_hoy - capital_hoy
         sig = lambda v: f"{'+' if v >= 0 else '-'}${abs(v):,.0f}"
-        fig.add_annotation(x=df.index[-1], y=g_tu, text=f"<b>Tú {sig(g_tu)}</b>", showarrow=False, xanchor="left", xshift=8,
-                           yshift=8 if g_tu >= g_ce else -8, font=dict(color=ORO_LINEA, size=12))
-        fig.add_annotation(x=df.index[-1], y=g_ce, text=f"<b>CETES {sig(g_ce)}</b>", showarrow=False, xanchor="left", xshift=8,
-                           yshift=-8 if g_tu >= g_ce else 8, font=dict(color=PIZARRA, size=12))
-        fig.add_annotation(x=df.index[-1], y=0, text=f"Aportado ${capital_hoy:,.0f}", showarrow=False, xanchor="left", xshift=8,
-                           font=dict(color=MARFIL, size=11))
+        # Móvil primero: sin rótulos a la derecha (aplastaban la gráfica en pantallas angostas). Las cifras finales van
+        # en la leyenda, abajo y en horizontal, y solo se marca el punto de hoy de cada línea.
+        for tr in fig.data:
+            if tr.name == "Tu portafolio" or tr.name == "Tu portafolio hoy": tr.name = f"Tú {sig(g_tu)}"
+            elif str(tr.name).startswith("CETES"): tr.name = f"CETES {sig(g_ce)}"
+            elif str(tr.name).startswith("Aportado"): tr.name = f"Aportado ${capital_hoy:,.0f}"
+        fig.add_trace(go.Scatter(x=[df.index[-1], df.index[-1]], y=[g_tu, g_ce], mode="markers", hoverinfo="skip", showlegend=False,
+                                 marker=dict(size=7, color=[ORO_LINEA, PIZARRA], line=dict(color="#050608", width=1.5)), name="hoy"))
+        fig.data = fig.data[:-2] + (fig.data[-1], fig.data[-2])   # la luz sigue siendo la última traza (CSS)
 
-        style_financial_figure(fig, height=380 if senior else 340, senior=senior, showlegend=True,
-                               margin=dict(t=10, b=10, l=10, r=110))
-        fig.update_layout(hovermode="x unified")
-        fig.update_yaxes(tickformat="+$,.0f", zeroline=False)   # +$150 / -$150
+        style_financial_figure(fig, height=400 if senior else 360, senior=senior, showlegend=True,
+                               margin=dict(t=10, b=10, l=6, r=12))
+        fig.update_layout(hovermode="x unified",
+                          legend=dict(orientation="h", yanchor="top", y=-0.14, xanchor="left", x=0, font=dict(size=12)))
+        fig.update_xaxes(range=[df.index[0], df.index[-1]], nticks=5, tickformat="%d %b", tickangle=0, automargin=True)
+        fig.update_yaxes(tickformat="+$,.0f", zeroline=False, nticks=6, automargin=True)   # +$150 / -$150
 
         dif = valor_hoy - cetes_hoy
         veredicto = (f"<b style='color:#5fbf9a;'>le ganas a CETES por ${dif:,.0f}</b>" if dif >= 0
@@ -2147,7 +2152,7 @@ def generar_carta_cma(ctx):
     # Folio: huella corta del estado reportado (cliente, fecha y cifras). Si cambia un número, cambia el folio.
     folio = folio_carta(ctx)
     tc_txt = f" (USD/MXN de referencia al corte: {float(tc_ref):.4f})" if tc_ref else ""
-    return f"""<!DOCTYPE html>
+    html_carta = f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CMA Financial Letter · {e(ctx['nombre'])}</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;1,400&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
@@ -2182,6 +2187,16 @@ ul {{ padding-left:18px; }} li {{ margin-bottom:6px; }}
 .firma {{ margin-top:34px; }} .firma b {{ font-family:'Playfair Display', Georgia, serif; font-weight:400; font-size:12pt; }}
 .legal {{ margin-top:30px; font-size:7.5pt; color:#9ca3af; border-top:1px solid #eee6d3; padding-top:10px; }}
 @media print {{ body {{ background:#ffffff; }} .hoja {{ border:none; padding:0; max-width:none; }} tr {{ page-break-inside:avoid; }} }}
+.tw {{ width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+@media (max-width:640px) {{
+  body {{ font-size:9.6pt; }} .hoja {{ padding:24px 16px; border:none; }}
+  .marca h1 {{ font-size:15pt; letter-spacing:3px; }} .marca span {{ font-size:6.8pt; letter-spacing:1.6px; text-align:right; }}
+  h2 {{ font-size:12pt; margin-top:22px; }}
+  td, th {{ padding:6px 5px; }} th {{ font-size:7pt; letter-spacing:1px; white-space:nowrap; }}
+  .tw table:not(.kpi) {{ min-width:520px; }} .tw table:not(.kpi) td {{ white-space:nowrap; }}
+  .kpi td.n {{ white-space:nowrap; }}
+  .sello {{ padding:18px 16px; }} .sello-grid {{ grid-template-columns:1fr; }}
+}}
 </style></head><body><div class="hoja">
 <div class="marca"><h1>CMA</h1><span>Private Wealth · Financial Letter</span></div>
 <p class="fecha">{e(fecha_txt)}</p>
@@ -2238,6 +2253,8 @@ Estos son los principios que respaldan cada número que lee.</p>
 (Yahoo Finance). Los rendimientos son no realizados y no garantizan resultados futuros. Las proyecciones usan supuestos explícitos
 y no constituyen una recomendación personalizada de inversión.<br><br>{e(AVISO_LECTURA_V5)}</p>
 </div></body></html>"""
+    # Vista previa en celular: cada tabla en su propio contenedor con scroll horizontal (el PDF no cambia).
+    return html_carta.replace("<table", "<div class='tw'><table").replace("</table>", "</table></div>")
 
 
 def posiciones_para_carta(summary, limite=15):
