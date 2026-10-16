@@ -8,7 +8,7 @@
 base = "dark"
 
 # Superficies
-backgroundColor = "#05070c"
+backgroundColor = "#050608"
 secondaryBackgroundColor = "#0b0f17"
 textColor = "#e6e9ef"
 borderColor = "#1c2331"
@@ -40,7 +40,7 @@ buttonRadius = "0.5rem"
 chartCategoricalColors = ["#d4af37", "#34d399", "#c084fc", "#7aa2d6", "#94a3b8", "#e2c575"]
 
 [theme.sidebar]
-backgroundColor = "#080b12"
+backgroundColor = "#07080b"
 secondaryBackgroundColor = "#0f141e"
 borderColor = "#1c2331"
 

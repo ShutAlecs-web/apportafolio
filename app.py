@@ -52,7 +52,7 @@ plotly_config = {
 
 # Paleta institucional para Plotly (espejo de las variables CSS --ap-* y de .streamlit/config.toml).
 AP_COLORS = {
-    "bg": "#05070c",
+    "bg": "#050608",
     "surface": "#0b0f17",
     "surface_2": "#111723",
     "border": "#1c2331",
@@ -114,7 +114,7 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400;600&display=swap');
 
 :root {
-    --ap-bg: #05070c;
+    --ap-bg: #050608;
     --ap-surface: #0b0f17;
     --ap-surface-2: #111723;
     --ap-border: #1c2331;
@@ -137,8 +137,11 @@ st.markdown("""
 }
 
 /* Lienzo base */
-[data-testid="stAppViewContainer"], .stApp { background-color: var(--ap-bg) !important; font-family: var(--ap-font-sans) !important; color: var(--ap-text); }
-[data-testid="stSidebar"] { background-color: #080b12 !important; border-right: 1px solid var(--ap-border) !important; }
+[data-testid="stAppViewContainer"], .stApp { font-family: var(--ap-font-sans) !important; color: var(--ap-text);
+    background: radial-gradient(1100px 700px at 18% 12%, rgba(255,255,255,0.03), transparent 62%),
+                radial-gradient(900px 600px at 88% 96%, rgba(201,162,74,0.04), transparent 60%), var(--ap-bg) !important;
+    background-attachment: fixed !important; }
+[data-testid="stSidebar"] { background-color: #07080b !important; border-right: 1px solid var(--ap-border) !important; }
 .block-container { padding-top: 2.2rem !important; }
 
 /* Limpieza del cromo nativo de Streamlit */
@@ -176,6 +179,102 @@ div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color: var
 .metric-title { color: var(--ap-text-muted) !important; font-size: 0.7rem !important; font-weight: 500 !important; text-transform: uppercase !important; letter-spacing: 1.8px !important; margin-bottom: 6px !important; font-family: var(--ap-font-sans) !important; display: flex; align-items: center; }
 .metric-value { font-family: var(--ap-font-serif) !important; font-size: 2.4rem !important; font-weight: 400 !important; color: #ffffff !important; letter-spacing: -0.5px !important; line-height: 1.1 !important; margin: 8px 0 !important; font-variant-numeric: tabular-nums; }
 .metric-subtext { font-size: 0.85rem !important; margin-top: 6px !important; font-weight: 400 !important; color: var(--ap-text-faint) !important; font-family: var(--ap-font-sans) !important; }
+
+/* KPI del home: borde dorado (mismo tono que la onda de la portada) y una luz que lo recorre cada 12 s, en cascada */
+@property --ap-ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes ap-borde-luz { 0% { --ap-ang: 0deg; opacity: 0; } 4% { opacity: 1; } 34% { opacity: 1; }
+    38% { --ap-ang: 360deg; opacity: 0; } 100% { --ap-ang: 360deg; opacity: 0; } }
+.metric-card.kpi { position: relative; border-color: rgba(201, 162, 74, 0.38) !important; }
+.metric-card.kpi:hover { border-color: rgba(233, 211, 154, 0.6) !important; }
+.metric-card.kpi::after { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.2px; pointer-events: none; opacity: 0;
+    background: conic-gradient(from var(--ap-ang), transparent 0deg, transparent 290deg, rgba(233,211,154,0) 312deg, rgba(255,244,214,0.9) 338deg, rgba(233,211,154,0) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: ap-borde-luz 12s linear 2s infinite; }
+.metric-card.kpi.kpi-2::after { animation-delay: 3.4s; }
+.metric-card.kpi.kpi-3::after { animation-delay: 4.8s; }
+.metric-card.kpi.kpi-4::after { animation-delay: 6.2s; }
+@media (prefers-reduced-motion: reduce) { .metric-card.kpi::after { animation: none !important; } }
+
+/* ===== Rediseño 2026-10 · piel "Marco de luz" para el modo sencillo ===== */
+/* Filo dorado con luz (tarjetas HTML y contenedores con key) */
+.ap-filo, .st-key-bola_card, .st-key-sol_card, .st-key-carta_card { position: relative; border: 1px solid rgba(201,162,74,0.38) !important; border-radius: 14px; }
+.st-key-bola_card, .st-key-sol_card, .st-key-carta_card { background: var(--ap-surface); padding: 18px 20px 10px; box-shadow: var(--ap-shadow); }
+.ap-filo::after, .st-key-bola_card::after, .st-key-sol_card::after, .st-key-carta_card::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.2px; pointer-events: none; opacity: 0; z-index: 2;
+    background: conic-gradient(from var(--ap-ang), transparent 0deg, transparent 290deg, rgba(233,211,154,0) 312deg, rgba(255,244,214,0.9) 338deg, rgba(233,211,154,0) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: ap-borde-luz 12s linear 2s infinite; }
+.st-key-bola_card::after { animation-delay: 4s; } .ap-franja.ap-filo::after { animation-delay: 6s; }
+.st-key-sol_card::after { animation-delay: 8s; } .st-key-carta_card::after { animation-delay: 3s; }
+.ap-t { color: var(--ap-text-muted); font-size: 0.66rem; font-weight: 500; letter-spacing: 1.8px; text-transform: uppercase; margin: 0 0 6px; display: flex; align-items: center; }
+.ap-v { font-family: var(--ap-font-serif); font-weight: 400; color: #ffffff; line-height: 1.1; margin: 0; font-variant-numeric: tabular-nums; }
+.ap-s { color: var(--ap-text-faint); font-size: 0.82rem; margin: 8px 0 0; }
+.ap-pos { color: #5fbf9a !important; } .ap-neg { color: var(--ap-negative) !important; } .ap-oro { color: #e2c575 !important; }
+
+/* Indicadores · Patrimonio protagonista */
+.ap-hero { display: grid; grid-template-columns: 1.3fr 1fr; background: var(--ap-surface); box-shadow: var(--ap-shadow); margin-bottom: 18px; }
+.ap-hero .izq { padding: 28px 30px; border-right: 1px solid var(--ap-border); min-width: 0; }
+.ap-hero .izq .ap-v { font-size: clamp(2.3rem, 4.2vw, 3.3rem); margin-top: 6px; }
+.ap-hero .der { display: grid; grid-template-rows: repeat(3, 1fr); min-width: 0; }
+.ap-hero .der > div { padding: 14px 24px; border-bottom: 1px solid var(--ap-border); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ap-hero .der > div:last-child { border-bottom: 0; }
+.ap-hero .der .ap-t { margin: 0; }
+.ap-hero .der .ap-v { font-size: 1.45rem; text-align: right; }
+
+/* Progreso · franja única */
+.ap-franja { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--ap-surface); box-shadow: var(--ap-shadow); margin-bottom: 18px; }
+.ap-franja > div { padding: 20px 24px; border-left: 1px solid var(--ap-border); min-width: 0; }
+.ap-franja > div:first-child { border-left: 0; }
+.ap-franja .ap-v { font-size: 2rem; }
+@keyframes ap-barre { 0% { transform: translateX(-120%); } 30%, 100% { transform: translateX(560%); } }
+.ap-barra { position: relative; height: 8px; border-radius: 6px; background: var(--ap-surface-2); border: 1px solid var(--ap-border); overflow: hidden; margin-top: 14px; }
+.ap-barra b { position: relative; overflow: hidden; display: block; height: 100%; background: linear-gradient(90deg, #a8883f, #e2c575); }
+.ap-barra b::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 18%; background: linear-gradient(90deg, transparent, rgba(255,244,214,0.75), transparent); animation: ap-barre 8s ease-in-out 1.5s infinite; }
+
+/* Tablas HTML (posiciones agrupadas e historial) */
+.ap-tw { overflow: auto; border: 1px solid var(--ap-border); border-radius: 12px; background: var(--ap-surface); margin-bottom: 8px; }
+.ap-tw table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 560px; font-variant-numeric: tabular-nums; }
+.ap-tw th { position: sticky; top: 0; background: var(--ap-surface); text-align: left; font-size: 0.64rem; font-weight: 500; letter-spacing: 1.6px; text-transform: uppercase; color: var(--ap-text-faint); padding: 12px 14px; border-bottom: 1px solid var(--ap-border); white-space: nowrap; z-index: 1; }
+.ap-tw td { padding: 11px 14px; border-bottom: 1px solid var(--ap-border); white-space: nowrap; color: var(--ap-text); }
+.ap-tw tr:last-child td { border-bottom: 0; }
+.ap-tw .n { text-align: right; }
+.ap-tw .tk { font-weight: 600; letter-spacing: 0.02em; }
+.ap-tw .grupo td { background: var(--ap-surface-2); color: #e2c575; font-size: 0.82rem; font-weight: 500; }
+.ap-tw .grupo td:first-child { font-size: 0.7rem; letter-spacing: 1.6px; text-transform: uppercase; }
+.ap-pill { display: inline-block; font-size: 0.62rem; font-weight: 600; letter-spacing: 1.2px; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(201,162,74,0.38); color: #e2c575; }
+.ap-pill.gris { color: var(--ap-negative); border-color: var(--ap-border-strong); }
+
+/* Composición · lista de pesos */
+.ap-lista { background: var(--ap-surface); padding: 14px 20px; color: var(--ap-text); }
+.ap-lista .fila { display: grid; grid-template-columns: 62px 1fr 92px 54px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--ap-border); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.ap-lista .fila:last-child { border-bottom: 0; }
+.ap-lista .track { height: 9px; background: var(--ap-surface-2); border-radius: 3px; overflow: hidden; }
+.ap-lista .track b { display: block; height: 100%; background: linear-gradient(90deg, #8a6f33, #e2c575); }
+
+/* Gráfica Bola de Nieve: luz que recorre la línea del valor (última traza = copia solo para la luz) */
+@keyframes ap-hilo { 0% { stroke-dashoffset: 90; opacity: 0; } 3% { opacity: 1; } 34% { opacity: 1; } 38% { stroke-dashoffset: -2600; opacity: 0; } 100% { stroke-dashoffset: -2600; opacity: 0; } }
+.st-key-bola_nieve .scatterlayer .trace:last-child .js-line { stroke-dasharray: 90 6000 !important; opacity: 0;
+    filter: drop-shadow(0 0 4px rgba(233,211,154,0.95)); animation: ap-hilo 9s cubic-bezier(.45,.05,.35,1) 1.5s infinite; }
+
+/* Carta protagonista */
+.ap-carta { display: flex; gap: 18px; align-items: center; }
+.ap-carta h3 { margin: 0 0 4px !important; padding: 0 !important; font-family: var(--ap-font-serif) !important; font-style: italic; font-weight: 400; color: #f3e2b0 !important; font-size: 1.3rem !important; }
+.ap-carta p { margin: 0; color: var(--ap-text-muted); font-size: 0.85rem; }
+.st-key-carta_card [data-testid="stDownloadButton"] button { background: linear-gradient(135deg, #b9913f 0%, #d9bb72 55%, #c9a24a 100%) !important; color: #15120b !important; border: 0 !important; font-weight: 600 !important; }
+.st-key-carta_card [data-testid="stDownloadButton"] button p { color: #15120b !important; font-weight: 600 !important; }
+
+@media (max-width: 760px) {
+    .ap-hero, .ap-franja { grid-template-columns: 1fr; }
+    .ap-hero .izq { border-right: 0; border-bottom: 1px solid var(--ap-border); padding: 22px; }
+    .ap-franja > div { border-left: 0; border-top: 1px solid var(--ap-border); }
+    .ap-franja > div:first-child { border-top: 0; }
+    .ap-carta { flex-wrap: wrap; }
+    .ap-lista .fila { grid-template-columns: 54px 1fr 84px; } .ap-lista .fila > :last-child { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ap-filo::after, .st-key-bola_card::after, .st-key-sol_card::after, .st-key-carta_card::after, .ap-barra b::after,
+    .st-key-bola_nieve .scatterlayer .trace:last-child .js-line, .st-key-sol path.surface { animation: none !important; }
+}
 
 /* Colores semánticos (se conservan los nombres de clase heredados) */
 .text-neon-green, .pos-green { color: var(--ap-positive) !important; }
@@ -1594,40 +1693,55 @@ def construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, rf, senior=False):
         valor_hoy = float(total_portafolio)
         hay_historia = df["valor"].notna().sum() > 1
 
+        # Rediseño · opción C "Lo que generó cada peso": a todo se le resta lo aportado. El capital queda como la línea
+        # cero y se compara solo la ganancia: tu portafolio contra lo que habría generado CETES. Así no se enciman.
+        ORO_LINEA, VERDE_AREA, MARFIL, PIZARRA, LUZ = "#e2c575", "rgba(95, 191, 154, 0.16)", "#d9d4c7", "#7fa3c9", "#fff4d6"
+        gan_cetes = df["cetes"] - df["capital"]
+        gan_valor = df["valor"] - df["capital"]
         fig = go.Figure()
-        color_valor = AP_COLORS["positive"] if valor_hoy >= capital_hoy else AP_COLORS["negative"]
-        relleno_valor = AP_COLORS["positive_fill"] if valor_hoy >= capital_hoy else AP_COLORS["negative_fill"]
+        fig.add_trace(go.Scatter(
+            x=df.index, y=[0.0] * len(df), mode="lines", name=f"Aportado (${capital_hoy:,.0f})",
+            line=dict(color=MARFIL, width=1.3), customdata=df["capital"],
+            hovertemplate="<b>Aportado:</b> $%{customdata:,.2f} MXN<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=df.index, y=gan_cetes, mode="lines", name=f"CETES {rf * 100:.2f}%",
+            line=dict(color=PIZARRA, width=1.8), customdata=df["cetes"],
+            hovertemplate="<b>CETES:</b> %{y:+,.2f} sobre lo aportado (valdría $%{customdata:,.2f})<extra></extra>"))
         if hay_historia:
             fig.add_trace(go.Scatter(
-                x=df.index, y=df["valor"], fill="tozeroy", mode="lines", name="Valor del Portafolio",
-                line=dict(color=color_valor, width=2), fillcolor=relleno_valor,
-                hovertemplate="<b>Valor del portafolio:</b> $%{y:,.2f} MXN<extra></extra>"))
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["capital"], fill="tozeroy", mode="lines", name="Capital Invertido",
-            line=dict(color=AP_COLORS["gold"], width=2.5, shape="hv"), fillcolor=AP_COLORS["gold_fill"],
-            hovertemplate="<b>Capital aportado:</b> $%{y:,.2f} MXN<extra></extra>"))
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["cetes"], mode="lines", name=f"Si lo hubieras dejado en CETES ({rf * 100:.2f}%)",
-            line=dict(color=AP_COLORS["info"], width=2, dash="dot"),
-            hovertemplate="<b>En CETES:</b> $%{y:,.2f} MXN<extra></extra>"))
-        if not hay_historia:   # sin precios históricos: mismo marcador que la versión original
+                x=df.index, y=gan_valor, mode="lines", name="Tu portafolio", fill="tozeroy",
+                line=dict(color=ORO_LINEA, width=2.4), fillcolor=VERDE_AREA, customdata=df["valor"],
+                hovertemplate="<b>Tu portafolio:</b> %{y:+,.2f} sobre lo aportado (vale $%{customdata:,.2f})<extra></extra>"))
+        else:   # sin precios históricos: solo el punto de hoy
             fig.add_trace(go.Scatter(
-                x=[df.index[0], df.index[-1]], y=[valor_hoy, valor_hoy], mode="lines", name="Valor Portafolio Hoy",
-                line=dict(color=color_valor, width=2, dash="dash"),
-                hovertemplate="<b>Valor actual:</b> $%{y:,.2f} MXN<extra></extra>"))
+                x=[df.index[-1]], y=[valor_hoy - capital_hoy], mode="markers", name="Tu portafolio hoy",
+                marker=dict(color=ORO_LINEA, size=9), hovertemplate="<b>Tu portafolio hoy:</b> %{y:+,.2f}<extra></extra>"))
+        # Última traza: copia de la línea que solo existe para la luz animada por CSS (.st-key-bola_nieve).
+        fig.add_trace(go.Scatter(x=df.index, y=gan_valor if hay_historia else gan_cetes, mode="lines",
+                                 line=dict(color=LUZ, width=2.2), hoverinfo="skip", showlegend=False, name="luz"))
 
-        style_financial_figure(fig, height=380 if senior else 340, senior=senior, showlegend=True)
+        g_tu, g_ce = valor_hoy - capital_hoy, cetes_hoy - capital_hoy
+        sig = lambda v: f"{'+' if v >= 0 else '-'}${abs(v):,.0f}"
+        fig.add_annotation(x=df.index[-1], y=g_tu, text=f"<b>Tú {sig(g_tu)}</b>", showarrow=False, xanchor="left", xshift=8,
+                           yshift=8 if g_tu >= g_ce else -8, font=dict(color=ORO_LINEA, size=12))
+        fig.add_annotation(x=df.index[-1], y=g_ce, text=f"<b>CETES {sig(g_ce)}</b>", showarrow=False, xanchor="left", xshift=8,
+                           yshift=-8 if g_tu >= g_ce else 8, font=dict(color=PIZARRA, size=12))
+        fig.add_annotation(x=df.index[-1], y=0, text=f"Aportado ${capital_hoy:,.0f}", showarrow=False, xanchor="left", xshift=8,
+                           font=dict(color=MARFIL, size=11))
+
+        style_financial_figure(fig, height=380 if senior else 340, senior=senior, showlegend=True,
+                               margin=dict(t=10, b=10, l=10, r=110))
         fig.update_layout(hovermode="x unified")
-        fig.update_yaxes(tickprefix="$")
+        fig.update_yaxes(tickformat="+$,.0f", zeroline=False)   # +$150 / -$150
 
         dif = valor_hoy - cetes_hoy
-        veredicto = (f"<b style='color:#34d399;'>le ganas a CETES por ${dif:,.0f}</b>" if dif >= 0
+        veredicto = (f"<b style='color:#5fbf9a;'>le ganas a CETES por ${dif:,.0f}</b>" if dif >= 0
                      else f"<b style='color:#94a3b8;'>CETES iría ${-dif:,.0f} arriba</b>")
         tam = "1.1rem" if senior else "0.88rem"
         resumen = (f"<p class='notranslate' translate='no' style='color:#8b949e; font-size:{tam}; margin:-4px 0 6px 0;'>"
-                   f"Aportaste <b style='color:#d4af37;'>${capital_hoy:,.0f}</b> · hoy vale "
+                   f"Aportaste <b style='color:#e2c575;'>${capital_hoy:,.0f}</b> · hoy vale "
                    f"<b style='color:#ffffff;'>${valor_hoy:,.0f}</b> · en CETES tendrías "
-                   f"<b style='color:#c084fc;'>${cetes_hoy:,.0f}</b> → {veredicto}.</p>")
+                   f"<b style='color:#8f9bb3;'>${cetes_hoy:,.0f}</b> → {veredicto}.</p>")
         return fig, resumen
     except Exception as e:
         log_app.warning("Bola de Nieve 2.0 · se usa la gráfica original: %s", e)
@@ -1643,8 +1757,50 @@ def _spark_limpio(valores):
         return []
 
 
+def mxn_signo(v):
+    """+$1,234.56 / -$1,234.56 (en lugar de $+1,234.56)."""
+    v = float(v or 0)
+    return f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
+
+
+ORDEN_CLASES = ["ETF", "Acción", "Cripto"]
+NOMBRE_GRUPO = {"Acción": "Acciones"}
+
+
 def render_tabla_posiciones(summary, senior=False):
+    """Rediseño · "Agrupada por clase": ETF, Acciones y Cripto con subtotal por grupo. Si algo falla, se usa la tabla anterior."""
     st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; "
+                f"margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>"
+                f"{svg_icon('eye', color='#d4af37', size=18)}Tus Posiciones</h4>", unsafe_allow_html=True)
+    if summary is None or summary.empty:
+        st.caption("Aún no tienes posiciones abiertas.")
+        return
+    try:
+        df = summary.copy()
+        for c in ("valor_actual", "pnl", "retorno_pct", "ponderacion_pct"):
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+        clases = [c for c in ORDEN_CLASES if c in df["Clase"].values] + sorted(set(df["Clase"]) - set(ORDEN_CLASES))
+        cls = lambda v: "ap-pos" if v >= 0 else "ap-neg"
+        filas = ""
+        for c in clases:
+            g = df[df["Clase"] == c].sort_values("valor_actual", ascending=False)
+            filas += (f"<tr class='grupo'><td>{html_seguro(NOMBRE_GRUPO.get(c, c))}</td><td class='n'>${g['valor_actual'].sum():,.2f}</td>"
+                      f"<td class='n {cls(g['pnl'].sum())}'>{mxn_signo(g['pnl'].sum())}</td><td></td><td class='n'>{g['ponderacion_pct'].sum():.1f}%</td></tr>")
+            for _, r in g.iterrows():
+                filas += (f"<tr><td class='tk'>{html_seguro(r['ticker'])}</td><td class='n'>${r['valor_actual']:,.2f}</td>"
+                          f"<td class='n {cls(r['pnl'])}'>{mxn_signo(r['pnl'])}</td><td class='n {cls(r['retorno_pct'])}'>{r['retorno_pct']:+.2f}%</td>"
+                          f"<td class='n'>{r['ponderacion_pct']:.1f}%</td></tr>")
+        st.markdown("<div class='ap-tw notranslate' translate='no'><table><tr><th>Activo</th><th class='n'>Valor MXN</th>"
+                    "<th class='n'>Ganancia</th><th class='n'>Rendimiento</th><th class='n'>Peso</th></tr>"
+                    f"{filas}</table></div>", unsafe_allow_html=True)
+    except Exception as e:
+        log_app.warning("Tabla agrupada · se usa la tabla anterior: %s", e)
+        _render_tabla_posiciones_dataframe(summary, senior, con_titulo=False)
+
+
+def _render_tabla_posiciones_dataframe(summary, senior=False, con_titulo=True):
+    """Tabla anterior (st.dataframe con tendencia de 30 días). Se conserva como respaldo."""
+    if con_titulo: st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; "
                 f"margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>"
                 f"{svg_icon('eye', color='#d4af37', size=18)}Tus Posiciones</h4>", unsafe_allow_html=True)
     if summary is None or summary.empty:
@@ -1989,8 +2145,7 @@ def generar_carta_cma(ctx):
     fila_opt = lambda etiqueta, valor: (f"<tr><td>{etiqueta}</td><td class='n'>{m(valor)}</td></tr>" if valor is not None else "")
     tc_ref = ctx.get("usd_mxn")
     # Folio: huella corta del estado reportado (cliente, fecha y cifras). Si cambia un número, cambia el folio.
-    _huella = f"{ctx['nombre']}|{hoy}|{ctx['patrimonio']:.2f}|{capital:.2f}|{ctx['pnl']:.2f}|{len(ctx['posiciones'])}"
-    folio = f"CMA-{hoy:%Y%m%d}-{hashlib.sha256(_huella.encode()).hexdigest()[:6].upper()}"
+    folio = folio_carta(ctx)
     tc_txt = f" (USD/MXN de referencia al corte: {float(tc_ref):.4f})" if tc_ref else ""
     return f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2165,28 +2320,262 @@ def metricas_riesgo_carta(summary, total_portafolio, rf):
         return {}
 
 
+def folio_carta(ctx):
+    """Folio verificable de la carta: huella corta del estado reportado. Si cambia un número, cambia el folio."""
+    hoy = hoy_mx()
+    capital = float(ctx["capital"] or 0)
+    huella = f"{ctx['nombre']}|{hoy}|{ctx['patrimonio']:.2f}|{capital:.2f}|{ctx['pnl']:.2f}|{len(ctx['posiciones'])}"
+    return f"CMA-{hoy:%Y%m%d}-{hashlib.sha256(huella.encode()).hexdigest()[:6].upper()}"
+
+
+def generar_carta_pdf(ctx):
+    """CMA Financial Letter en PDF real (texto seleccionable), con ReportLab. Misma estructura y paleta que la versión HTML.
+    Fuentes base de PDF (Times / Helvetica): no requiere archivos de fuente en el servidor. Requiere `reportlab`."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_LEFT
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Flowable)
+
+    C_TX, C_MUTED, C_SOFT = colors.HexColor("#1f2937"), colors.HexColor("#6b7280"), colors.HexColor("#4b5563")
+    C_ORO, C_ORO_OSC, C_ORO_TXT = colors.HexColor("#b8962e"), colors.HexColor("#8a6d1f"), colors.HexColor("#8a7a4a")
+    C_LINEA, C_PAPEL, C_SELLO, C_SELLO_BORDE = colors.HexColor("#eee6d3"), colors.HexColor("#fffdf8"), colors.HexColor("#f7f3e8"), colors.HexColor("#e3d7b5")
+    C_POS, C_NEG = colors.HexColor("#047857"), colors.HexColor("#6b7280")
+    e = lambda x: _html.escape(str(x if x is not None else ""))
+    m = lambda v: f"${float(v or 0):,.2f}"
+    ms = lambda v: f"{'+' if float(v or 0) >= 0 else '-'}${abs(float(v or 0)):,.2f}"
+    col = lambda v: "#047857" if float(v or 0) >= 0 else "#6b7280"
+    tit = lambda v: (f"{float(v or 0):.8f}".rstrip("0").rstrip(".") or "0")
+
+    st_body = ParagraphStyle("body", fontName="Helvetica", fontSize=9.4, leading=14, textColor=C_TX)
+    st_soft = ParagraphStyle("soft", parent=st_body, textColor=C_SOFT)
+    st_nota = ParagraphStyle("nota", parent=st_body, fontSize=8, leading=11.5, textColor=C_MUTED)
+    st_h2 = ParagraphStyle("h2", fontName="Times-Italic", fontSize=13.5, leading=17, textColor=C_ORO_OSC, spaceBefore=16, spaceAfter=6)
+    st_th = ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=6.6, leading=9, textColor=C_ORO_TXT)
+    st_th_r = ParagraphStyle("thr", parent=st_th, alignment=TA_RIGHT)
+    st_td = ParagraphStyle("td", parent=st_body, fontSize=8.8, leading=12)
+    st_td_r = ParagraphStyle("tdr", parent=st_td, alignment=TA_RIGHT)
+    st_fecha = ParagraphStyle("fecha", parent=st_body, fontSize=8.8, textColor=C_MUTED, alignment=TA_RIGHT)
+    st_legal = ParagraphStyle("legal", parent=st_body, fontSize=6.6, leading=9.2, textColor=colors.HexColor("#9ca3af"))
+
+    def tabla(filas, anchos, encabezado=True, alinear_der=()):
+        datos = []
+        for k, fila in enumerate(filas):
+            celdas = []
+            for j, c in enumerate(fila):
+                if isinstance(c, Flowable):
+                    celdas.append(c); continue
+                if encabezado and k == 0:
+                    celdas.append(Paragraph(str(c).upper(), st_th_r if j in alinear_der else st_th))
+                else:
+                    celdas.append(Paragraph(str(c), st_td_r if j in alinear_der else st_td))
+            datos.append(celdas)
+        t = Table(datos, colWidths=anchos, repeatRows=1 if encabezado else 0)
+        t.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.5, C_LINEA), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+        return t
+
+    class Sello(Flowable):
+        def __init__(self, d=15 * mm):
+            super().__init__(); self.width = self.height = d
+        def draw(self):
+            c, r = self.canv, self.width / 2
+            c.setStrokeColor(C_ORO); c.setLineWidth(0.8); c.circle(r, r, r - 0.5, stroke=1, fill=0)
+            c.setLineWidth(0.45); c.circle(r, r, r - 2.6, stroke=1, fill=0)
+            c.setFillColor(C_ORO_OSC); c.setFont("Times-Roman", 10.5); c.drawCentredString(r, r - 3.6, "CMA")
+
+    hoy = hoy_mx()
+    folio = folio_carta(ctx)
+    ancho_util = A4[0] - 32 * mm
+    xirr, rf = ctx["xirr"], ctx["rf"]
+    capital = float(ctx["capital"] or 0)
+    tc_ref = ctx.get("usd_mxn")
+    tc_txt = f" (USD/MXN de referencia al corte: {float(tc_ref):.4f})" if tc_ref else ""
+    h = []
+
+    # Encabezado
+    cab = Table([[Paragraph("C M A", ParagraphStyle("marca", fontName="Times-Roman", fontSize=19, leading=22, textColor=C_TX)),
+                  Paragraph("PRIVATE WEALTH &middot; FINANCIAL LETTER", ParagraphStyle("mr", fontName="Helvetica", fontSize=7.2, textColor=C_ORO_TXT, alignment=TA_RIGHT))]],
+                colWidths=[ancho_util * 0.4, ancho_util * 0.6])
+    cab.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, 0), 0.9, C_ORO), ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                             ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+    h += [cab, Spacer(1, 10), Paragraph(e(f"Ciudad de México, {fp_fecha_larga(hoy).lower()} de {hoy.year}"), st_fecha), Spacer(1, 12)]
+    h.append(Paragraph(f"Estimado(a) {e(ctx['nombre'])}:", st_body)); h.append(Spacer(1, 6))
+    h.append(Paragraph(f"Le compartimos el estado de su patrimonio al día de hoy. Su patrimonio total asciende a <b>{m(ctx['patrimonio'])}</b>, "
+                       f"construido con <b>{m(capital)}</b> de capital aportado. El resultado no realizado de sus inversiones es de "
+                       f"<font color='{col(ctx['pnl'])}'><b>{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</b></font>.", st_body))
+
+    # Resumen patrimonial
+    filas = [["Patrimonio total", f"<b>{m(ctx['patrimonio'])}</b>"]]
+    if ctx.get("valor_posiciones") is not None: filas.append(["Valor de mercado de las posiciones", m(ctx["valor_posiciones"])])
+    filas += [["Liquidez disponible", m(ctx["liquidez"])], ["Capital aportado (depósitos - retiros)", m(capital)]]
+    if ctx.get("costo_posiciones") is not None: filas.append(["Costo de las posiciones abiertas", m(ctx["costo_posiciones"])])
+    filas.append(["Resultado no realizado", f"<font color='{col(ctx['pnl'])}'>{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</font>"])
+    if ctx.get("friccion") is not None: filas.append(["Fricción acumulada (comisiones e IVA)", m(ctx["friccion"])])
+    filas += [["Ingreso pasivo estimado por dividendos (anual)", m(ctx["salario_invisible"])], ["Proyección a 5 años (supuesto de 10% anual)", m(ctx["proyeccion_5a"])]]
+    h += [Paragraph("Resumen patrimonial", st_h2), tabla(filas, [ancho_util * 0.68, ancho_util * 0.32], encabezado=False, alinear_der=(1,))]
+
+    # CETES
+    if xirr is None: cetes_txt = "Aún no contamos con historia suficiente (mínimo 30 días) para comparar su rendimiento contra CETES."
+    elif xirr >= rf: cetes_txt = (f"Su rendimiento real anualizado (XIRR) es de {xirr * 100:+.2f}%, por encima de la tasa libre de riesgo de "
+                                  f"{rf * 100:.2f}% ({(xirr - rf) * 100:+.2f} puntos). Su capital está siendo mejor remunerado que en CETES.")
+    else: cetes_txt = (f"Su rendimiento real anualizado (XIRR) es de {xirr * 100:+.2f}%, por debajo de la tasa libre de riesgo de "
+                       f"{rf * 100:.2f}% ({(xirr - rf) * 100:+.2f} puntos).")
+    h += [Paragraph("¿Le ganamos a CETES?", st_h2), Paragraph(e(cetes_txt), st_body)]
+
+    # Asignación
+    asig = ctx.get("asignacion") or []
+    if asig:
+        filas = [["Clase", "Valor MXN", "% patrimonio", "% invertido", "Parámetro", "Desviación"]]
+        for a in asig:
+            tp = a.get("parametro") is not None
+            filas.append([e(a["clase"]), m(a["valor"]), f"{a['peso_patrimonio']:.1f}%", f"{a['peso_invertido']:.1f}%",
+                          f"{a['parametro']:.0f}%" if tp else "-", f"{a['desviacion']:+.1f} pp" if tp else "-"])
+        pat = float(ctx["patrimonio"] or 0)
+        filas.append(["Liquidez (efectivo)", m(ctx["liquidez"]), f"{(ctx['liquidez'] / pat * 100) if pat else 0:.1f}%", "-", "-", "-"])
+        w = ancho_util / 6
+        h += [Paragraph("Asignación por clase de activo", st_h2), tabla(filas, [w * 1.3, w * 1.1, w * 0.9, w * 0.9, w * 0.9, w * 0.9], alinear_der=(1, 2, 3, 4, 5)),
+              Spacer(1, 4), Paragraph("Los parámetros son los definidos en el Simulador de Rebalanceo de la Terminal. La desviación compara el peso "
+                                      "sobre lo invertido contra el parámetro, en puntos porcentuales.", st_nota)]
+
+    # Composición
+    filas = [["Activo", "Clase", "Títulos", "Costo prom.", "Valor MXN", "Resultado", "Rend.", "Peso"]]
+    for p in ctx["posiciones"]:
+        filas.append([f"<b>{e(p['ticker'])}</b>", e(p["clase"]), tit(p.get("titulos")), m(p.get("costo_promedio")), m(p["valor"]),
+                      f"<font color='{col(p.get('pnl'))}'>{ms(p.get('pnl'))}</font>", f"<font color='{col(p['retorno'])}'>{p['retorno']:+.2f}%</font>", f"{p['peso']:.1f}%"])
+    if len(filas) == 1: filas.append(["Sin posiciones abiertas.", "", "", "", "", "", "", ""])
+    w = ancho_util / 8
+    h += [Paragraph("Composición del portafolio", st_h2),
+          tabla(filas, [w * 0.95, w * 0.85, w * 1.0, w * 1.05, w * 1.1, w * 1.1, w * 0.95, w * 0.75], alinear_der=(2, 3, 4, 5, 6, 7))]
+
+    # Contribución
+    if len(ctx["posiciones"]) >= 2:
+        orden = sorted(ctx["posiciones"], key=lambda p: p.get("pnl", 0))
+        peor, mejor = orden[0], orden[-1]
+        fila = lambda p: f"<b>{e(p['ticker'])}</b> &middot; <font color='{col(p.get('pnl'))}'>{ms(p.get('pnl'))} ({p['retorno']:+.2f}%)</font>"
+        h += [Paragraph("Contribución al resultado", st_h2),
+              tabla([["Mayor contribución", fila(mejor)], ["Menor contribución", fila(peor)]], [ancho_util * 0.5, ancho_util * 0.5], encabezado=False, alinear_der=(1,))]
+
+    # Riesgo
+    r = ctx.get("riesgo") or {}
+    if r:
+        beta = float(r.get("beta", 0) or 0)
+        filas = [["Sensibilidad al mercado (beta vs S&amp;P 500)", f"{beta:.2f}"], ["Rendimiento ajustado por riesgo (Sharpe)", f"{r.get('sharpe', 0):.2f}"],
+                 ["Volatilidad anualizada", f"{r.get('vol_anual', 0) * 100:.1f}%"], ["Caída máxima desde un punto alto", f"{r.get('max_dd', 0):.1f}%"],
+                 ["Pérdida diaria que solo se supera 1 de cada 20 días (VaR 95%)", m(r.get("var_95_mxn", 0))],
+                 ["Escenario de estrés: S&amp;P 500 -20% (impacto estimado por beta)", f"<font color='#6b7280'>{ms(ctx['patrimonio'] * -0.20 * beta)}</font>"]]
+        h += [KeepTogether([Paragraph("Perfil de riesgo (últimos 12 meses)", st_h2), tabla(filas, [ancho_util * 0.72, ancho_util * 0.28], encabezado=False, alinear_der=(1,))])]
+
+    # Flujos
+    f = {k: v for k, v in (ctx.get("flujos") or {}).items() if v}
+    if f:
+        h += [KeepTogether([Paragraph("Flujo de caja acumulado", st_h2), tabla([[e(k), m(v)] for k, v in f.items()], [ancho_util * 0.68, ancho_util * 0.32], encabezado=False, alinear_der=(1,))])]
+
+    # Operaciones recientes
+    act = ctx.get("actividad") or []
+    if act:
+        filas = [["Fecha", "Tipo", "Activo", "Títulos", "T.C.", "Total MXN"]] + [
+            [e(a["fecha"]), e(a["tipo"]), f"<b>{e(a['ticker'])}</b>", tit(a["titulos"]), f"{a['tc']:.4f}", m(a["total"])] for a in act]
+        w = ancho_util / 6
+        h += [Paragraph("Operaciones recientes", st_h2), tabla(filas, [w * 1.1, w * 0.95, w * 0.9, w, w * 0.9, w * 1.15], alinear_der=(3, 4, 5))]
+
+    # Disciplina y escenarios
+    h += [Paragraph("Disciplina y metas", st_h2),
+          Paragraph(f"Aportaciones consecutivas: <b>{ctx['racha']}</b> periodo(s) con frecuencia {e(str(ctx['frecuencia']).lower())}. "
+                    f"Meta «{e(ctx['meta_nombre'])}»: hito de {m(ctx['meta_monto'])}, avance de {ctx['progreso_meta']:.1f}%; faltan {m(ctx['faltante'])}.", st_body),
+          Paragraph("Escenarios observados", st_h2)]
+    for esc in _siguientes_acciones_carta(ctx):
+        h.append(Paragraph(esc, ParagraphStyle("li", parent=st_body, leftIndent=12, bulletIndent=2, spaceAfter=4), bulletText="•"))
+
+    if ctx.get("cio"):
+        caja = Table([[Paragraph(e(ctx["cio"]).replace("\n", "<br/>"), ParagraphStyle("cio", parent=st_body, fontSize=8.6, leading=12.5))]], colWidths=[ancho_util])
+        caja.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), C_SELLO), ("LINEBEFORE", (0, 0), (0, -1), 1.5, C_ORO),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12), ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
+        h += [Paragraph("Boletín del CIO Virtual (informativo)", st_h2), caja, Spacer(1, 4), Paragraph(e(AVISO_BOLETIN_CIO), st_legal)]
+
+    # Sello · Estándar CMA
+    principios = [
+        ("Precisión al centavo", "Su costo se calcula con el tipo de cambio que usted realmente pagó en cada operación, con comisiones e impuestos incluidos."),
+        ("Valuación transparente", f"Cada posición se valúa con precios de cierre de mercado y el tipo de cambio del día{tc_txt}. Las ganancias se presentan como no realizadas hasta la venta."),
+        ("Rendimiento real", "Su tasa anual (XIRR) considera la fecha exacta de cada depósito y retiro, y se contrasta contra CETES como referencia libre de riesgo."),
+        ("Riesgo medido, no supuesto", "Doce meses de datos diarios: sensibilidad al mercado, caída máxima y pérdida diaria de referencia (VaR 95%)."),
+        ("Confidencialidad", "Su información se resguarda en una base de datos privada con acceso protegido por credenciales cifradas. Solo usted y su gestor la consultan."),
+        ("Información, no promesas", "Este documento es un registro fiel de su patrimonio. Toda proyección declara sus supuestos y ninguna cifra se presenta como garantía."),
+    ]
+    st_pt = ParagraphStyle("pt", parent=st_body, fontSize=8.2, leading=11.6, textColor=C_SOFT)
+    celda = lambda t, d: Paragraph(f"<font name='Helvetica-Bold' color='#1f2937' size='8.8'>{t}</font><br/>{e(d)}", st_pt)
+    ancho_in = ancho_util - 28
+    grid = Table([[celda(*principios[i]), celda(*principios[i + 1])] for i in (0, 2, 4)], colWidths=[ancho_in / 2, ancho_in / 2])
+    grid.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.5, C_SELLO_BORDE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                              ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 14), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    enc = Table([[Sello(), Paragraph("<font name='Helvetica' size='7' color='#8a7a4a'>E S T Á N D A R &nbsp; C M A</font><br/>"
+                                     "<font name='Times-Italic' size='14' color='#8a6d1f'>Nuestro compromiso con su patrimonio</font>",
+                                     ParagraphStyle("st", parent=st_body, leading=17))]], colWidths=[18 * mm, ancho_in - 18 * mm])
+    enc.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    interior = [enc, Spacer(1, 8), Paragraph("Cada cifra de esta carta se construye con el mismo cuidado con el que usted construyó su patrimonio. "
+                                              "Estos son los principios que respaldan cada número que lee.", st_soft), Spacer(1, 4), grid, Spacer(1, 8),
+                Paragraph(f"Emitido el {hoy:%d/%m/%Y} &middot; Folio {folio}", ParagraphStyle("fo", parent=st_body, fontSize=7.4, textColor=C_ORO_TXT, alignment=TA_RIGHT))]
+    sello = Table([[interior]], colWidths=[ancho_util])
+    sello.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), C_SELLO), ("BOX", (0, 0), (-1, -1), 0.6, C_SELLO_BORDE), ("LINEABOVE", (0, 0), (-1, 0), 1.6, C_ORO),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14), ("TOPPADDING", (0, 0), (-1, -1), 14), ("BOTTOMPADDING", (0, 0), (-1, -1), 12)]))
+    h += [Spacer(1, 22), KeepTogether([sello])]
+
+    # Firma y aviso legal
+    h += [Spacer(1, 20), Paragraph("Quedamos a sus órdenes para revisar cualquier punto.", st_body), Spacer(1, 6),
+          Paragraph("<font name='Times-Roman' size='12'>CMA &middot; Private Wealth</font><br/><font color='#6b7280'>Terminal APPortafolio</font>", st_body),
+          Spacer(1, 18), Table([[""]], colWidths=[ancho_util], style=[("LINEABOVE", (0, 0), (-1, 0), 0.5, C_LINEA)]),
+          Paragraph("Documento informativo generado automáticamente con datos registrados por el cliente y cotizaciones de mercado (Yahoo Finance). "
+                    "Los rendimientos son no realizados y no garantizan resultados futuros. Las proyecciones usan supuestos explícitos y no constituyen "
+                    "una recomendación personalizada de inversión.<br/><br/>" + e(AVISO_LECTURA_V5), st_legal)]
+
+    def fondo(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(C_PAPEL); canvas.rect(0, 0, A4[0], A4[1], stroke=0, fill=1)
+        canvas.setFont("Helvetica", 6.8); canvas.setFillColor(C_ORO_TXT)
+        canvas.drawString(16 * mm, 10 * mm, f"CMA · Private Wealth · Folio {folio}")
+        canvas.drawRightString(A4[0] - 16 * mm, 10 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=18 * mm, bottomMargin=18 * mm,
+                            title=f"CMA Financial Letter · {ctx['nombre']}", author="CMA · Private Wealth", subject=f"Folio {folio}")
+    doc.build(h, onFirstPage=fondo, onLaterPages=fondo)
+    return buf.getvalue()
+
+
 def render_carta_cma(ctx):
-    st.markdown("---")
-    st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; "
-                f"margin-bottom:6px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>"
-                f"{svg_icon('award', color='#d4af37', size=18)}CMA Financial Letter</h4>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Tu carta ejecutiva de banca privada. Descárgala y "
-                "guárdala como PDF desde el navegador (Ctrl+P → Guardar como PDF).</p>", unsafe_allow_html=True)
-    if not ctx.get("cio"):
-        st.caption("El Boletín del CIO Virtual se agrega a la carta cuando lo generas en Modo Pro durante esta sesión.")
+    """Rediseño · "Carta protagonista": tarjeta con filo dorado, sello CMA, descarga en PDF y vista previa."""
+    st.markdown("<br>", unsafe_allow_html=True)
     try:
         carta = generar_carta_cma(ctx)
-    except Exception as e:
-        log_app.warning("Carta CMA · %s", e)
+    except Exception as ex:
+        log_app.warning("Carta CMA · %s", ex)
         st.caption("No pude generar la carta en este momento.")
         return
-    c1, c2 = st.columns([1, 2])
-    c1.download_button("Descargar Carta CMA", data=carta.encode("utf-8"),
-                       file_name=f"Carta_CMA_{re.sub(r'[^A-Za-z0-9_-]', '_', str(ctx['nombre']))}_{hoy_mx():%Y%m%d}.html",
-                       mime="text/html", use_container_width=True)
-    with c2.expander("Vista previa", expanded=False):
-        import streamlit.components.v1 as components
-        components.html(carta, height=1100, scrolling=True)
+    nombre_archivo = f"Carta_CMA_{re.sub(r'[^A-Za-z0-9_-]', '_', str(ctx['nombre']))}_{hoy_mx():%Y%m%d}"
+    try:
+        pdf, pdf_error = generar_carta_pdf(ctx), None
+    except Exception as ex:   # sin reportlab o error de maquetación: se ofrece el HTML como antes
+        pdf, pdf_error = None, ex
+        log_app.warning("Carta CMA · PDF no disponible, se ofrece HTML: %s", ex)
+    with st.container(key="carta_card"):
+        c_txt, c_btn = st.columns([2.2, 1], vertical_alignment="center")
+        c_txt.markdown(f"<div class='ap-carta notranslate' translate='no'>{SELLO_SVG.replace('#8a6d1f', '#e2c575')}"
+                       "<div><h3>CMA Financial Letter</h3><p>Tu carta ejecutiva de banca privada al corte de hoy: patrimonio, "
+                       "asignación, riesgo y operaciones, con folio verificable.</p></div></div>", unsafe_allow_html=True)
+        if pdf is not None:
+            c_btn.download_button("Descargar carta (PDF)", data=pdf, file_name=f"{nombre_archivo}.pdf", mime="application/pdf",
+                                  use_container_width=True, key="carta_pdf")
+        else:
+            c_btn.download_button("Descargar carta (HTML)", data=carta.encode("utf-8"), file_name=f"{nombre_archivo}.html",
+                                  mime="text/html", use_container_width=True, key="carta_html")
+        if not ctx.get("cio"):
+            st.caption("El Boletín del CIO Virtual se agrega a la carta cuando lo generas en Modo Pro durante esta sesión.")
+        with st.expander("Vista previa", expanded=False):
+            import streamlit.components.v1 as components
+            components.html(carta, height=1100, scrolling=True)
 
 
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
@@ -2198,107 +2587,210 @@ LEYENDA_PORTADA = "Claridad para decidir. Rigor para construir patrimonio."
 # ==========================================
 # 4. PORTADA · ACCESO DE CLIENTES (DOS COLUMNAS, RESPONSIVA)
 # ==========================================
+# --- Portada de acceso: 4 variantes animadas (mismo diseño que la vista previa "Portadas APPortafolio") ---
+# LOGIN_VARIANTE es la definitiva. Para comparar en localhost sin tocar código: http://localhost:8501/?portada=3
+LOGIN_VARIANTES = {1: "Hilo de oro", 2: "Doble trazo", 3: "Trazo vivo", 4: "Marco de luz"}
+LOGIN_VARIANTE = 4   # definitiva: Marco de luz con dos ondas
+
+
+def variante_portada():
+    try:
+        v = int(st.query_params.get("portada", LOGIN_VARIANTE))
+    except Exception:
+        v = LOGIN_VARIANTE
+    return v if v in LOGIN_VARIANTES else LOGIN_VARIANTE
+
+
+_ONDA_A = "M 60 940 C 150 700, 330 600, 520 500 S 840 300, 990 -40"
+_ONDA_B = "M 150 960 C 250 720, 430 630, 620 530 S 950 330, 1110 -40"
+_ONDA_B_INV = "M 1110 -40 C 950 330, 810 430, 620 530 C 430 630, 250 720, 150 960"   # misma curva, sentido opuesto
+SVG_ONDA_PORTADA = (
+    '<svg class="ap-onda" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">'
+    '<defs><linearGradient id="apOro" gradientUnits="userSpaceOnUse" x1="0" y1="900" x2="1000" y2="0">'
+    '<stop offset="0" stop-color="#c9a24a" stop-opacity="0"/><stop offset=".35" stop-color="#c9a24a" stop-opacity=".38"/>'
+    '<stop offset=".7" stop-color="#e9d39a" stop-opacity=".32"/><stop offset="1" stop-color="#c9a24a" stop-opacity="0"/>'
+    '</linearGradient><filter id="apHalo" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="4"/></filter></defs>'
+    f'<path class="base b1" pathLength="100" d="{_ONDA_A}"/>'
+    f'<path class="base b2" pathLength="100" d="{_ONDA_B}"/>'
+    f'<path class="halo l1" pathLength="100" d="{_ONDA_A}"/><path class="luz l1" pathLength="100" d="{_ONDA_A}"/>'
+    f'<path class="halo l2" pathLength="100" d="{_ONDA_B}"/><path class="luz l2" pathLength="100" d="{_ONDA_B}"/>'   # ambas luces suben
+    '</svg>')
+
+_ICONO_USUARIO = ("url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+                  "stroke='%237d8494' stroke-width='1.6'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7'/%3E%3C/svg%3E\")")
+_ICONO_CANDADO = ("url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+                  "stroke='%237d8494' stroke-width='1.6'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E\")")
+
+_CSS_PORTADA_BASE = """
+<style>
+:root { --pt-ob: #050608; --pt-card: rgba(11,13,18,0.94); --pt-campo: #10131a; --pt-linea: rgba(255,255,255,0.08);
+        --pt-linea-2: #232833; --pt-tx: #eef0f4; --pt-tx-2: #a3a9b6; --pt-tx-3: #6b7280;
+        --pt-oro: #c9a24a; --pt-oro-claro: #e9d39a; --pt-oro-luz: #fff4d6; }
+[data-testid="stAppViewContainer"], .stApp {
+    background: radial-gradient(1100px 700px at 18% 28%, rgba(255,255,255,0.035), transparent 62%),
+                radial-gradient(900px 600px at 88% 90%, rgba(201,162,74,0.05), transparent 60%), var(--pt-ob) !important; }
+
+/* Onda dorada fija detrás de todo; el contenido queda por encima */
+.ap-onda { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
+.ap-onda .base { fill: none; stroke: url(#apOro); stroke-width: 1.1; }
+.ap-onda .luz, .ap-onda .halo { fill: none; stroke-linecap: round; stroke-dasharray: 7 100; stroke-dashoffset: 7; opacity: 0; }
+.ap-onda .luz { stroke: var(--pt-oro-luz); stroke-width: 1.8; }
+.ap-onda .halo { stroke: var(--pt-oro); stroke-width: 7; filter: url(#apHalo); }
+.ap-onda .b2, .ap-onda .l2 { display: none; }
+[data-testid="stHorizontalBlock"] { position: relative; z-index: 1; min-height: calc(100vh - 7rem); }
+
+/* Marca */
+.ap-marca { container-type: inline-size; width: 100%; }
+.portada-title { font-family: 'Montserrat', 'Segoe UI', sans-serif !important; font-weight: 400; color: var(--pt-tx);
+    font-size: clamp(1.2rem, 7.4cqi, 3.4rem); letter-spacing: 0.32em; line-height: 1.25; white-space: nowrap; margin: 0; }
+.portada-title span { display: block; }
+.portada-title .regla { display: block; width: 76px; height: 2px; margin: 0.3em 0 0.4em;
+    background: linear-gradient(90deg, var(--pt-oro), var(--pt-oro-claro)); transform-origin: left; }
+.portada-subtitle { margin: 26px 0 0; font-family: 'Montserrat', 'Segoe UI', sans-serif; font-weight: 400;
+    font-size: clamp(0.82rem, 1.25vw, 1rem); letter-spacing: 0.08em; color: var(--pt-tx-2); }
+
+/* Tarjeta de acceso = el formulario de Streamlit */
+[data-testid="stForm"] { position: relative; max-width: 440px; margin-left: auto; background: var(--pt-card) !important;
+    border: 1px solid var(--pt-linea) !important; border-radius: 14px !important; padding: 34px 32px 26px !important; }
+.ap-ojo { margin: 0 0 6px !important; font-family: 'Montserrat', 'Segoe UI', sans-serif; font-size: 0.72rem !important;
+    letter-spacing: 0.28em; text-transform: uppercase; color: var(--pt-tx-2) !important; }
+[data-testid="stForm"] [data-testid="stWidgetLabel"] p { font-family: 'Inter', sans-serif; font-size: 0.8rem !important;
+    font-weight: 500; color: #c9ced8 !important; }
+[data-testid="stForm"] [data-baseweb="input"] { min-height: 46px; border-radius: 8px !important; background-color: var(--pt-campo) !important;
+    border: 1px solid var(--pt-linea-2) !important; transition: border-color .3s ease, box-shadow .3s ease; }
+[data-testid="stForm"] [data-baseweb="input"]:focus-within { border-color: rgba(201,162,74,0.55) !important;
+    box-shadow: 0 0 0 3px rgba(201,162,74,0.10) !important; }
+[data-testid="stForm"] [data-baseweb="base-input"], [data-testid="stForm"] input { background: transparent !important; }
+[data-testid="stForm"] input { color: var(--pt-tx) !important; font-family: 'Inter', sans-serif !important; font-size: 0.88rem !important; }
+[data-testid="stForm"] input::placeholder { color: #5f6675 !important; }
+.st-key-login_usr [data-baseweb="input"] { background: var(--pt-campo) __ICONO_USUARIO__ no-repeat 14px center / 17px !important; }
+.st-key-login_pwd [data-baseweb="input"] { background: var(--pt-campo) __ICONO_CANDADO__ no-repeat 14px center / 17px !important; }
+.st-key-login_usr input, .st-key-login_pwd input { padding-left: 42px !important; }
+[data-testid="stForm"] [data-baseweb="input"] button svg { fill: #7d8494 !important; }
+[data-testid="InputInstructions"] { display: none !important; }
+[data-testid="stFormSubmitButton"] button { min-height: 46px; margin-top: 8px; border: 0 !important; border-radius: 8px !important;
+    background: linear-gradient(135deg, #b9913f 0%, #d9bb72 55%, #c9a24a 100%) !important; color: #15120b !important;
+    transition: transform .25s ease, box-shadow .25s ease, filter .25s ease !important; }
+[data-testid="stFormSubmitButton"] button p { font-family: 'Inter', sans-serif !important; font-weight: 600 !important; font-size: 0.92rem !important; letter-spacing: 0.02em; }
+[data-testid="stFormSubmitButton"] button:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(201,162,74,0.22) !important; filter: brightness(1.04); }
+.ap-pie { margin: 6px 0 0 !important; text-align: center; font-size: 0.68rem !important; color: var(--pt-tx-3) !important; letter-spacing: 0.04em; }
+
+/* Animaciones comunes */
+@keyframes ptIzq { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes ptDer { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes ptAbajo { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+@keyframes ptAparece { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ptCrece { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes ptRecorrido { 0% { stroke-dashoffset: 7; opacity: 0; } 4% { opacity: 1; } 34% { opacity: 1; }
+    38% { stroke-dashoffset: -100; opacity: 0; } 100% { stroke-dashoffset: -100; opacity: 0; } }
+@keyframes ptDibuja { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+@keyframes ptDestello { 0% { background-position: 100% 0; } 22% { background-position: 0% 0; } 100% { background-position: 0% 0; } }
+@property --pt-ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes ptGiro { to { --pt-ang: 360deg; } }
+
+/* Teléfono: Streamlit apila las columnas; todo entra desde abajo */
+@media (max-width: 640px) {
+    [data-testid="stHorizontalBlock"] { min-height: auto; padding-top: 18px; }
+    .ap-marca { text-align: center; }
+    .portada-title { font-size: clamp(1.1rem, 8.2cqi, 2.2rem); letter-spacing: 0.22em; padding-left: 0.22em; }
+    .portada-title .regla { margin-left: auto; margin-right: auto; transform-origin: center; }
+    .portada-subtitle { margin-top: 18px; margin-bottom: 18px; }
+    [data-testid="stForm"] { margin: 0 auto; padding: 28px 22px 22px !important; animation-name: ptAbajo !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ap-onda *, .ap-marca *, .ap-marca, [data-testid="stForm"], [data-testid="stForm"]::before { animation: none !important; }
+}
+__VARIANTE__
+</style>
+"""
+
+_CSS_PORTADA_VARIANTE = {
+    # 1 · Hilo de oro: fiel a la referencia. Marca desde la izquierda, tarjeta desde la derecha, luz cada 9 s.
+    1: """
+.portada-title span:first-child { animation: ptIzq .9s cubic-bezier(.2,.7,.2,1) .1s both; }
+.portada-title span:last-child { animation: ptIzq .9s cubic-bezier(.2,.7,.2,1) .25s both; }
+.portada-title .regla { animation: ptCrece .8s cubic-bezier(.2,.7,.2,1) .55s both; }
+.portada-subtitle { animation: ptAparece 1s ease .8s both; }
+[data-testid="stForm"] { animation: ptDer 1s cubic-bezier(.2,.7,.2,1) .35s both; }
+.ap-onda .base { animation: ptAparece 1.6s ease .2s both; }
+.ap-onda .l1 { animation: ptRecorrido 9s cubic-bezier(.45,.05,.35,1) 1.8s infinite; }
+""",
+    # 2 · Doble trazo: dos ondas, luces en sentidos opuestos y desfasadas. La tarjeta sube.
+    2: """
+.ap-onda .b2, .ap-onda .l2 { display: inline; }
+.ap-marca { animation: ptAparece 1.1s ease .1s both; }
+.portada-title .regla { animation: ptCrece .8s cubic-bezier(.2,.7,.2,1) .6s both; }
+.portada-subtitle { animation: ptAbajo .9s ease .7s both; }
+[data-testid="stForm"] { animation: ptAbajo 1s cubic-bezier(.2,.7,.2,1) .4s both; }
+.ap-onda .base { animation: ptAparece 1.6s ease both; }
+.ap-onda .b2 { opacity: .55; }
+.ap-onda .l1 { animation: ptRecorrido 11s cubic-bezier(.45,.05,.35,1) 1.6s infinite; }
+.ap-onda .l2 { animation: ptRecorrido 11s cubic-bezier(.45,.05,.35,1) 7.1s infinite; }
+""",
+    # 3 · Trazo vivo: la onda se dibuja al abrir; destello champaña sobre el título cada ~10 s.
+    3: """
+.ap-onda .base { stroke-dasharray: 100; animation: ptDibuja 2.6s cubic-bezier(.6,0,.2,1) .2s both; }
+.ap-onda .l1 { animation: ptRecorrido 10s cubic-bezier(.45,.05,.35,1) 3s infinite; }
+.ap-marca { animation: ptIzq 1s cubic-bezier(.2,.7,.2,1) .3s both; }
+.portada-title .regla { animation: ptCrece .8s cubic-bezier(.2,.7,.2,1) 1s both; }
+.portada-subtitle { animation: ptAparece 1s ease 1.2s both; }
+[data-testid="stForm"] { animation: ptDer 1s cubic-bezier(.2,.7,.2,1) .7s both; }
+.portada-title { background: linear-gradient(100deg, var(--pt-tx) 0%, var(--pt-tx) 42%, var(--pt-oro-claro) 50%, var(--pt-tx) 58%, var(--pt-tx) 100%);
+    background-size: 280% 100%; background-position: 100% 0; -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; animation: ptDestello 10s ease-in-out 3.4s infinite; }
+@media (prefers-reduced-motion: reduce) { .ap-onda .base { stroke-dasharray: none; } }
+""",
+    # 4 · Marco de luz (definitiva): dos ondas como en la 2 + luz que recorre el borde de la tarjeta.
+    4: """
+.ap-onda .b2, .ap-onda .l2 { display: inline; }
+.ap-onda .b2 { opacity: .55; }
+.ap-onda .l2 { animation: ptRecorrido 14s cubic-bezier(.45,.05,.35,1) 13s infinite; }
+.portada-title span:first-child { animation: ptIzq .9s cubic-bezier(.2,.7,.2,1) .1s both; }
+.portada-title span:last-child { animation: ptIzq .9s cubic-bezier(.2,.7,.2,1) .25s both; }
+.portada-title .regla { animation: ptCrece .8s cubic-bezier(.2,.7,.2,1) .55s both; }
+.portada-subtitle { animation: ptAparece 1s ease .8s both; }
+[data-testid="stForm"] { animation: ptDer 1s cubic-bezier(.2,.7,.2,1) .35s both; }
+.ap-onda .base { animation: ptAparece 1.6s ease .2s both; }
+.ap-onda .l1 { animation: ptRecorrido 14s cubic-bezier(.45,.05,.35,1) 6s infinite; }
+[data-testid="stForm"]::before { content: ""; position: absolute; inset: -1px; border-radius: 15px; padding: 1px; pointer-events: none;
+    background: conic-gradient(from var(--pt-ang), transparent 0deg, transparent 300deg, rgba(233,211,154,0) 318deg, rgba(255,244,214,.85) 340deg, rgba(233,211,154,0) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: ptGiro 7s linear 1.4s infinite; }
+""",
+}
+
+
+def css_portada(variante):
+    return (_CSS_PORTADA_BASE.replace("__ICONO_USUARIO__", _ICONO_USUARIO).replace("__ICONO_CANDADO__", _ICONO_CANDADO)
+            .replace("__VARIANTE__", _CSS_PORTADA_VARIANTE.get(variante, _CSS_PORTADA_VARIANTE[1])))
+
+
 if st.session_state["user_id"] is None:
-    st.markdown("""
-    <style>
-    /* Fondo dinámico en CSS puro: halos radiales (oro, esmeralda, burdeos) + retícula geométrica casi imperceptible */
-    [data-testid="stAppViewContainer"], .stApp {
-        background:
-            radial-gradient(900px 520px at 14% 22%, rgba(212, 175, 55, 0.09), transparent 62%),
-            radial-gradient(760px 480px at 86% 78%, rgba(52, 211, 153, 0.05), transparent 60%),
-            radial-gradient(640px 420px at 70% 8%, rgba(128, 24, 48, 0.10), transparent 60%),
-            repeating-linear-gradient(45deg, rgba(212, 175, 55, 0.018) 0 1px, transparent 1px 56px),
-            repeating-linear-gradient(-45deg, rgba(212, 175, 55, 0.018) 0 1px, transparent 1px 56px),
-            #04060b !important;
-        background-size: 140% 140%, 140% 140%, 140% 140%, auto, auto, auto !important;
-        animation: ap-deriva 26s ease-in-out infinite alternate;
-    }
-    @keyframes ap-deriva {
-        from { background-position: 0% 0%, 100% 100%, 60% 0%, 0 0, 0 0, 0 0; }
-        to   { background-position: 12% 10%, 88% 90%, 48% 12%, 0 0, 0 0, 0 0; }
-    }
-    /* Entrada suave de abajo hacia arriba */
-    @keyframes ap-sube { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
-    
-    /* Tamaño fluido del título. Montserrat es ancha: "APPORTAFOLIO" mide ~9.9em con el espaciado, así que el
-       mínimo anterior (2.5rem = 40px) pedía ~395px y en un celular de 360px se cortaba la última "O".
-       Ahora el tamaño se calcula contra el ancho real de la columna (cqi) y, si el navegador no lo soporta, contra la pantalla (vw). */
-    .portada-wrap { container-type: inline-size; width: 100%; }
-    .portada-title {
-        font-family: 'Montserrat', sans-serif !important;   /* el headingFont de config.toml (Playfair) no aplica a la portada */
-        font-weight: 200;
-        font-size: clamp(1.5rem, 8.6vw, 4.5rem);
-        font-size: clamp(1.5rem, 9.6cqi, 4.5rem);
-        letter-spacing: 0.15em;
-        padding-right: 0.15em;            /* el último espaciado queda dentro de la caja: el degradado ya no recorta la "O" */
-        white-space: nowrap;
-        overflow-wrap: normal;
-        text-align: left;
-        line-height: 1.1;
-        margin-bottom: 5px;
-        background: linear-gradient(to right, #bf953f 0%, #fcf6ba 25%, #b38728 50%, #fbf5b7 75%, #aa771c 100%);
-        background-size: 200% auto;
-        color: #000;
-        background-clip: text;
-        text-fill-color: transparent;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        animation: ap-sube 0.9s ease-out both, shine 6s linear 0.9s infinite;
-    }
-    @keyframes shine { to { background-position: 200% center; } }
+    _variante = variante_portada()
+    st.markdown(css_portada(_variante), unsafe_allow_html=True)
+    st.markdown(SVG_ONDA_PORTADA, unsafe_allow_html=True)
 
-    .portada-subtitle { font-family: 'Playfair Display', serif; font-style: italic; color: #8b949e; text-align: left; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 40px; margin-top: 10px; animation: ap-sube 0.9s ease-out 0.15s both; }
-
-    /* Efecto cristal: negro semitransparente, desenfoque y filo dorado solo arriba/izquierda */
-    [data-testid="stForm"] {
-        background: rgba(0, 0, 0, 0.45) !important; border: none !important;
-        border-top: 1px solid rgba(212, 175, 55, 0.2) !important; border-left: 1px solid rgba(212, 175, 55, 0.2) !important;
-        border-radius: 16px !important;
-        backdrop-filter: blur(10px) !important; -webkit-backdrop-filter: blur(10px) !important; padding: 3rem 2.5rem !important;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important; margin-top: 20px;
-        animation: ap-sube 0.9s ease-out 0.3s both;
-    }
-    [data-testid="stForm"] label { display: none !important; }
-    [data-testid="stForm"] input { background: transparent !important; border: none !important; border-bottom: 1px solid #1f2937 !important; color: #ffffff !important; border-radius: 0 !important; font-family: 'Inter', sans-serif !important; font-weight: 300 !important; padding: 1rem 0 !important; font-size: 0.9rem !important; transition: border-color 0.5s ease !important; text-align: center; }
-    [data-testid="stForm"] input::placeholder { color: #8b949e !important; text-align: center; letter-spacing: 2px; text-transform: uppercase;}
-    [data-testid="stForm"] input:focus { border-bottom: 1px solid #d4af37 !important; box-shadow: none !important; outline: none !important; background: transparent !important; }
-    /* Microinteracción: resplandor dorado sutil al enfocar un campo */
-    [data-testid="stForm"] [data-baseweb="input"] { transition: box-shadow 0.35s ease, border-color 0.35s ease !important; }
-    [data-testid="stForm"] [data-baseweb="input"]:focus-within {
-        border-color: rgba(212, 175, 55, 0.55) !important;
-        box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.25), 0 0 18px rgba(212, 175, 55, 0.18) !important;
-    }
-    [data-testid="stFormSubmitButton"] button { background: linear-gradient(135deg, #bf953f 0%, #e2c575 100%) !important; color: #02050a !important; font-weight: 600 !important; font-family: 'Montserrat', sans-serif !important; letter-spacing: 3px !important; text-transform: uppercase !important; border: none !important; border-radius: 8px !important; padding: 0.8rem !important; margin-top: 40px !important; width: 100%; transition: all 0.3s ease !important;}
-    [data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 20px rgba(191, 149, 63, 0.4) !important; }
-    
-    @media (max-width: 800px) {
-        .portada-title { text-align: center; letter-spacing: 0.1em; padding-right: 0.1em; }
-        .portada-subtitle { text-align: center; }
-        .portada-subtitle { font-size: 1rem; letter-spacing: 0.08em; margin-bottom: 18px; }
-        [data-testid="stForm"] { padding: 2rem 1.4rem !important; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-        [data-testid="stAppViewContainer"], .stApp, .portada-title, .portada-subtitle, [data-testid="stForm"] { animation: none !important; }
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    c_izq, c_der = st.columns([1.3, 1])
+    c_izq, c_der = st.columns([1.25, 1], gap="large", vertical_alignment="center")
     with c_izq:
-        st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        st.markdown("<div class='portada-wrap notranslate' translate='no'>"
-                    "<h1 class='portada-title'>TERMINAL<br>APPORTAFOLIO</h1>"
-                    f"<p class='portada-subtitle'>{html_seguro(LEYENDA_PORTADA)}</p>"
-                    "</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ap-marca notranslate' translate='no'>"
+                    "<div class='portada-title' role='heading' aria-level='1'>"
+                    "<span>TERMINAL</span><i class='regla'></i><span>APPORTAFOLIO</span></div>"
+                    f"<p class='portada-subtitle'>{html_seguro(LEYENDA_PORTADA)}</p></div>", unsafe_allow_html=True)
     with c_der:
-        st.markdown("<br><br>", unsafe_allow_html=True)
         with st.form("login_form"):
-            usr = st.text_input("Usuario", placeholder="IDENTIFICADOR")
-            pwd = st.text_input("Contraseña", type="password", placeholder="CLAVE DE ACCESO")
-            if st.form_submit_button("ACCEDER", use_container_width=True):
+            st.markdown("<p class='ap-ojo'>Acceso privado</p>", unsafe_allow_html=True)
+            usr = st.text_input("Identificador", placeholder="Ingresa tu identificador", key="login_usr")
+            pwd = st.text_input("Clave de acceso", type="password", placeholder="Ingresa tu clave de acceso", key="login_pwd")
+            enviar = st.form_submit_button("Acceder", use_container_width=True)
+            st.markdown("<p class='ap-pie'>Entorno privado · Acceso protegido</p>", unsafe_allow_html=True)
+            if enviar:
                 uid_ok = autenticar(db_conn, usr, pwd)
-                if uid_ok: st.session_state["user_id"] = uid_ok; st.rerun()
-                else: st.error("Credenciales incorrectas.")
+                if uid_ok:
+                    st.session_state.pop("login_pwd", None)   # la clave no se queda en la sesión
+                    st.session_state["user_id"] = uid_ok
+                    st.rerun()
+                else:
+                    st.error("Credenciales incorrectas.")
     st.stop()
 
 # ==========================================
@@ -3013,22 +3505,35 @@ st.markdown(f"<div class='ap-masthead notranslate' translate='no'>"
             f"<div class='ap-meta-item'><span class='ap-meta-label'>Último registro</span><span class='ap-meta-value'>{html_seguro(_ultimo_mov)}</span></div>"
             f"</div></div>", unsafe_allow_html=True)
 
-k1, k2, k3, k4 = st.columns([1.45, 1, 1, 1])
-k1.markdown(f"<div class='metric-card metric-card--primary notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
+_MODO_PRO = st.session_state.get("modo_pro_toggle", False)
+k1, k2, k3, k4 = st.columns([1.45, 1, 1, 1]) if _MODO_PRO else (_CONTENEDOR_SILENCIOSO,) * 4
+k1.markdown(f"<div class='metric-card metric-card--primary kpi kpi-1 notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
 _sub_cap = (f"Costo de posiciones: ${total_invertido:,.2f}" if hay_aportaciones
             else "Sin depósitos registrados: se muestra el costo de tus posiciones")
-k2.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Capital Aportado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${capital_aportado:,.2f}</div><div class='metric-subtext'>{_sub_cap}</div></div>", unsafe_allow_html=True)
+k2.markdown(f"<div class='metric-card kpi kpi-2 notranslate' translate='no'><div class='metric-title'>Capital Aportado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_cap}</span></span></div><div class='metric-value'>${capital_aportado:,.2f}</div><div class='metric-subtext'>{_sub_cap}</div></div>", unsafe_allow_html=True)
 
 if st.session_state.get("modo_pro_toggle", False):
-    k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Liquidez Disponible <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
+    k3.markdown(f"<div class='metric-card kpi kpi-3 notranslate' translate='no'><div class='metric-title'>Liquidez Disponible <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
     c_pnl = "text-neon-green" if pnl_global >= 0 else "text-neon-red"
-    k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>P&L Neto Acumulado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pnl}</span></span></div><div class='metric-value {c_pnl}'>${pnl_global:+,.2f}</div><div class='metric-subtext {c_pnl}'>{retorno_global:+.2f}%</div></div>", unsafe_allow_html=True)
+    k4.markdown(f"<div class='metric-card kpi kpi-4 notranslate' translate='no'><div class='metric-title'>P&L Neto Acumulado <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pnl}</span></span></div><div class='metric-value {c_pnl}'>${pnl_global:+,.2f}</div><div class='metric-subtext {c_pnl}'>{retorno_global:+.2f}%</div></div>", unsafe_allow_html=True)
 else:
+    # Rediseño · "Patrimonio protagonista": un solo bloque; el patrimonio grande y un libro mayor a la derecha.
     ganancia_neta = pnl_global
-    c_gan = "text-neon-green" if ganancia_neta >= 0 else "text-neon-red"
-    texto_simple = "Ganancia Generada" if ganancia_neta >= 0 else "Pérdida Temporal"
-    k3.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>Efectivo Libre <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
-    k4.markdown(f"<div class='metric-card notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div><div class='metric-subtext {c_gan}'>{retorno_global:+.2f}% de rendimiento</div></div>", unsafe_allow_html=True)
+    c_gan = "ap-pos" if ganancia_neta >= 0 else "ap-neg"
+    texto_simple = "ganancia generada" if ganancia_neta >= 0 else "pérdida temporal"
+    _tt = lambda t: f"<span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{t}</span></span>"
+    st.markdown(
+        f"<div class='ap-hero ap-filo notranslate' translate='no'>"
+        f"<div class='izq'><p class='ap-t'>Patrimonio total {_tt(tt_pat)}</p><p class='ap-v'>${total_portafolio:,.2f}</p>"
+        f"<p class='ap-s'><span class='{c_gan}'>{mxn_signo(ganancia_neta)} · {retorno_global:+.2f}%</span> {texto_simple} en tus posiciones</p></div>"
+        f"<div class='der'>"
+        f"<div><p class='ap-t'>Capital aportado {_tt(tt_cap)}</p><p class='ap-v'>${capital_aportado:,.2f}</p></div>"
+        f"<div><p class='ap-t'>Efectivo libre {_tt(tt_liq)}</p><p class='ap-v ap-oro'>${liquidez_mxn:,.2f}</p></div>"
+        f"<div><p class='ap-t'>Costo de posiciones {_tt('Lo que pagaste por las posiciones que tienes hoy, con comisiones y tipo de cambio.')}</p>"
+        f"<p class='ap-v'>${total_invertido:,.2f}</p></div>"
+        f"</div></div>", unsafe_allow_html=True)
+    k3.markdown(f"<div class='metric-card kpi kpi-3 notranslate' translate='no'><div class='metric-title'>Efectivo Libre <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
+    k4.markdown(f"<div class='metric-card kpi kpi-4 notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div><div class='metric-subtext {c_gan}'>{retorno_global:+.2f}% de rendimiento</div></div>", unsafe_allow_html=True)
 
 # 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN
 st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('trend', color='#d4af37', size=18)}La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
@@ -3064,12 +3569,13 @@ if not cash_df.empty:
         style_financial_figure(fig_snow, height=320, showlegend=True)
         fig_snow.update_layout(hovermode="x unified")
         fig_snow.update_yaxes(tickprefix="$")
-        if _bola_v2 is not None:   # Sprint 2 · Capital vs Valor vs CETES; si falla, se pinta la gráfica original intacta
-            fig_snow_v2, resumen_bola = _bola_v2
-            st.markdown(resumen_bola, unsafe_allow_html=True)
-            st.plotly_chart(fig_snow_v2, use_container_width=True, config=plotly_config)
-        else:
-            st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
+        with st.container(key="bola_card"):   # tarjeta con filo dorado y luz (CSS .st-key-bola_card)
+            if _bola_v2 is not None:   # Sprint 2 · Capital vs Valor vs CETES; si falla, se pinta la gráfica original intacta
+                fig_snow_v2, resumen_bola = _bola_v2
+                st.markdown(resumen_bola, unsafe_allow_html=True)
+                st.plotly_chart(fig_snow_v2, use_container_width=True, config=plotly_config, key="bola_nieve")
+            else:
+                st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
     else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
 else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
 
@@ -3112,11 +3618,12 @@ if not cash_df.empty:
                 if curr_strk > max_strk: max_strk = curr_strk
         racha_maxima = max_strk
 
+# Paleta de la racha: misma familia dorada de la portada (antes amarillo/naranja/cian)
 if racha_actual == 0: color_racha, icon_racha, rango_txt = "#64748b", "circle", "Inactivo"
-elif racha_actual <= 2: color_racha, icon_racha, rango_txt = "#fbbf24", "spark", "Iniciador"
-elif racha_actual <= 5: color_racha, icon_racha, rango_txt = "#f97316", "flame", "Constante"
-elif racha_actual <= 11: color_racha, icon_racha, rango_txt = "#00f0ff", "bolt", "Pro"
-else: color_racha, icon_racha, rango_txt = "#d4af37", "award", "Leyenda"
+elif racha_actual <= 2: color_racha, icon_racha, rango_txt = "#a8883f", "spark", "Iniciador"
+elif racha_actual <= 5: color_racha, icon_racha, rango_txt = "#c9a24a", "flame", "Constante"
+elif racha_actual <= 11: color_racha, icon_racha, rango_txt = "#e2c575", "bolt", "Pro"
+else: color_racha, icon_racha, rango_txt = "#f3e2b0", "award", "Leyenda"
 
 hitos = [10000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000]
 meta_actual = next((h for h in hitos if h > total_portafolio), hitos[-1])
@@ -3142,32 +3649,19 @@ else:
     txt_proyeccion = ("Sin racha activa: solo tu capital ya invertido crece al 10% anual. "
                       "No sumo aportaciones ni rendimiento a tu efectivo.")
 
-col_g1, col_g2, col_g3 = st.columns([1.2, 1.5, 1.2])
-with col_g1:
-    st.markdown(
-        f"<div class='metric-card notranslate' translate='no' style='text-align:center; border-color:{color_racha}40;'>"
-        f"<div class='metric-title'>Nivel DCA: <span style='color:{color_racha};'>{rango_txt}</span></div>"
-        f"<div style='font-family:\"Playfair Display\", serif; font-size:2.8rem; font-weight:400; color:{color_racha}; margin:5px 0; display:flex; align-items:center; justify-content:center; gap:8px;'>{racha_actual}{svg_icon(icon_racha, color=color_racha, size=26)}</div>"
-        f"<div class='metric-subtext' style='margin-bottom:8px;'>{txt_frecuencia} seguidas • Récord: <b style='color:white;'>{max(racha_actual, racha_maxima)}</b></div>"
-        f"<div style='font-size:0.75rem; color:#34d399; background:rgba(52, 211, 153, 0.05); padding:6px; border-radius:6px; border:1px solid rgba(52, 211, 153, 0.2);'>"
-        f"Ahorro en racha: <b>${ahorro_racha:,.2f}</b></div></div>", unsafe_allow_html=True
-    )
-with col_g2:
-    st.markdown(
-        f"<div class='metric-card notranslate' translate='no' style='display:flex; flex-direction:column; justify-content:center;'>"
-        f"<div class='metric-title' style='color:#d4af37 !important;'>{html_seguro(meta_nombre)}</div>"
-        f"<div class='metric-value' style='font-size:1.1rem;'>Hito: ${meta_actual:,.2f} MXN</div>"
-        f"<div style='width:100%;background-color:#1f2937;border-radius:12px;height:22px;position:relative; overflow:hidden; border: 1px solid #374151; margin-top:8px;'>"
-        f"<div style='width:{progreso_meta}%;background:linear-gradient(90deg, #d4af37 0%, #fcf6ba 100%);height:100%; border-radius:12px;'></div>"
-        f"</div><div class='metric-subtext' style='margin-top:12px;'>Faltan <b style='color:#e5e7eb;'>${faltante:,.2f} MXN</b></div></div>", unsafe_allow_html=True
-    )
-with col_g3:
-    st.markdown(
-        f"<div class='metric-card notranslate' translate='no' style='border-color:#c084fc40; background:rgba(192, 132, 252, 0.02) !important;'>"
-        f"<div class='metric-title' style='color:#c084fc !important;'>Tu Futuro en 5 Años</div>"
-        f"<div style='font-family:\"Playfair Display\", serif; font-size:1.6rem; font-weight:400; color:white; margin:10px 0;'>${proyeccion_5a:,.2f}</div>"
-        f"<div class='metric-subtext'>{txt_proyeccion}</div></div>", unsafe_allow_html=True
-    )
+# Rediseño · "Franja única": racha, hito y proyección en una sola franja con filo dorado.
+st.markdown(
+    f"<div class='ap-franja ap-filo notranslate' translate='no'>"
+    f"<div><p class='ap-t'>Racha de aportación · <span style='color:{color_racha};margin-left:4px;'>{rango_txt}</span></p>"
+    f"<p class='ap-v' style='color:{color_racha};'>{racha_actual}</p>"
+    f"<p class='ap-s'>{txt_frecuencia.lower()} seguidas · récord {max(racha_actual, racha_maxima)} · ahorro en racha ${ahorro_racha:,.2f}</p></div>"
+    f"<div><p class='ap-t'>{html_seguro(meta_nombre)} · hito ${meta_actual:,.0f}</p>"
+    f"<p class='ap-v'>{progreso_meta:.1f}%</p>"
+    f"<div class='ap-barra'><b style='width:{min(max(progreso_meta, 0), 100):.1f}%'></b></div>"
+    f"<p class='ap-s'>Faltan <b style='color:#e6e9ef;'>${faltante:,.2f} MXN</b></p></div>"
+    f"<div><p class='ap-t'>Proyección a 5 años</p><p class='ap-v'>${proyeccion_5a:,.2f}</p>"
+    f"<p class='ap-s'>{txt_proyeccion}</p></div>"
+    f"</div>", unsafe_allow_html=True)
 st.markdown("---")
 
 # ==========================================
@@ -3632,55 +4126,66 @@ else:
         best_row = summary.loc[best_idx]
         worst_row = summary.loc[worst_idx]
         
+        # Rediseño · tarjetas con nombres sobrios (antes "Salario Invisible", "Empleado del Mes" y "En Recuperación")
         col_easy1, col_easy2, col_easy3 = st.columns(3)
         with col_easy1:
             st.markdown(
-                f"<div class='metric-card' style='border-color:rgba(52, 211, 153, 0.3) !important;'>"
-                f"<div class='metric-title' style='color:#34d399 !important;'>El Salario Invisible</div>"
-                f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>${salario_invisible:,.2f} <span style='font-size:1rem;color:#8b949e;font-family:\"Inter\";'>MXN / año</span></div>"
-                f"<div class='metric-subtext'>Ingreso pasivo estimado por dividendos. (Tus criptos y oro no pagan renta, ¡pero crecen!)</div></div>", 
-                unsafe_allow_html=True
-            )
-            
+                f"<div class='metric-card notranslate' translate='no'><p class='ap-t'>Ingreso pasivo estimado</p>"
+                f"<p class='ap-v' style='font-size:1.9rem;'>${salario_invisible:,.2f} <span style='font-size:0.95rem;color:#8b949e;font-family:Inter, sans-serif;'>MXN / año</span></p>"
+                f"<p class='ap-s'>Dividendos estimados de tus posiciones actuales. Cripto no paga dividendos.</p></div>", unsafe_allow_html=True)
         with col_easy2:
-            c_best = "text-neon-green" if best_row['pnl'] >= 0 else "text-neon-red"
             st.markdown(
-                f"<div class='metric-card'>"
-                f"<div class='metric-title' style='color:#d4af37 !important;'>Tu Empleado del Mes (MVP)</div>"
-                f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{best_row['ticker']} <span class='{c_best}' style='font-size:1.2rem;font-family:\"Inter\";'>({best_row['pnl']:+,.2f} MXN)</span></div>"
-                f"<div class='metric-subtext'>Este activo está cargando con el rendimiento de tu portafolio actual.</div></div>", 
-                unsafe_allow_html=True
-            )
-            
+                f"<div class='metric-card notranslate' translate='no'><p class='ap-t'>Mayor contribución</p>"
+                f"<p class='ap-v' style='font-size:1.9rem;'>{html_seguro(best_row['ticker'])} <span class='{'ap-pos' if best_row['pnl'] >= 0 else 'ap-neg'}' style='font-size:1.05rem;font-family:Inter, sans-serif;'>{mxn_signo(best_row['pnl'])} MXN</span></p>"
+                f"<p class='ap-s'>Activo con la mayor ganancia no realizada.</p></div>", unsafe_allow_html=True)
         with col_easy3:
-            c_worst = "text-neon-green" if worst_row['pnl'] >= 0 else "text-neon-red"
             st.markdown(
-                f"<div class='metric-card'>"
-                f"<div class='metric-title' style='color:#94a3b8 !important;'>En Recuperación</div>"
-                f"<div style='font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400; color:white; margin:10px 0;'>{worst_row['ticker']} <span class='{c_worst}' style='font-size:1.2rem;font-family:\"Inter\";'>({worst_row['pnl']:+,.2f} MXN)</span></div>"
-                f"<div class='metric-subtext'>Está tropezando temporalmente, pero el mercado da revanchas.</div></div>", 
-                unsafe_allow_html=True
-            )
-            
-        
+                f"<div class='metric-card notranslate' translate='no'><p class='ap-t'>Menor contribución</p>"
+                f"<p class='ap-v' style='font-size:1.9rem;'>{html_seguro(worst_row['ticker'])} <span class='{'ap-pos' if worst_row['pnl'] >= 0 else 'ap-neg'}' style='font-size:1.05rem;font-family:Inter, sans-serif;'>{mxn_signo(worst_row['pnl'])} MXN</span></p>"
+                f"<p class='ap-s'>Activo con el menor resultado no realizado.</p></div>", unsafe_allow_html=True)
+
         st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; text-align:center;' class='notranslate' translate='no'>Radiografía Visual de tu Dinero</h4>", unsafe_allow_html=True)
         st.markdown("<p style='color:#64748b;font-size:0.8rem;text-align:center;'>Haz clic en el centro o en las categorías para navegar por tu portafolio.</p>", unsafe_allow_html=True)
-        
+
         summary_plot = summary.copy()
         summary_plot['Clase'] = summary_plot['Clase'].fillna('Otro')
         summary_plot['Sector'] = summary_plot['Sector'].fillna('Desconocido')
-        
-        fig_sun = px.sunburst(
-            summary_plot, 
-            path=['Clase', 'Sector', 'ticker'], 
-            values='valor_actual',
-            color='retorno_pct', 
-            color_continuous_scale=[[0, '#94a3b8'], [0.5, '#d4af37'], [1, '#34d399']],
-            color_continuous_midpoint=0
-        )
-        style_financial_figure(fig_sun, height=550, margin=dict(t=20, b=20, l=10, r=10))
-        fig_sun.update_traces(marker=dict(line=dict(color=AP_COLORS["bg"], width=1)))
-        st.plotly_chart(fig_sun, use_container_width=True, config=plotly_config)
+
+        # Misma colorimetría (gris → oro → verde, sin rojo) pero en tonos sólidos, no aqua.
+        ESCALA_SOL = [[0.0, "#5f6879"], [0.25, "#959dad"], [0.5, "#e2a91f"], [0.72, "#7cb82f"], [1.0, "#12a150"]]
+        fig_sun = px.sunburst(summary_plot, path=['Clase', 'Sector', 'ticker'], values='valor_actual',
+                              color='retorno_pct', color_continuous_scale=ESCALA_SOL, color_continuous_midpoint=0)
+        style_financial_figure(fig_sun, height=520, margin=dict(t=10, b=10, l=10, r=10))
+        fig_sun.update_traces(marker=dict(line=dict(color=AP_COLORS["bg"], width=1.6)),
+                              insidetextfont=dict(family=AP_FONT_SANS, size=13),
+                              hovertemplate="<b>%{label}</b><br>Valor: $%{value:,.2f} MXN<br>Rendimiento: %{color:+.2f}%<extra></extra>")
+        fig_sun.update_coloraxes(colorbar=dict(title=dict(text="Rend. %", font=dict(color=AP_COLORS["text_muted"], size=11)), len=0.7))
+
+        # Filo con luz en patrón: los bordes negros se encienden en orden (anillo interior → medio → exterior,
+        # rebanada por rebanada). Plotly dibuja las rebanadas en ese orden, así que al hacer clic y navegar
+        # el mismo patrón se aplica solo a las formas nuevas.
+        _retrasos = "".join(f".st-key-sol g.slice:nth-of-type({k}) path.surface {{ animation-delay: {1.2 + k * 0.16:.2f}s; }}" for k in range(1, 61))
+        st.markdown("<style>@keyframes ap-sol-filo { 0% { stroke: #050608; stroke-width: 1.6px; filter: none; } "
+                    "3% { stroke: #fff4d6; stroke-width: 2.6px; filter: drop-shadow(0 0 5px rgba(233,211,154,0.95)); } "
+                    "9% { stroke: #050608; stroke-width: 1.6px; filter: none; } 100% { stroke: #050608; stroke-width: 1.6px; filter: none; } } "
+                    ".st-key-sol path.surface { animation: ap-sol-filo 14s ease-in-out infinite; } " + _retrasos + "</style>",
+                    unsafe_allow_html=True)
+
+        c_sol, c_lista = st.columns([1.35, 1], gap="medium", vertical_alignment="center")
+        with c_sol:
+            with st.container(key="sol_card"):
+                st.plotly_chart(fig_sun, use_container_width=True, config=plotly_config, key="sol")
+        with c_lista:
+            _top = summary.sort_values("valor_actual", ascending=False)
+            _max = float(_top["valor_actual"].max() or 1)
+            filas_lista = "".join(
+                f"<div class='fila'><span style='font-weight:600;'>{html_seguro(r['ticker'])}</span>"
+                f"<span class='track'><b style='width:{float(r['valor_actual']) / _max * 100:.1f}%'></b></span>"
+                f"<span style='text-align:right;'>${float(r['valor_actual']):,.2f}</span>"
+                f"<span style='text-align:right;color:#8b94a7;'>{float(r['ponderacion_pct']):.1f}%</span></div>"
+                for _, r in _top.iterrows())
+            st.markdown(f"<div class='ap-lista ap-filo notranslate' translate='no'><p class='ap-t' style='margin-bottom:4px;'>Peso por activo</p>{filas_lista}</div>",
+                        unsafe_allow_html=True)
         
     else:
         st.info("**Modo Simple Activo:** Aún no tienes activos en tu portafolio. Registra tus primeras compras en el panel lateral para ver tu Salario Invisible y tu Radiografía de inversiones.")
@@ -3702,12 +4207,16 @@ with tab_ops:
         df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
         df_mostrar_tx = df_mostrar_tx.iloc[::-1]   # P0-B · lo más reciente arriba
 
-        st.dataframe(
-            df_mostrar_tx[["fecha", "tipo_operacion", "ticker", "clase", "titulos", "precio_unitario", "tipo_cambio", "total_mxn"]].rename(
-                columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Ticker", "clase": "Clase", "titulos": "Títulos", "precio_unitario": "Precio U.", "tipo_cambio": "T.C.", "total_mxn": "Total MXN"}
-            ).style.format({"Títulos": "{:.8f}", "Precio U.": "${:,.4f}", "T.C.": "{:,.4f}", "Total MXN": "${:,.2f}"}), 
-            hide_index=True, use_container_width=True, height=280
-        )
+        _tit = lambda v: (f"{abs(float(v)):.8f}".rstrip("0").rstrip(".") or "0")
+        filas_tx = "".join(
+            f"<tr><td>{html_seguro(r['fecha'])}</td><td><span class='ap-pill{'' if r['tipo_operacion'] == 'COMPRA' else ' gris'}'>{html_seguro(r['tipo_operacion'])}</span></td>"
+            f"<td class='tk'>{html_seguro(r['ticker'])}</td><td style='color:#8b94a7;font-size:0.78rem;'>{html_seguro(r['clase'])}</td>"
+            f"<td class='n'>{_tit(r['titulos'])}</td><td class='n'>${float(r['precio_unitario']):,.4f}</td>"
+            f"<td class='n'>{float(r['tipo_cambio']):,.4f}</td><td class='n' style='color:#ffffff;font-weight:500;'>${float(r['total_mxn']):,.2f}</td></tr>"
+            for _, r in df_mostrar_tx.iterrows())
+        st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:360px;'><table><tr><th>Fecha</th><th>Tipo</th><th>Activo</th><th>Clase</th>"
+                    "<th class='n'>Títulos</th><th class='n'>Precio U.</th><th class='n'>T.C.</th><th class='n'>Total MXN</th></tr>"
+                    f"{filas_tx}</table></div>", unsafe_allow_html=True)
     else: 
         st.caption("Aún no tienes transacciones registradas.")
 
@@ -3721,12 +4230,12 @@ with tab_caja:
         df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
         df_mostrar_cash = df_mostrar_cash.iloc[::-1]   # P0-B · lo más reciente arriba
 
-        st.dataframe(
-            df_mostrar_cash[["fecha", "tipo", "concepto", "monto_mxn"]].rename(
-                columns={"fecha": "Fecha", "tipo": "Tipo", "concepto": "Concepto", "monto_mxn": "Monto MXN"}
-            ).style.format({"Monto MXN": "${:+,.2f}"}), 
-            hide_index=True, use_container_width=True, height=280
-        )
+        filas_caja = "".join(
+            f"<tr><td>{html_seguro(r['fecha'])}</td><td><span class='ap-pill{'' if float(r['monto_mxn']) >= 0 else ' gris'}'>{html_seguro(r['tipo'])}</span></td>"
+            f"<td>{html_seguro(r['concepto'])}</td><td class='n {'ap-pos' if float(r['monto_mxn']) >= 0 else 'ap-neg'}'>{mxn_signo(r['monto_mxn'])}</td></tr>"
+            for _, r in df_mostrar_cash.iterrows())
+        st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:360px;'><table><tr><th>Fecha</th><th>Tipo</th><th>Concepto</th>"
+                    f"<th class='n'>Monto MXN</th></tr>{filas_caja}</table></div>", unsafe_allow_html=True)
     else: 
         st.caption("Aún no tienes movimientos de caja registrados.")
 
