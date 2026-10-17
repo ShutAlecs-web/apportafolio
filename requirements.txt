@@ -9,3 +9,4 @@ scipy
 requests
 bcrypt>=4.0
 reportlab>=4.0
+pypdfium2>=4.0

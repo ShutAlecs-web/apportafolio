@@ -34,6 +34,11 @@ try:   # Rediseño 2026-10 · Modo Pro y encabezado en un módulo aparte; si fal
 except Exception as _ex_pro_ui:
     pro_ui = None
     logging.getLogger("apportafolio.terminal").warning("pro_ui no disponible: %s", _ex_pro_ui)
+try:   # Carta CMA edición Pro (PDF con gráficas); si falta, el Modo Pro entrega la carta base
+    import carta_pro
+except Exception as _ex_carta_pro:
+    carta_pro = None
+    logging.getLogger("apportafolio.terminal").warning("carta_pro no disponible: %s", _ex_carta_pro)
 from fp_fase6_ui_importacion import ui_boton_importacion
 
 log_app = logging.getLogger("apportafolio.terminal")
@@ -2351,8 +2356,9 @@ def folio_carta(ctx):
     return f"CMA-{hoy:%Y%m%d}-{hashlib.sha256(huella.encode()).hexdigest()[:6].upper()}"
 
 
-def generar_carta_pdf(ctx):
+def generar_carta_pdf(ctx, version="completa"):
     """CMA Financial Letter en PDF real (texto seleccionable), con ReportLab. Misma estructura y paleta que la versión HTML.
+    version="esencial" (modo sencillo, 2026-10): resumen al grano; omite tablas técnicas (riesgo detallado, flujos, operaciones).
     Fuentes base de PDF (Times / Helvetica): no requiere archivos de fuente en el servidor. Requiere `reportlab`."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -2416,6 +2422,7 @@ def generar_carta_pdf(ctx):
     capital = float(ctx["capital"] or 0)
     tc_ref = ctx.get("usd_mxn")
     tc_txt = f" (USD/MXN de referencia al corte: {float(tc_ref):.4f})" if tc_ref else ""
+    esencial = version == "esencial"
     h = []
 
     # Encabezado
@@ -2432,12 +2439,17 @@ def generar_carta_pdf(ctx):
 
     # Resumen patrimonial
     filas = [["Patrimonio total", f"<b>{m(ctx['patrimonio'])}</b>"]]
-    if ctx.get("valor_posiciones") is not None: filas.append(["Valor de mercado de las posiciones", m(ctx["valor_posiciones"])])
-    filas += [["Liquidez disponible", m(ctx["liquidez"])], ["Capital aportado (depósitos - retiros)", m(capital)]]
-    if ctx.get("costo_posiciones") is not None: filas.append(["Costo de las posiciones abiertas", m(ctx["costo_posiciones"])])
-    filas.append(["Resultado no realizado", f"<font color='{col(ctx['pnl'])}'>{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</font>"])
-    if ctx.get("friccion") is not None: filas.append(["Fricción acumulada (comisiones e IVA)", m(ctx["friccion"])])
-    filas += [["Ingreso pasivo estimado por dividendos (anual)", m(ctx["salario_invisible"])], ["Proyección a 5 años (supuesto de 10% anual)", m(ctx["proyeccion_5a"])]]
+    if esencial:
+        filas += [["Capital aportado (depósitos - retiros)", m(capital)], ["Efectivo disponible", m(ctx["liquidez"])],
+                  ["Ganancia en sus inversiones", f"<font color='{col(ctx['pnl'])}'>{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</font>"],
+                  ["Ingreso estimado por dividendos (anual)", m(ctx["salario_invisible"])]]
+    if not esencial and ctx.get("valor_posiciones") is not None: filas.append(["Valor de mercado de las posiciones", m(ctx["valor_posiciones"])])
+    if not esencial:
+        filas += [["Liquidez disponible", m(ctx["liquidez"])], ["Capital aportado (depósitos - retiros)", m(capital)]]
+        if ctx.get("costo_posiciones") is not None: filas.append(["Costo de las posiciones abiertas", m(ctx["costo_posiciones"])])
+        filas.append(["Resultado no realizado", f"<font color='{col(ctx['pnl'])}'>{ms(ctx['pnl'])} ({ctx['retorno_pct']:+.2f}%)</font>"])
+        if ctx.get("friccion") is not None: filas.append(["Fricción acumulada (comisiones e IVA)", m(ctx["friccion"])])
+        filas += [["Ingreso pasivo estimado por dividendos (anual)", m(ctx["salario_invisible"])], ["Proyección a 5 años (supuesto de 10% anual)", m(ctx["proyeccion_5a"])]]
     h += [Paragraph("Resumen patrimonial", st_h2), tabla(filas, [ancho_util * 0.68, ancho_util * 0.32], encabezado=False, alinear_der=(1,))]
 
     # CETES
@@ -2450,7 +2462,12 @@ def generar_carta_pdf(ctx):
 
     # Asignación
     asig = ctx.get("asignacion") or []
-    if asig:
+    if asig and esencial:
+        pat = float(ctx["patrimonio"] or 0)
+        filas = [["Dónde está", "Valor MXN", "% del patrimonio"]] + [[e(a["clase"]), m(a["valor"]), f"{a['peso_patrimonio']:.1f}%"] for a in asig]
+        filas.append(["Efectivo", m(ctx["liquidez"]), f"{(ctx['liquidez'] / pat * 100) if pat else 0:.1f}%"])
+        h += [Paragraph("¿Dónde está su dinero?", st_h2), tabla(filas, [ancho_util * 0.5, ancho_util * 0.25, ancho_util * 0.25], alinear_der=(1, 2))]
+    elif asig:
         filas = [["Clase", "Valor MXN", "% patrimonio", "% invertido", "Parámetro", "Desviación"]]
         for a in asig:
             tp = a.get("parametro") is not None
@@ -2464,17 +2481,26 @@ def generar_carta_pdf(ctx):
                                       "sobre lo invertido contra el parámetro, en puntos porcentuales.", st_nota)]
 
     # Composición
+    if esencial:
+        filas = [["Activo", "Valor MXN", "Ganancia", "Rend."]] + [
+            [f"<b>{e(p['ticker'])}</b>", m(p["valor"]), f"<font color='{col(p.get('pnl'))}'>{ms(p.get('pnl'))}</font>",
+             f"<font color='{col(p['retorno'])}'>{p['retorno']:+.2f}%</font>"] for p in ctx["posiciones"][:6]]
+        if len(filas) == 1: filas.append(["Sin posiciones abiertas.", "", "", ""])
+        h += [Paragraph("Sus principales posiciones", st_h2), tabla(filas, [ancho_util * 0.3, ancho_util * 0.25, ancho_util * 0.25, ancho_util * 0.2], alinear_der=(1, 2, 3))]
+        if len(ctx["posiciones"]) > 6:
+            h.append(Paragraph(f"Y {len(ctx['posiciones']) - 6} posición(es) más. La edición Pro de la carta incluye el detalle completo.", st_nota))
     filas = [["Activo", "Clase", "Títulos", "Costo prom.", "Valor MXN", "Resultado", "Rend.", "Peso"]]
     for p in ctx["posiciones"]:
         filas.append([f"<b>{e(p['ticker'])}</b>", e(p["clase"]), tit(p.get("titulos")), m(p.get("costo_promedio")), m(p["valor"]),
                       f"<font color='{col(p.get('pnl'))}'>{ms(p.get('pnl'))}</font>", f"<font color='{col(p['retorno'])}'>{p['retorno']:+.2f}%</font>", f"{p['peso']:.1f}%"])
     if len(filas) == 1: filas.append(["Sin posiciones abiertas.", "", "", "", "", "", "", ""])
     w = ancho_util / 8
-    h += [Paragraph("Composición del portafolio", st_h2),
+    if not esencial: h += [Paragraph("Composición del portafolio", st_h2),
           tabla(filas, [w * 0.95, w * 0.85, w * 1.0, w * 1.05, w * 1.1, w * 1.1, w * 0.95, w * 0.75], alinear_der=(2, 3, 4, 5, 6, 7))]
 
+
     # Contribución
-    if len(ctx["posiciones"]) >= 2:
+    if len(ctx["posiciones"]) >= 2 and not esencial:
         orden = sorted(ctx["posiciones"], key=lambda p: p.get("pnl", 0))
         peor, mejor = orden[0], orden[-1]
         fila = lambda p: f"<b>{e(p['ticker'])}</b> &middot; <font color='{col(p.get('pnl'))}'>{ms(p.get('pnl'))} ({p['retorno']:+.2f}%)</font>"
@@ -2483,7 +2509,14 @@ def generar_carta_pdf(ctx):
 
     # Riesgo
     r = ctx.get("riesgo") or {}
-    if r:
+    if r and esencial:
+        beta = float(r.get("beta", 0) or 0)
+        mov = (f"se mueve {abs(1 - beta) * 100:.0f}% {'menos' if beta < 1 else 'más'} que la bolsa de EE.UU." if abs(1 - beta) >= 0.03
+               else "se mueve prácticamente igual que la bolsa de EE.UU.")
+        h += [Paragraph("Su nivel de riesgo", st_h2),
+              Paragraph(f"Su portafolio {mov} En los últimos 12 meses su peor caída fue de {abs(float(r.get('max_dd', 0) or 0)):.1f}%. "
+                        f"Si la bolsa de EE.UU. cayera 20%, el impacto estimado sería de {ms(ctx['patrimonio'] * -0.20 * beta)}.", st_body)]
+    elif r:
         beta = float(r.get("beta", 0) or 0)
         filas = [["Sensibilidad al mercado (beta vs S&amp;P 500)", f"{beta:.2f}"], ["Rendimiento ajustado por riesgo (Sharpe)", f"{r.get('sharpe', 0):.2f}"],
                  ["Volatilidad anualizada", f"{r.get('vol_anual', 0) * 100:.1f}%"], ["Caída máxima desde un punto alto", f"{r.get('max_dd', 0):.1f}%"],
@@ -2492,12 +2525,12 @@ def generar_carta_pdf(ctx):
         h += [KeepTogether([Paragraph("Perfil de riesgo (últimos 12 meses)", st_h2), tabla(filas, [ancho_util * 0.72, ancho_util * 0.28], encabezado=False, alinear_der=(1,))])]
 
     # Flujos
-    f = {k: v for k, v in (ctx.get("flujos") or {}).items() if v}
+    f = {k: v for k, v in (ctx.get("flujos") or {}).items() if v} if not esencial else {}
     if f:
         h += [KeepTogether([Paragraph("Flujo de caja acumulado", st_h2), tabla([[e(k), m(v)] for k, v in f.items()], [ancho_util * 0.68, ancho_util * 0.32], encabezado=False, alinear_der=(1,))])]
 
     # Operaciones recientes
-    act = ctx.get("actividad") or []
+    act = (ctx.get("actividad") or []) if not esencial else []
     if act:
         filas = [["Fecha", "Tipo", "Activo", "Títulos", "T.C.", "Total MXN"]] + [
             [e(a["fecha"]), e(a["tipo"]), f"<b>{e(a['ticker'])}</b>", tit(a["titulos"]), f"{a['tc']:.4f}", m(a["total"])] for a in act]
@@ -2512,7 +2545,7 @@ def generar_carta_pdf(ctx):
     for esc in _siguientes_acciones_carta(ctx):
         h.append(Paragraph(esc, ParagraphStyle("li", parent=st_body, leftIndent=12, bulletIndent=2, spaceAfter=4), bulletText="•"))
 
-    if ctx.get("cio"):
+    if ctx.get("cio") and not esencial:
         caja = Table([[Paragraph(e(ctx["cio"]).replace("\n", "<br/>"), ParagraphStyle("cio", parent=st_body, fontSize=8.6, leading=12.5))]], colWidths=[ancho_util])
         caja.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), C_SELLO), ("LINEBEFORE", (0, 0), (0, -1), 1.5, C_ORO),
                                   ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12), ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
@@ -2551,7 +2584,7 @@ def generar_carta_pdf(ctx):
           Spacer(1, 18), Table([[""]], colWidths=[ancho_util], style=[("LINEABOVE", (0, 0), (-1, 0), 0.5, C_LINEA)]),
           Paragraph("Documento informativo generado automáticamente con datos registrados por el cliente y cotizaciones de mercado (Yahoo Finance). "
                     "Los rendimientos son no realizados y no garantizan resultados futuros. Las proyecciones usan supuestos explícitos y no constituyen "
-                    "una recomendación personalizada de inversión.<br/><br/>" + e(AVISO_LECTURA_V5), st_legal)]
+                    "una recomendación personalizada de inversión." + ("" if esencial else "<br/><br/>" + e(AVISO_LECTURA_V5)), st_legal)]
 
     def fondo(canvas, doc):
         canvas.saveState()
@@ -2568,38 +2601,61 @@ def generar_carta_pdf(ctx):
     return buf.getvalue()
 
 
-def render_carta_cma(ctx, claro=False):
-    """Rediseño · "Carta protagonista": tarjeta con filo dorado, sello CMA, descarga en PDF y vista previa.
-    claro=True (Modo Pro): misma tarjeta en marfil, como la banda de la carta impresa."""
+def render_carta_cma(ctx, pro=False, xp=None):
+    """Carta CMA en dos ediciones: esencial (modo sencillo, al grano) y Pro (detallada, con gráficas).
+    La vista previa muestra las páginas reales del PDF; si no se puede, se muestra la versión HTML como antes."""
     st.markdown("<br>", unsafe_allow_html=True)
-    try:
-        carta = generar_carta_cma(ctx)
-    except Exception as ex:
-        log_app.warning("Carta CMA · %s", ex)
-        st.caption("No pude generar la carta en este momento.")
-        return
-    nombre_archivo = f"Carta_CMA_{re.sub(r'[^A-Za-z0-9_-]', '_', str(ctx['nombre']))}_{hoy_mx():%Y%m%d}"
-    try:
-        pdf, pdf_error = generar_carta_pdf(ctx), None
-    except Exception as ex:   # sin reportlab o error de maquetación: se ofrece el HTML como antes
-        pdf, pdf_error = None, ex
-        log_app.warning("Carta CMA · PDF no disponible, se ofrece HTML: %s", ex)
-    with st.container(key="carta_card_claro" if claro else "carta_card"):
+    nombre_archivo = f"Carta_CMA{'_Pro' if pro else ''}_{re.sub(r'[^A-Za-z0-9_-]', '_', str(ctx['nombre']))}_{hoy_mx():%Y%m%d}"
+    pdf, edicion_pro = None, False
+    if pro and carta_pro is not None and xp is not None:
+        try:
+            pdf = carta_pro.generar_carta_pro_pdf(ctx, xp, folio_carta(ctx), f"Ciudad de México, {fp_fecha_larga(hoy_mx()).lower()} de {hoy_mx().year}",
+                                                  _siguientes_acciones_carta(ctx), AVISO_LECTURA_V5, AVISO_BOLETIN_CIO)
+            edicion_pro = True
+        except Exception as ex:
+            log_app.warning("Carta CMA Pro · se entrega la carta base: %s", ex)
+    if pdf is None:
+        try:
+            pdf = generar_carta_pdf(ctx, version="completa" if pro else "esencial")
+        except Exception as ex:   # sin reportlab o error de maquetación: se ofrece el HTML como antes
+            log_app.warning("Carta CMA · PDF no disponible, se ofrece HTML: %s", ex)
+    carta_html = None
+    if pdf is None:
+        try:
+            carta_html = generar_carta_cma(ctx)
+        except Exception as ex:
+            log_app.warning("Carta CMA · %s", ex)
+            st.caption("No pude generar la carta en este momento.")
+            return
+    descripcion = ("Edición Pro: evolución contra S&amp;P 500 y CETES, de dónde viene tu resultado, riesgo, escenarios de estrés, "
+                   "dividendos, agenda y proyección, con gráficas y folio verificable." if pro else
+                   "Tu resumen al corte de hoy: cuánto tienes, cuánto has ganado, dónde está tu dinero y cómo vas con tu meta.")
+    with st.container(key="carta_card"):
         c_txt, c_btn = st.columns([2.2, 1], vertical_alignment="center")
-        c_txt.markdown(f"<div class='ap-carta notranslate' translate='no'>{SELLO_SVG if claro else SELLO_SVG.replace('#8a6d1f', '#e2c575')}"
-                       "<div><h3>CMA Financial Letter</h3><p>Tu carta ejecutiva de banca privada al corte de hoy: patrimonio, "
-                       "asignación, riesgo y operaciones, con folio verificable.</p></div></div>", unsafe_allow_html=True)
+        c_txt.markdown(f"<div class='ap-carta notranslate' translate='no'>{SELLO_SVG.replace('#8a6d1f', '#e2c575')}"
+                       f"<div><h3>CMA Financial Letter{' · Pro' if pro else ''}</h3><p>{descripcion}</p></div></div>", unsafe_allow_html=True)
         if pdf is not None:
             c_btn.download_button("Descargar carta (PDF)", data=pdf, file_name=f"{nombre_archivo}.pdf", mime="application/pdf",
                                   use_container_width=True, key="carta_pdf")
         else:
-            c_btn.download_button("Descargar carta (HTML)", data=carta.encode("utf-8"), file_name=f"{nombre_archivo}.html",
+            c_btn.download_button("Descargar carta (HTML)", data=carta_html.encode("utf-8"), file_name=f"{nombre_archivo}.html",
                                   mime="text/html", use_container_width=True, key="carta_html")
-        if not ctx.get("cio"):
-            st.caption("El Boletín del CIO Virtual se agrega a la carta cuando lo generas en Modo Pro durante esta sesión.")
+        if pro and not ctx.get("cio"):
+            st.caption("El Boletín del CIO Virtual se agrega a la carta cuando lo actualizas en esta sesión.")
         with st.expander("Vista previa", expanded=False):
-            import streamlit.components.v1 as components
-            components.html(carta, height=1100, scrolling=True)
+            paginas = []
+            if pdf is not None and carta_pro is not None:
+                try:
+                    paginas = carta_pro.paginas_png(pdf)
+                except Exception as ex:
+                    log_app.warning("Carta CMA · vista previa: %s", ex)
+            if paginas:
+                st.caption(f"{len(paginas)} página(s) · {'edición Pro' if edicion_pro else 'edición esencial' if not pro else 'carta completa'}")
+                for img in paginas:
+                    st.image(img, use_container_width=True)
+            else:
+                import streamlit.components.v1 as components
+                components.html(carta_html or generar_carta_cma(ctx), height=1100, scrolling=True)
 
 
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
@@ -4213,7 +4269,7 @@ _parametros_carta = {"ETF": float(st.session_state.get("dca_tgt_etf", 60.0)),
                      "Acción": float(st.session_state.get("dca_tgt_acc", 25.0)),
                      "Cripto": float(st.session_state.get("dca_tgt_cripto", 15.0))}
 _friccion_carta = float((tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum()) if not tx_df.empty else 0.0
-render_carta_cma({
+_ctx_carta = {
     "nombre": active_username, "patrimonio": float(total_portafolio), "capital": float(capital_aportado),
     "costo_posiciones": float(total_invertido), "valor_posiciones": float(total_activos),
     "pnl": float(pnl_global), "retorno_pct": float(retorno_global), "liquidez": float(liquidez_mxn),
@@ -4227,4 +4283,14 @@ render_carta_cma({
     "racha": racha_actual, "rango": rango_txt, "frecuencia": user_freq,
     "meta_nombre": meta_nombre, "meta_monto": float(meta_actual), "progreso_meta": float(progreso_meta),
     "faltante": float(faltante), "cio": st.session_state.get("cio_report"),
-})   # misma tarjeta oscura en ambos modos (decisión 2026-10-16)
+}
+_xp_carta = None
+if _MODO_PRO and pro_ui is not None and not summary.empty:   # datos extra de la edición Pro (gráficas, riesgo, agenda…)
+    try:
+        _xp_carta = pro_ui.contexto_carta_pro(H_PRO, summary, tx_df, cash_df, R_PRO, float(total_portafolio), tasa_libre_riesgo(),
+                                              float(usd_mxn or 18.5), active_client_id, float(liquidez_mxn), _parametros_carta,
+                                              st.session_state.get(f"cio_json_{active_client_id}"), xirr_valor)
+    except Exception as _ex_xp:
+        log_app.warning("Carta CMA Pro · contexto: %s", _ex_xp)
+render_carta_cma(_ctx_carta, pro=_MODO_PRO, xp=_xp_carta)   # dos ediciones: esencial (sencillo) y Pro
+

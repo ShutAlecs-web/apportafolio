@@ -75,26 +75,70 @@ def _horario_verano_eua(dt_utc):
     return mar + timedelta(hours=7) <= dt_utc < nov + timedelta(hours=6)
 
 
+# Días inhábiles oficiales. NYSE: calendario 2026-2027 publicado por NYSE Group. BMV: calendario 2026 (Banxico/BMV).
+# Se actualiza una vez al año (la BMV publica el siguiente calendario en diciembre).
+FERIADOS = {
+    "NYSE": {"2026-01-01": "Año Nuevo", "2026-01-19": "Día de Martin Luther King", "2026-02-16": "Día de los Presidentes",
+             "2026-04-03": "Viernes Santo", "2026-05-25": "Memorial Day", "2026-06-19": "Juneteenth", "2026-07-03": "Día de la Independencia (EE.UU.)",
+             "2026-09-07": "Día del Trabajo (EE.UU.)", "2026-11-26": "Acción de Gracias", "2026-12-25": "Navidad",
+             "2027-01-01": "Año Nuevo", "2027-01-18": "Día de Martin Luther King", "2027-02-15": "Día de los Presidentes",
+             "2027-03-26": "Viernes Santo", "2027-05-31": "Memorial Day", "2027-06-18": "Juneteenth", "2027-07-05": "Día de la Independencia (EE.UU.)",
+             "2027-09-06": "Día del Trabajo (EE.UU.)", "2027-11-25": "Acción de Gracias", "2027-12-24": "Navidad"},
+    "BMV": {"2026-01-01": "Año Nuevo", "2026-02-02": "Día de la Constitución", "2026-03-16": "Natalicio de Benito Juárez",
+            "2026-04-02": "Jueves Santo", "2026-04-03": "Viernes Santo", "2026-05-01": "Día del Trabajo", "2026-09-16": "Día de la Independencia",
+            "2026-11-02": "Día de Muertos", "2026-11-16": "Día de la Revolución", "2026-12-12": "Día del Empleado Bancario", "2026-12-25": "Navidad"},
+}
+CIERRE_ANTICIPADO = {"NYSE": {"2026-11-27": "13:00", "2026-12-24": "13:00", "2027-11-26": "13:00"}}
+_DIA = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+_MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
 def estado_mercados(ahora_utc=None):
-    """NYSE 9:30–16:00 hora de Nueva York. La BMV opera alineada al mismo horario (por eso en CDMX abre 7:30 u 8:30).
-    No contempla días feriados. Devuelve [(mercado, abierto, texto en hora CDMX)]."""
+    """NYSE 9:30–16:00 hora de Nueva York. La BMV opera alineada (en CDMX: 7:30–14:00 cuando EE.UU. está en horario de verano,
+    8:30–15:00 el resto del año). Considera días inhábiles y cierres anticipados.
+    Devuelve [(mercado, abierto, texto en hora CDMX, aviso o None)]."""
     ahora = ahora_utc or datetime.now(timezone.utc)
     off_et = -4 if _horario_verano_eua(ahora) else -5
     et = ahora + timedelta(hours=off_et)
-    apertura = et.replace(hour=9, minute=30, second=0, microsecond=0)
-    cierre = et.replace(hour=16, minute=0, second=0, microsecond=0)
-    habil = et.weekday() < 5
-    abierto = habil and apertura <= et < cierre
-    a_mx = lambda t: (t - timedelta(hours=off_et) + timedelta(hours=-6)).strftime("%H:%M")
-    if abierto:
-        texto = f"abierto · cierra {a_mx(cierre)}"
-    else:
-        sig = apertura if (habil and et < apertura) else apertura + timedelta(days=1)
-        while sig.weekday() >= 5:
-            sig += timedelta(days=1)
-        dia = "hoy" if sig.date() == et.date() else ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"][sig.weekday()]
-        texto = f"cerrado · abre {dia} {a_mx(sig)}"
-    return [("EE.UU. · NYSE", abierto, texto), ("México · BMV", abierto, texto)]
+    def a_mx(t):
+        """Hora de CDMX de una hora de pared de Nueva York, con el horario de verano vigente ESE día (cambia en mar y nov)."""
+        ref = datetime(t.year, t.month, t.day, 15, tzinfo=timezone.utc)
+        off = -4 if _horario_verano_eua(ref) else -5
+        return (t.replace(tzinfo=None) - timedelta(hours=off) - timedelta(hours=6)).strftime("%H:%M")
+    salida = []
+    for clave, nombre in (("NYSE", "EE.UU. · NYSE"), ("BMV", "México · BMV")):
+        fer = FERIADOS.get(clave, {})
+        anticipado = CIERRE_ANTICIPADO.get(clave, {})
+        habil = lambda d: d.weekday() < 5 and d.strftime("%Y-%m-%d") not in fer
+        hoy_iso = et.strftime("%Y-%m-%d")
+        apertura = et.replace(hour=9, minute=30, second=0, microsecond=0)
+        h_c, m_c = (int(x) for x in anticipado.get(hoy_iso, "16:00").split(":"))
+        cierre = et.replace(hour=h_c, minute=m_c, second=0, microsecond=0)
+        abierto = habil(et) and apertura <= et < cierre
+        ny = " (9:30 Nueva York)" if clave == "NYSE" else ""
+        if abierto:
+            texto = f"abierto · cierra {a_mx(cierre)}" + (" · cierre anticipado" if hoy_iso in anticipado else "")
+        else:
+            sig = apertura if (habil(et) and et < apertura) else apertura + timedelta(days=1)
+            while not habil(sig):
+                sig += timedelta(days=1)
+            dia = "hoy" if sig.date() == et.date() else ("mañana" if (sig.date() - et.date()).days == 1 else _DIA[sig.weekday()])
+            texto = f"cerrado · abre {dia} {a_mx(sig)}{ny}"
+        # aviso: hoy es inhábil, o hay un día inhábil o cierre anticipado en los próximos 7 días hábiles
+        aviso = None
+        if hoy_iso in fer:
+            aviso = f"Hoy no opera: {fer[hoy_iso]}"
+        else:
+            for k in range(1, 8):
+                d = (et + timedelta(days=k)).strftime("%Y-%m-%d")
+                f = et + timedelta(days=k)
+                cuando = "Mañana" if k == 1 else f"{_DIA[f.weekday()].capitalize()} {f.day} {_MES[f.month - 1]}"
+                if d in fer and f.weekday() < 5:   # un feriado en sábado o domingo no cambia nada
+                    aviso = f"{cuando} no opera: {fer[d]}"; break
+                if d in anticipado:
+                    aviso = f"{cuando} cierra temprano ({a_mx(f.replace(hour=int(anticipado[d][:2]), minute=0))} CDMX)"; break
+        salida.append((nombre, abierto, texto, aviso))
+    return salida
 
 
 def saludo(ahora_mx=None):
@@ -104,7 +148,9 @@ def saludo(ahora_mx=None):
 
 def html_encabezado(nombre, pro=False):
     pills = "".join(
-        f"<span class='ap-mkt {'on' if ab else ''}'><i></i>{e(n)} <b>{e(t)}</b></span>" for n, ab, t in estado_mercados())
+        f"<span class='ap-mkt {'on' if ab else ''}'><i></i>{e(n)} <b>{e(t)}</b></span>"
+        + (f"<span class='ap-mkt aviso'><i></i>{e(n.split(' · ')[-1])} · {e(av)}</span>" if av else "")
+        for n, ab, t, av in estado_mercados())
     eti = "Terminal Pro" if pro else "Vista general"
     return (f"<div class='ap-masthead ap-masthead-v2 notranslate' translate='no'><div>"
             f"<p class='ap-eyebrow'>CMA Wealth · {eti}</p><h3>{e(saludo())}, {e(nombre)}</h3></div>"
@@ -449,7 +495,8 @@ def tabla_dividendos(H, tx_df):
             ultimo = hist[-1][1] if hist else 0.0
             titulos = float(mov["titulos"].sum())
             if titulos > 1e-12 and ultimo > 0:
-                filas.append({"fecha_ex": cal["ex"], "pago": cal.get("pago"), "activo": t, "por_titulo": ultimo, "moneda": moneda, "titulos": titulos,
+                pago_ok = cal.get("pago") if cal.get("pago") and cal["pago"] >= cal["ex"] else None   # Yahoo a veces deja la fecha del pago anterior
+            filas.append({"fecha_ex": cal["ex"], "pago": pago_ok, "activo": t, "por_titulo": ultimo, "moneda": moneda, "titulos": titulos,
                               "bruto": ultimo * titulos, "bruto_mxn": ultimo * titulos * _tc(moneda, hoy), "estado": "Próximo (estimado)"})
     if not filas:
         return pd.DataFrame()
@@ -493,15 +540,18 @@ def render_dividendos(H, tx_df, nombre_cliente):
         fig.update_xaxes(tickformat="%b %Y")
         st.plotly_chart(fig, use_container_width=True, config=H.cfg, key="dividendos_graf")
     filas = "".join(
-        f"<tr><td class='ap-m'>{e(r['fecha_ex'])}</td><td class='ap-m'>{e(r['pago'] or '—')}</td><td class='tk'>{e(r['activo'])}</td>"
+        f"<tr><td class='ap-m'>{e(r['fecha_ex'])}</td><td class='tk'>{e(r['activo'])}</td>"
         f"<td class='n ap-m'>{r['por_titulo']:,.4f} {e(r['moneda'])}</td><td class='n ap-m'>{float(r['titulos']):.6g}</td>"
         f"<td class='n ap-m'>{m(r['bruto_mxn'])}</td><td><span class='ap-pill{'' if r['estado'] == 'Cobrado' else ' gris'}'>{e(r['estado'])}</span></td></tr>"
         for _, r in df.iterrows())
-    st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:320px;'><table><tr><th>Fecha ex</th><th>Pago</th><th>Activo</th>"
+    st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:320px;'><table><tr><th>Fecha ex</th><th>Activo</th>"
                 "<th class='n'>Por título</th><th class='n'>Títulos</th><th class='n'>Bruto MXN</th><th>Estado</th></tr>"
                 f"{filas}</table></div>", unsafe_allow_html=True)
     c1, c2 = st.columns([1, 2.4], vertical_alignment="center")
-    c1.download_button("Exportar para contabilidad (CSV)", data=df.to_csv(index=False).encode("utf-8"),
+    csv = df.drop(columns=["pago"]).rename(columns={"fecha_ex": "Fecha ex-dividendo", "activo": "Activo", "por_titulo": "Monto por título",
+                                                    "moneda": "Moneda", "titulos": "Títulos", "bruto": "Bruto (moneda origen)",
+                                                    "bruto_mxn": "Bruto MXN", "estado": "Estado"}).round({"Bruto MXN": 2, "Bruto (moneda origen)": 4})
+    c1.download_button("Exportar para contabilidad (CSV)", data=csv.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"Dividendos_{nombre_cliente}_{datetime.now(ZONA_MX):%Y%m%d}.csv", mime="text/csv",
                        use_container_width=True, key="dividendos_csv")
     c2.caption("Montos brutos estimados con los títulos que tenías un día antes de la fecha ex y el tipo de cambio de ese día. "
@@ -805,11 +855,11 @@ def render_riesgo_pro(H, R, summary, total_portafolio):
         H.style(fig, height=340, margin=dict(t=10, b=10, l=6, r=6), xgrid=False, ygrid=False)
         fig.update_yaxes(autorange="reversed")
         with st.container(key="matriz_card"):
-            st.markdown("<p class='ap-t'>Matriz de correlación agrupada por familia</p>", unsafe_allow_html=True)
+            st.markdown("<p class='ap-t'>Matriz de correlación agrupada por familia</p>"
+                        "<div class='ap-chips notranslate' translate='no' style='margin-bottom:4px'><span class='ap-sw' style='--c:#c9a24a'>≥0.60 juntos</span>"
+                        "<span class='ap-sw' style='--c:#8a6f33'>0.30–0.60 media</span><span class='ap-sw' style='--c:#3a3220'>&lt;0.30 baja</span>"
+                        "<span class='ap-sw' style='--c:#2a3a4a'>negativa</span></div>", unsafe_allow_html=True)
             st.plotly_chart(fig, use_container_width=True, config=H.cfg, key="matriz_familia")
-            st.markdown("<div class='ap-chips notranslate' translate='no'><span class='ap-sw' style='--c:#c9a24a'>≥ 0.60 se mueven juntos</span>"
-                        "<span class='ap-sw' style='--c:#8a6f33'>0.30–0.60 medio</span><span class='ap-sw' style='--c:#3a3220'>0–0.30 independientes</span>"
-                        "<span class='ap-sw' style='--c:#2a3a4a'>negativa · se compensan</span></div>", unsafe_allow_html=True)
 
     # Qué significa la referencia agresiva y dónde estás tú
     lectura = {
@@ -1010,7 +1060,7 @@ def eventos_cio(H, summary, tx_df, js=None):
     except Exception:
         div = pd.DataFrame()
     for _, r in div.iterrows():
-        pago = f" · pago {r['pago']}" if r.get("pago") else ""
+        pago = f" · pago {r['pago']}" if isinstance(r.get("pago"), str) and r["pago"] else ""
         ev.append({"fecha": r["fecha_ex"], "tipo": "Dividendo", "clave": r["activo"],
                    "titulo": f"{r['activo']} · {'dividendo' if r['estado'] == 'Cobrado' else 'próximo dividendo'}",
                    "detalle": (f"{r['por_titulo']:,.4f} {r['moneda']} por título{pago}. Tenías {float(r['titulos']):.6g} títulos un día antes de la fecha ex: "
@@ -1236,7 +1286,7 @@ def render_cio_pro(H, summary, cliente_id, tx_df=None, nombre_cliente="cliente")
     # controles
     f1, f2, f3 = st.columns([1.5, 1.6, 1], vertical_alignment="center")
     with f1:
-        ventana = selector("Ventana", ["6 semanas", "±3 meses", "Desde tu inicio"], key="cio_ventana")
+        ventana = selector("Ventana", ["6 semanas", "6 meses", "Desde tu inicio"], key="cio_ventana")   # 6 meses = 3 atrás + 3 adelante
     with f2:
         tipos = _multi("Tipos", [ETQ_TIPO[t] for t in TIPOS_CIO], key="cio_tipos", default=[ETQ_TIPO[t] for t in TIPOS_CIO])
     with f3:
@@ -1246,7 +1296,7 @@ def render_cio_pro(H, summary, cliente_id, tx_df=None, nombre_cliente="cliente")
     vis = [x for x in eventos if x["tipo"] in tipos_sel and (activo == "Todos" or x["clave"] == activo or x["tipo"] == "Macro")]
     if ventana == "6 semanas":
         x0, x1 = hoy - pd.Timedelta(days=7), hoy + pd.Timedelta(days=42)
-    elif ventana == "±3 meses":
+    elif ventana == "6 meses":
         x0, x1 = hoy - pd.Timedelta(days=92), hoy + pd.Timedelta(days=92)
     else:
         x0, x1 = inicio, fin
@@ -1305,13 +1355,13 @@ def render_cio_pro(H, summary, cliente_id, tx_df=None, nombre_cliente="cliente")
     with st.expander(f"Bitácora de eventos · {len(vis)} registro(s)", expanded=False):
         filas = "".join(
             f"<tr><td class='ap-m'>{e(x['fecha'])}</td><td><span class='ap-pill' style='color:{COLOR_TIPO[x['tipo']]};border-color:{COLOR_TIPO[x['tipo']]}55'>"
-            f"{e(ETQ_TIPO[x['tipo']])}</span></td><td class='tk'>{e(x['clave'])}</td><td style='white-space:normal;min-width:260px;color:#a3a9b6'>{e(x['detalle'])}</td>"
-            f"<td class='n ap-m'>{m(x['monto_mxn']) if x.get('monto_mxn') else '—'}</td></tr>" for x in reversed(vis))
-        st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:380px'><table style='min-width:720px'><tr><th>Fecha</th><th>Tipo</th>"
-                    f"<th>Activo</th><th>Detalle</th><th class='n'>Monto MXN</th></tr>{filas}</table></div>", unsafe_allow_html=True)
-        tabla = pd.DataFrame([{"fecha": x["fecha"], "tipo": x["tipo"], "activo": x["clave"], "evento": x["titulo"], "detalle": x["detalle"],
-                               "monto_mxn": x.get("monto_mxn"), **{k: v for k, v in x["datos"].items()}} for x in vis])
-        st.download_button("Exportar bitácora (CSV)", data=tabla.to_csv(index=False).encode("utf-8"),
+            f"{e(ETQ_TIPO[x['tipo']])}</span></td><td class='tk'>{e(x['clave'])}</td><td style='white-space:normal;min-width:260px;color:#a3a9b6'>{e(x['detalle'])}</td></tr>"
+            for x in reversed(vis))   # el monto ya va dentro del detalle (dividendos y operaciones); en el CSV va en su propia columna
+        st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:380px'><table style='min-width:620px'><tr><th>Fecha</th><th>Tipo</th>"
+                    f"<th>Activo</th><th>Detalle</th></tr>{filas}</table></div>", unsafe_allow_html=True)
+        tabla = pd.DataFrame([{"Fecha": x["fecha"], "Tipo": x["tipo"], "Activo": x["clave"], "Evento": x["titulo"], "Detalle": x["detalle"],
+                               "Monto MXN": round(x["monto_mxn"], 2) if x.get("monto_mxn") else ""} for x in vis])
+        st.download_button("Exportar bitácora (CSV)", data=tabla.to_csv(index=False).encode("utf-8-sig"),
                            file_name=f"Bitacora_CIO_{nombre_cliente}_{datetime.now(ZONA_MX):%Y%m%d}.csv", mime="text/csv", key="cio_csv")
         st.caption("Montos brutos estimados; para tu declaración, confirma contra la constancia fiscal de tu casa de bolsa.")
 
@@ -1446,6 +1496,172 @@ def render_historial_pro_caja(cash_df):
 
 
 # =====================================================================================================
+# 13. CARTA CMA PRO · datos extra (gráficas, puente, riesgo, estrés, dividendos, agenda, proyección, lectura del periodo)
+# =====================================================================================================
+def _limpio(v, d=0.0):
+    try:
+        f = float(v)
+        return f if np.isfinite(f) else d
+    except (TypeError, ValueError):
+        return d
+
+
+def contexto_carta_pro(H, summary, tx_df, cash_df, R, total, rf, usd_mxn, cliente_id, liquidez, parametros_dca, js=None, xirr=None):
+    """Todo lo que la carta Pro agrega a la carta base. Cada bloque es opcional: si un cálculo falla, la carta lo omite."""
+    xp = {"rf": rf}
+    hoy = pd.Timestamp(datetime.now(ZONA_MX).date())
+    # 1) Serie diaria y rendimiento por periodo (TWR del portafolio vs S&P 500 en pesos vs CETES)
+    try:
+        df = H.series_bola_nieve(cash_df, tx_df, total, rf)
+        if df is not None and df["valor"].notna().sum() >= 3:
+            df = df.dropna(subset=["valor"])
+            xp["serie"] = [(f.strftime("%Y-%m-%d"), _limpio(r["valor"]), _limpio(r["capital"]), _limpio(r["cetes"])) for f, r in df.iterrows()]
+            try:
+                spx = H.cierres_mxn(("^GSPC",), (df.index[0] - timedelta(days=10)).strftime("%Y-%m-%d"))["^GSPC"]
+                spx = spx.reindex(spx.index.union(df.index)).ffill().bfill().reindex(df.index)
+            except Exception:
+                spx = None
+            periodos = []
+            for nombre, dias in (("1 mes", 31), ("3 meses", 92), ("Desde el inicio", None)):
+                sub = df[df.index >= df.index[-1] - pd.Timedelta(days=dias)] if dias else df
+                if len(sub) < 2:
+                    continue
+                tw = _indice_twr(sub)
+                d_t = (sub.index[-1] - sub.index[0]).days
+                periodos.append({"periodo": nombre, "portafolio": (tw.iloc[-1] / tw.iloc[0] - 1) * 100,
+                                 "spx": ((spx.loc[sub.index[-1]] / spx.loc[sub.index[0]] - 1) * 100) if spx is not None else None,
+                                 "cetes": ((1 + rf) ** (d_t / 365) - 1) * 100,
+                                 "depositos": float(sub["capital"].iloc[-1] - sub["capital"].iloc[0])})
+            xp["periodos"] = periodos
+    except Exception as ex:
+        H.log.warning("Carta Pro · serie: %s", ex)
+    # 2) Puente de P&L y atribución
+    try:
+        pr, fx, co = puente_pnl(summary, tx_df, usd_mxn)
+        xp["puente"] = {"precio": pr, "tipo_cambio": fx, "comisiones": co, "neto": pr + fx + co}
+        xp["atribucion"] = [(str(r["ticker"]), _limpio(r["pnl"]), _limpio(r["retorno_pct"])) for _, r in summary.sort_values("pnl", ascending=False).iterrows()]
+    except Exception as ex:
+        H.log.warning("Carta Pro · puente: %s", ex)
+    # 3) Composición y posiciones extendidas
+    try:
+        comp = {}
+        for c, v in summary.groupby(summary["Clase"].fillna("Otro"))["valor_actual"].sum().items():
+            comp[ETQ_CLASE.get(c, "Otros")] = comp.get(ETQ_CLASE.get(c, "Otros"), 0.0) + float(v)
+        comp["Efectivo"] = float(liquidez)
+        xp["composicion"] = comp
+        betas, vols = (R or {}).get("betas", {}), (R or {}).get("vols", {})
+        xp["posiciones"] = [{"ticker": str(r["ticker"]), "clase": str(r.get("Clase", "")), "titulos": _limpio(r["titulos"]),
+                             "costo": _limpio(r["costo_promedio"]), "precio": _limpio(r["precio_mercado"]), "valor": _limpio(r["valor_actual"]),
+                             "pnl": _limpio(r["pnl"]), "rend": _limpio(r["retorno_pct"]), "peso": _limpio(r["ponderacion_pct"]),
+                             "beta": betas.get(r["ticker"]), "vol": vols.get(r["ticker"])}
+                            for _, r in summary.sort_values("valor_actual", ascending=False).iterrows()]
+    except Exception as ex:
+        H.log.warning("Carta Pro · posiciones: %s", ex)
+    # 4) Riesgo con lectura llana + referencia agresiva + estrés
+    if R:
+        xp["riesgo"] = {k: R[k] for k in ("vol", "sharpe", "max_dd", "var95", "beta", "hhi", "corr_media", "spx_dd", "spx_vol") if k in R}
+        beta = R["beta"]
+        xp["riesgo_lectura"] = [
+            ("Movimiento", f"β {beta:.2f}", (f"Su portafolio se mueve {abs(1 - beta) * 100:.0f}% {'menos' if beta < 1 else 'más'} que el mercado de EE.UU."
+                                            if abs(1 - beta) >= 0.03 else "Su portafolio se mueve prácticamente igual que el mercado de EE.UU.")),
+            ("Eficiencia", f"{R['sharpe']:.2f}", (f"Por cada punto de riesgo asumido se observaron {R['sharpe']:.2f} puntos de rendimiento por encima de CETES."
+                                                  if R["sharpe"] > 0 else "En los últimos 12 meses el rendimiento no compensó el riesgo frente a CETES.")),
+            ("Peor caída", f"{R['max_dd'] * 100:.1f}%", "Mayor baja desde un punto alto en 12 meses"
+             + (f", contra {R['spx_dd'] * 100:.1f}% del S&P 500 en el mismo lapso." if R.get("spx_dd") else ".")),
+            ("Día adverso", f"${R['var95']:,.0f}", "Uno de cada 20 días podría observarse una baja mayor a esta cifra (VaR 95%)."),
+        ]
+        xp["estres"] = []
+        for nombre, caida in ESCENARIOS.items():
+            imp = sum(max(float(r["valor_actual"]) * R["betas"].get(r["ticker"], 1.0) * caida / 100, -float(r["valor_actual"])) for _, r in summary.iterrows())
+            xp["estres"].append({"escenario": nombre.split(" · ")[0], "spx": caida, "impacto": imp, "estresado": total + imp})
+    # 5) Dividendos
+    try:
+        dv = tabla_dividendos(H, tx_df)
+        if not dv.empty:
+            hace12 = (hoy - pd.Timedelta(days=365)).strftime("%Y-%m-%d")
+            cob = dv[dv["estado"] == "Cobrado"]
+            xp["dividendos"] = {"cobrado": float(cob["bruto_mxn"].sum()), "doce_meses": float(cob[cob["fecha_ex"] >= hace12]["bruto_mxn"].sum()),
+                                "filas": [{"fecha": r["fecha_ex"], "activo": r["activo"], "por_titulo": _limpio(r["por_titulo"]), "moneda": r["moneda"],
+                                           "titulos": _limpio(r["titulos"]), "mxn": _limpio(r["bruto_mxn"]), "estado": r["estado"]} for _, r in dv.head(14).iterrows()]}
+    except Exception as ex:
+        H.log.warning("Carta Pro · dividendos: %s", ex)
+    # 6) Agenda de las próximas 8 semanas
+    try:
+        ev, _, _ = eventos_cio(H, summary, tx_df, js)
+        xp["agenda"] = [{"fecha": x["fecha"], "tipo": x["tipo"], "titulo": x["titulo"], "detalle": x["detalle"]} for x in ev
+                        if x["tipo"] != "Operación" and hoy <= pd.Timestamp(x["fecha"]) <= hoy + pd.Timedelta(days=56)][:14]
+        rep = [x for x in ev if x["tipo"] == "Reporte" and pd.Timestamp(x["fecha"]) <= hoy and x["datos"].get("eps_real") is not None]
+        xp["reportes_resultado"] = [{"fecha": x["fecha"], "activo": x["clave"], "detalle": x["detalle"]} for x in rep[-6:]]
+    except Exception as ex:
+        H.log.warning("Carta Pro · agenda: %s", ex)
+    # 7) Proyección por aportaciones (base) con CETES como supuesto
+    try:
+        aporte = float(st.session_state.get(f"pro_aporte_{cliente_id}") or aportacion_mensual_estimada(cash_df, 0, "MENSUAL"))
+        r_m = (1 + rf) ** (1 / 12) - 1
+        x_tasa = None if xirr is None else max(min(float(xirr), 0.25), -0.25)   # tope ±25 % para no proyectar con un XIRR de pocos meses desbordado
+        r_x = None if x_tasa is None else (1 + x_tasa) ** (1 / 12) - 1
+        filas, v_b, v_c, v_x = [], float(total), float(total), float(total)
+        for mes in range(1, 37):
+            v_b += aporte; v_c = v_c * (1 + r_m) + aporte
+            if r_x is not None:
+                v_x = v_x * (1 + r_x) + aporte
+            if mes % 6 == 0:
+                y, mm = hoy.year + (hoy.month - 1 + mes) // 12, (hoy.month - 1 + mes) % 12
+                filas.append({"fecha": f"{_MESES[mm]} {y}", "solo_aportaciones": v_b, "con_xirr": v_x if r_x is not None else None, "con_cetes": v_c})
+        xp["proyeccion"] = {"aporte": aporte, "filas": filas, "xirr": x_tasa, "xirr_original": xirr}
+    except Exception as ex:
+        H.log.warning("Carta Pro · proyección: %s", ex)
+    # 8) Escenario de rebalanceo (Smart DCA) con los parámetros vigentes
+    try:
+        cap = float(st.session_state.get(f"dca_capital_{cliente_id}", liquidez) or 0)
+        tot_act = float(summary["valor_actual"].sum())
+        nuevo = tot_act + cap
+        actual = {c: float(summary.loc[summary["Clase"] == c, "valor_actual"].sum()) for c in parametros_dca}
+        deficit = {c: max(0.0, nuevo * parametros_dca[c] / 100 - actual[c]) for c in parametros_dca}
+        tdef = sum(deficit.values())
+        reparto = {c: (cap * deficit[c] / tdef if tdef > 0 else cap * parametros_dca[c] / 100) for c in parametros_dca}
+        xp["dca"] = {"capital": cap, "liquidez": float(liquidez), "precargado": abs(cap - float(liquidez)) < 0.5,
+                     "filas": [{"clase": ETQ_CLASE.get(c, c), "valor": actual[c], "hoy": actual[c] / tot_act * 100 if tot_act else 0, "objetivo": parametros_dca[c],
+                                                "monto": reparto[c], "despues": (actual[c] + reparto[c]) / nuevo * 100 if nuevo else 0} for c in parametros_dca]}
+    except Exception as ex:
+        H.log.warning("Carta Pro · DCA: %s", ex)
+    # 9) Lectura del periodo: renglones (etiqueta, cifra, texto) informativos, sin recomendaciones
+    lectura = []
+    try:
+        per = {p["periodo"]: p for p in xp.get("periodos", [])}
+        p1 = per.get("1 mes")
+        if p1:
+            txt = "Movimiento de su portafolio por mercado, sin contar depósitos."
+            if p1.get("spx") is not None:
+                txt += f" S&P 500 en pesos: {p1['spx']:+.2f}% · CETES: {p1['cetes']:+.2f}%."
+            if p1["depositos"] > 0:
+                txt += f" Depósitos del periodo: ${p1['depositos']:,.0f}."
+            lectura.append(("Mercado · 1 mes", f"{p1['portafolio']:+.2f}%", txt))
+        att = xp.get("atribucion") or []
+        if att:
+            mejor, peor = att[0], att[-1]
+            lectura.append(("Mayor aporte", f"{mejor[0]} {'+' if mejor[1] >= 0 else '-'}${abs(mejor[1]):,.0f}",
+                            f"{mejor[2]:+.1f}% sobre su costo. Menor aporte: {peor[0]} {'+' if peor[1] >= 0 else '-'}${abs(peor[1]):,.2f} ({peor[2]:+.1f}%)."))
+        pu = xp.get("puente")
+        if pu and abs(pu["tipo_cambio"]) >= 1:
+            lectura.append(("Tipo de cambio", f"{'+' if pu['tipo_cambio'] >= 0 else '-'}${abs(pu['tipo_cambio']):,.2f}",
+                            f"El dólar {'subió' if pu['tipo_cambio'] >= 0 else 'bajó'} frente al peso desde sus compras. "
+                            f"Precio de los activos: {'+' if pu['precio'] >= 0 else '-'}${abs(pu['precio']):,.2f} · comisiones: -${abs(pu['comisiones']):,.2f}."))
+        if R:
+            imp = abs(sum(float(r["valor_actual"]) * R["betas"].get(r["ticker"], 1.0) * -0.10 for _, r in summary.iterrows()))
+            lectura.append(("Sensibilidad", f"-${imp:,.0f}", f"Impacto estimado sobre sus posiciones si el S&P 500 cae 10% (beta {R['beta']:.2f}). "
+                                                            f"Su efectivo de ${liquidez:,.0f} no se mueve con el mercado."))
+        ag = [x for x in xp.get("agenda", []) if x["tipo"] in ("Reporte", "Macro", "Dividendo")][:4]
+        if ag:
+            f0 = pd.Timestamp(ag[0]["fecha"])
+            lectura.append(("Por vigilar", f"{f0.day} {_MESES[f0.month - 1]}", "; ".join(f"{pd.Timestamp(x['fecha']).day} {_MESES[pd.Timestamp(x['fecha']).month - 1]}: {x['titulo']}" for x in ag) + "."))
+    except Exception as ex:
+        H.log.warning("Carta Pro · lectura: %s", ex)
+    xp["lectura"] = lectura
+    return xp
+
+
+# =====================================================================================================
 # CSS del Modo Pro (se inyecta una vez desde app.py)
 # =====================================================================================================
 CSS_PRO = """
@@ -1523,6 +1739,7 @@ CSS_PRO = """
 .ap-mkt b { font-weight: 500; color: var(--ap-text); }
 .ap-mkt i { width: 7px; height: 7px; border-radius: 50%; background: #6b7385; }
 .ap-mkt.on i { background: #5fbf9a; animation: ap-latido 2.4s ease-in-out infinite; }
+.ap-mkt.aviso { border-color: rgba(201,162,74,0.55); color: #e2c575; white-space: normal; } .ap-mkt.aviso i { background: #e2c575; }
 @keyframes ap-latido { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 .ap-hist-meta { display: flex; justify-content: flex-end; gap: 22px; margin-bottom: -54px; position: relative; z-index: 2; pointer-events: none; }
 .ap-hist-meta div { display: flex; flex-direction: column; align-items: flex-end; }
