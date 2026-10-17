@@ -40,6 +40,11 @@ try:   # Carta CMA edición Pro (PDF con gráficas); si falta, el Modo Pro entre
 except Exception as _ex_carta_pro:
     carta_pro = None
     logging.getLogger("apportafolio.terminal").warning("carta_pro no disponible: %s", _ex_carta_pro)
+try:   # Rediseño 2026-10 · «Tu dinero hoy» (tier gratuito); si falla, se dibuja la versión anterior
+    import fp_ui
+except Exception as _ex_fp_ui:
+    fp_ui = None
+    logging.getLogger("apportafolio.terminal").warning("fp_ui no disponible: %s", _ex_fp_ui)
 
 
 def _modulo_fresco(mod):
@@ -59,6 +64,7 @@ def _modulo_fresco(mod):
 
 
 pro_ui, carta_pro = _modulo_fresco(pro_ui), _modulo_fresco(carta_pro)
+fp_ui = _modulo_fresco(fp_ui)
 from fp_fase6_ui_importacion import ui_boton_importacion
 
 log_app = logging.getLogger("apportafolio.terminal")
@@ -1516,6 +1522,35 @@ def _fp_render_bolsas(uid):
     st.markdown(f"<div class='pos-box notranslate' translate='no'>{html}</div>", unsafe_allow_html=True)
 
 
+def _fp_ir_a_terminal():
+    """Callback del atajo «Ver mis inversiones»: cambia la sección antes de que se dibuje la barra lateral."""
+    st.session_state["seccion_app"] = SECCION_TERMINAL
+
+
+def _fp_render_nuevo(uid, nombre_cliente, viendo_otro_cliente, hoy):
+    """Rediseño de «Tu dinero hoy» (fp_ui.py). Reusa las mismas lecturas y escrituras de esta sección.
+    Devuelve False si algo falla antes de dibujar, para que se use la versión anterior."""
+    from fp_fase5_inteligencia import evaluar_inteligencia
+    ctx = {
+        "uid": uid, "nombre": nombre_cliente, "viendo_otro": viendo_otro_cliente, "hoy": hoy, "db_conn": db_conn,
+        "dinero_libre": fp_dinero_libre, "bolsas": fp_bolsas, "proximos": fp_proximos, "ultimos": fp_ultimos,
+        "categorias": fp_categorias, "cuentas": fp_cuentas, "registrar": fp_registrar, "descartar": fp_descartar,
+        "actividad": fp_actividad_registro, "anillos": calcular_anillos_salud,
+        "inteligencia": lambda u, h: evaluar_inteligencia(db_conn, u, h),
+        "sin_base": _fp_render_sin_base,
+        "boton_compromisos": lambda u: ui_boton_compromisos(db_conn, u),
+        "boton_bolsas": lambda u: ui_boton_bolsas(db_conn, u),
+        "boton_importacion": lambda u: ui_boton_importacion(db_conn, u),
+        "ir_terminal": _fp_ir_a_terminal,
+    }
+    try:
+        fp_ui.render(ctx)
+        return True
+    except Exception as ex:
+        log_app.warning("fp_ui · se usa la versión anterior: %s", ex)
+        return False
+
+
 def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
     """Punto 10 · Home de finanzas personales."""
     st.markdown(FP_ESTILOS, unsafe_allow_html=True)
@@ -1530,7 +1565,10 @@ def render_fp_dashboard(uid, nombre_cliente, viendo_otro_cliente):
         st.info("Las finanzas personales aún no están instaladas en la base de datos. "
                 "Corre las migraciones del repositorio del bot (carpeta sql/) en Neon.")
         return
-    
+
+    if fp_ui is not None and _fp_render_nuevo(uid, nombre_cliente, viendo_otro_cliente, hoy):
+        return   # Rediseño 2026-10; si devuelve False, sigue la versión anterior (intacta abajo)
+
     ui_panel_inteligencia(db_conn, uid)
     
     try:
@@ -3151,7 +3189,10 @@ if seccion == SECCION_FP:
         render_fp_telegram_compacto(user_id)        # línea discreta al final del dashboard
     if fp_esquema_listo():
         st.markdown("---")
-        ui_planificacion(db_conn, active_client_id)
+        if fp_ui is not None and hasattr(fp_ui, "ui_planificacion"):
+            fp_ui.ui_planificacion(db_conn, active_client_id)   # Reparto nuevo; Deudas y Metas como antes
+        else:
+            ui_planificacion(db_conn, active_client_id)
     st.stop()   # la Terminal (cotizaciones, riesgo, IA) no se calcula mientras no se abra
 
 SB["inv"].markdown(_grp("Inversiones"), unsafe_allow_html=True)

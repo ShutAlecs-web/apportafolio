@@ -1863,9 +1863,19 @@ def contexto_carta_pro(H, summary, tx_df, cash_df, R, total, rf, usd_mxn, client
 # =====================================================================================================
 # BARRA LATERAL · estilo de banca móvil (ficha del cliente, módulo arriba con fondo vivo, renglones por grupo)
 # =====================================================================================================
+def _sello_inicial(ini):
+    """Sello tipo CMA Financial Letter: doble aro dorado, aro punteado que gira muy despacio, inicial y «CMA»."""
+    return ("<svg class='sb-sello' viewBox='0 0 60 60' aria-hidden='true'>"
+            "<circle cx='30' cy='30' r='28.5' fill='none' stroke='#c9a24a' stroke-width='0.9'/>"
+            "<circle class='sb-sello-giro' cx='30' cy='30' r='25' fill='none' stroke='#e2c575' stroke-width='0.7' stroke-dasharray='1.2 2.6'/>"
+            "<circle cx='30' cy='30' r='21.5' fill='rgba(201,162,74,0.06)' stroke='#8a6f33' stroke-width='0.5'/>"
+            f"<text x='30' y='33.5' text-anchor='middle' font-family='Playfair Display, Georgia, serif' font-style='italic' font-size='17' fill='#e2c575'>{e(ini)}</text>"
+            "<text x='30' y='43.5' text-anchor='middle' font-family='Inter, sans-serif' font-size='4.6' letter-spacing='1.6' fill='#8a7a4a'>CMA</text></svg>")
+
+
 def html_ficha_cliente(nombre, rol, detalle):
     ini = (str(nombre or "?").strip()[:1] or "?").upper()
-    return (f"<div class='sb-ficha notranslate' translate='no'><div class='sb-av'>{e(ini)}</div><div style='min-width:0'>"
+    return (f"<div class='sb-ficha notranslate' translate='no'><div class='sb-av'>{_sello_inicial(ini)}</div><div style='min-width:0'>"
             f"<div class='sb-n'>{e(nombre)}</div><div class='sb-d'>{e(detalle)}</div></div><span class='sb-rol'>{e(rol)}</span></div>")
 
 
@@ -1883,19 +1893,28 @@ section[data-testid="stSidebar"] > div { background: #07080b; }
     border-radius: 14px; padding: 10px 10px 4px; margin-bottom: 12px; }
 @keyframes sb-onda { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
 @media (prefers-reduced-motion: reduce) { .st-key-sb_top { animation: none; } }
-.st-key-sb_top [role="radiogroup"] { display: grid !important; grid-template-columns: 1fr 1fr; gap: 3px; background: rgba(5,6,8,0.6);
-    border: 1px solid #2a3344; border-radius: 10px; padding: 3px; width: 100%; }
-.st-key-sb_top [role="radiogroup"] label { margin: 0 !important; padding: 7px 4px !important; border-radius: 7px; justify-content: center; cursor: pointer; }
-.st-key-sb_top [role="radiogroup"] label > div:first-child { display: none !important; }
+.st-key-sb_top [role="radiogroup"] { display: grid !important; grid-template-columns: 1fr 1fr; gap: 6px; background: transparent !important;
+    border: 0 !important; padding: 0 !important; width: 100%; }
+.st-key-sb_top [data-testid="stRadio"], .st-key-sb_top [data-testid="stRadio"] > div { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+.st-key-sb_top [role="radiogroup"] label { margin: 0 !important; padding: 7px 6px !important; border-radius: 999px; justify-content: center; cursor: pointer;
+    border: 1px solid rgba(201,162,74,0.28); background: rgba(5,6,8,0.25); }
+.st-key-sb_top [role="radiogroup"] label > div:first-child, .st-key-sb_top [role="radiogroup"] label > div:not(:last-child) { display: none !important; }
 .st-key-sb_top [role="radiogroup"] label p { font-size: 0.78rem !important; color: #a3a9b6 !important; text-align: center; }
 .st-key-sb_top [role="radiogroup"] label:has(input:checked) { background: #e2c575; }
 .st-key-sb_top [role="radiogroup"] label:has(input:checked) p { color: #15120b !important; font-weight: 600 !important; }
 .st-key-sb_top [data-testid="stCheckbox"] p, .st-key-sb_top [data-testid="stToggle"] p { font-size: 0.8rem !important; color: #e6e9ef !important; }
 /* Ficha del cliente */
-.sb-ficha { display: flex; gap: 10px; align-items: center; padding: 12px; border: 1px solid rgba(201,162,74,0.38); border-radius: 12px;
-    background: linear-gradient(180deg, #111723, #0b0f17); }
-.sb-av { width: 38px; height: 38px; flex: 0 0 38px; border-radius: 50%; border: 1px solid #c9a24a; display: grid; place-items: center;
-    font: italic 400 1.05rem "Playfair Display", serif; color: #e2c575; }
+.sb-ficha { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid rgba(201,162,74,0.38); border-radius: 12px;
+    background: radial-gradient(120% 140% at 0% 0%, rgba(201,162,74,0.10), transparent 55%), linear-gradient(180deg, #111723, #0b0f17); position: relative; }
+.sb-ficha::after { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.2px; pointer-events: none; opacity: 0;
+    background: conic-gradient(from var(--ap-ang), transparent 0deg, transparent 290deg, rgba(233,211,154,0) 312deg, rgba(255,244,214,0.9) 338deg, rgba(233,211,154,0) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: ap-borde-luz 12s linear 1.5s infinite; }
+.sb-av { width: 46px; height: 46px; flex: 0 0 46px; }
+.sb-sello { width: 46px; height: 46px; display: block; filter: drop-shadow(0 0 6px rgba(201,162,74,0.18)); }
+.sb-sello-giro { transform-origin: 30px 30px; animation: sb-giro 40s linear infinite; }
+@keyframes sb-giro { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sb-sello-giro, .sb-ficha::after { animation: none !important; } }
 .sb-n { font-weight: 600; font-size: 0.9rem; color: #e6e9ef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sb-d { color: #6b7385; font-size: 0.7rem; }
 .sb-rol { margin-left: auto; font: 500 0.56rem Inter, sans-serif; letter-spacing: 1.2px; text-transform: uppercase; color: #e2c575;
