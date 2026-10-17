@@ -40,6 +40,25 @@ try:   # Carta CMA edición Pro (PDF con gráficas); si falta, el Modo Pro entre
 except Exception as _ex_carta_pro:
     carta_pro = None
     logging.getLogger("apportafolio.terminal").warning("carta_pro no disponible: %s", _ex_carta_pro)
+
+
+def _modulo_fresco(mod):
+    """Streamlit Cloud, tras un push, vuelve a correr app.py pero puede conservar en memoria la versión VIEJA de los módulos
+    importados (pro_ui, carta_pro). Si el archivo cambió desde que se cargó, se recarga; así app.py y sus módulos van parejos."""
+    if mod is None:
+        return None
+    try:
+        import importlib
+        mt = os.path.getmtime(mod.__file__)
+        if getattr(mod, "_ap_mtime", None) != mt:
+            mod = importlib.reload(mod)
+            mod._ap_mtime = mt
+    except Exception as ex:
+        logging.getLogger("apportafolio.terminal").warning("Recarga de módulo %s: %s", getattr(mod, "__name__", "?"), ex)
+    return mod
+
+
+pro_ui, carta_pro = _modulo_fresco(pro_ui), _modulo_fresco(carta_pro)
 from fp_fase6_ui_importacion import ui_boton_importacion
 
 log_app = logging.getLogger("apportafolio.terminal")
