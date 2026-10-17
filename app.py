@@ -28,6 +28,12 @@ from telegram_deeplink import render_boton_telegram
 from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
 from fp_fase5_inteligencia import ui_panel_inteligencia, limpiar_cache as limpiar_cache_inteligencia
+from types import SimpleNamespace
+try:   # Rediseño 2026-10 · Modo Pro y encabezado en un módulo aparte; si falla, la Terminal sigue con las vistas previas
+    import pro_ui
+except Exception as _ex_pro_ui:
+    pro_ui = None
+    logging.getLogger("apportafolio.terminal").warning("pro_ui no disponible: %s", _ex_pro_ui)
 from fp_fase6_ui_importacion import ui_boton_importacion
 
 log_app = logging.getLogger("apportafolio.terminal")
@@ -2562,8 +2568,9 @@ def generar_carta_pdf(ctx):
     return buf.getvalue()
 
 
-def render_carta_cma(ctx):
-    """Rediseño · "Carta protagonista": tarjeta con filo dorado, sello CMA, descarga en PDF y vista previa."""
+def render_carta_cma(ctx, claro=False):
+    """Rediseño · "Carta protagonista": tarjeta con filo dorado, sello CMA, descarga en PDF y vista previa.
+    claro=True (Modo Pro): misma tarjeta en marfil, como la banda de la carta impresa."""
     st.markdown("<br>", unsafe_allow_html=True)
     try:
         carta = generar_carta_cma(ctx)
@@ -2577,9 +2584,9 @@ def render_carta_cma(ctx):
     except Exception as ex:   # sin reportlab o error de maquetación: se ofrece el HTML como antes
         pdf, pdf_error = None, ex
         log_app.warning("Carta CMA · PDF no disponible, se ofrece HTML: %s", ex)
-    with st.container(key="carta_card"):
+    with st.container(key="carta_card_claro" if claro else "carta_card"):
         c_txt, c_btn = st.columns([2.2, 1], vertical_alignment="center")
-        c_txt.markdown(f"<div class='ap-carta notranslate' translate='no'>{SELLO_SVG.replace('#8a6d1f', '#e2c575')}"
+        c_txt.markdown(f"<div class='ap-carta notranslate' translate='no'>{SELLO_SVG if claro else SELLO_SVG.replace('#8a6d1f', '#e2c575')}"
                        "<div><h3>CMA Financial Letter</h3><p>Tu carta ejecutiva de banca privada al corte de hoy: patrimonio, "
                        "asignación, riesgo y operaciones, con folio verificable.</p></div></div>", unsafe_allow_html=True)
         if pdf is not None:
@@ -3512,18 +3519,49 @@ tt_liq = "Dinero en efectivo listo para aprovechar oportunidades en el mercado."
 tt_pnl = "Profit & Loss (Pérdidas o Ganancias Totales de tus inversiones)."
 
 # P0-B · Jerarquía del home: (1) contexto + métricas clave, (2) gráficas, (3) detalle de movimientos al final.
-_titulo_home = f"Mesa del Gestor · {active_username}" if ES_ADMIN else f"Resumen de tu Portafolio · {active_username}"
-_ultimo_mov = max([str(x) for x in list(tx_df["fecha"]) + list(cash_df["fecha"]) if x] or ["—"])
-st.markdown(f"<div class='ap-masthead notranslate' translate='no'>"
-            f"<div><p class='ap-eyebrow'>CMA Wealth · Private Client Terminal</p><h3>{html_seguro(_titulo_home)}</h3></div>"
-            f"<div class='ap-meta'>"
-            f"<div class='ap-meta-item'><span class='ap-meta-label'>Operaciones</span><span class='ap-meta-value'>{len(tx_df)}</span></div>"
-            f"<div class='ap-meta-item'><span class='ap-meta-label'>Movimientos de caja</span><span class='ap-meta-value'>{len(cash_df)}</span></div>"
-            f"<div class='ap-meta-item'><span class='ap-meta-label'>Último registro</span><span class='ap-meta-value'>{html_seguro(_ultimo_mov)}</span></div>"
-            f"</div></div>", unsafe_allow_html=True)
-
+# Rediseño 2026-10 · encabezado con saludo y estado de mercados (EE.UU. y México); el conteo de operaciones/movimientos
+# se mudó junto a las pestañas del historial.
 _MODO_PRO = st.session_state.get("modo_pro_toggle", False)
-k1, k2, k3, k4 = st.columns([1.45, 1, 1, 1]) if _MODO_PRO else (_CONTENEDOR_SILENCIOSO,) * 4
+_ultimo_mov = max([str(x) for x in list(tx_df["fecha"]) + list(cash_df["fecha"]) if x] or ["—"])
+
+
+def _clave_gemini():
+    try: return st.secrets["GEMINI_API_KEY"]
+    except Exception: return None
+
+
+H_PRO = SimpleNamespace(style=style_financial_figure, cfg=plotly_config, yf_symbol=_yf_symbol, moneda=moneda_cotizacion,
+                        cierres_mxn=_cierres_historicos_mxn, cierres_riesgo=_descargar_cierres_riesgo, riesgo=get_advanced_risk_metrics,
+                        series_bola_nieve=series_bola_nieve, gemini=llamar_gemini, json=extraer_json_robusto, gemini_key=_clave_gemini,
+                        log=log_app, asset_class=ASSET_CLASS, usd_mxn=float(usd_mxn or 18.5))
+
+
+def _seccion_pro(nombre, fn, *args, **kwargs):
+    """Ejecuta un componente de pro_ui; si falla, la sección se omite con un aviso y el resto de la Terminal sigue."""
+    if pro_ui is None:
+        st.caption(f"«{nombre}» no está disponible: falta el módulo pro_ui.py.")
+        return None
+    try:
+        return fn(*args, **kwargs)
+    except Exception as ex:
+        log_app.exception("Modo Pro · %s: %s", nombre, ex)
+        st.caption(f"La sección «{nombre}» no está disponible en este momento.")
+        return None
+
+
+if pro_ui is not None:
+    st.markdown(pro_ui.CSS_PRO, unsafe_allow_html=True)
+    st.markdown(pro_ui.html_encabezado(active_username, pro=_MODO_PRO), unsafe_allow_html=True)
+else:   # respaldo: encabezado previo
+    st.markdown(f"<div class='ap-masthead notranslate' translate='no'><div><p class='ap-eyebrow'>CMA Wealth · Private Client Terminal</p>"
+                f"<h3>{html_seguro(active_username)}</h3></div></div>", unsafe_allow_html=True)
+
+# Rediseño 2026-10 · Indicadores Pro: un solo cuadro (patrimonio + composición, gráfica con periodo y P&L / liquidez / XIRR abajo).
+# Si el componente falla, se pintan las 4 tarjetas anteriores.
+_kpi_pro_ok = bool(_MODO_PRO and pro_ui is not None and _seccion_pro(
+    "Indicadores", pro_ui.render_kpis_pro, H_PRO, cash_df, tx_df, float(total_portafolio), float(pnl_global), float(retorno_global),
+    float(capital_aportado), float(total_invertido), float(liquidez_mxn), xirr_valor, tasa_libre_riesgo(), summary))
+k1, k2, k3, k4 = st.columns([1.45, 1, 1, 1]) if (_MODO_PRO and not _kpi_pro_ok) else (_CONTENEDOR_SILENCIOSO,) * 4
 k1.markdown(f"<div class='metric-card metric-card--primary kpi kpi-1 notranslate' translate='no'><div class='metric-title'>Patrimonio Total <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_pat}</span></span></div><div class='metric-value'>${total_portafolio:,.2f}</div></div>", unsafe_allow_html=True)
 _sub_cap = (f"Costo de posiciones: ${total_invertido:,.2f}" if hay_aportaciones
             else "Sin depósitos registrados: se muestra el costo de tus posiciones")
@@ -3553,50 +3591,56 @@ else:
     k4.markdown(f"<div class='metric-card kpi kpi-4 notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div><div class='metric-subtext {c_gan}'>{retorno_global:+.2f}% de rendimiento</div></div>", unsafe_allow_html=True)
 
 # 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN
-st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('trend', color='#d4af37', size=18)}La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
-if not cash_df.empty:
-    df_hist = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
-    if not df_hist.empty:
-        df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
-        df_hist = df_hist.sort_values("fecha")
-        def calc_flujo(row):
-            val = abs(float(row["monto_mxn"]))
-            return val if row["tipo"] == "DEPOSITO" else -val
+if _MODO_PRO and pro_ui is not None:   # Rediseño 2026-10 · gráfica Pro (vs índices / por activo) + calendario de dividendos
+    _seccion_pro("Rendimiento del portafolio", pro_ui.render_grafica_pro, H_PRO, cash_df, tx_df, total_portafolio, tasa_libre_riesgo())
+    if not tx_df.empty:
+        _seccion_pro("Calendario de dividendos", pro_ui.render_dividendos, H_PRO, tx_df, active_username)
+else:
+  st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('trend', color='#d4af37', size=18)}La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
+  if not cash_df.empty:
+      df_hist = cash_df[cash_df["tipo"].isin(["DEPOSITO", "RETIRO"])].copy()
+      if not df_hist.empty:
+          df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
+          df_hist = df_hist.sort_values("fecha")
+          def calc_flujo(row):
+              val = abs(float(row["monto_mxn"]))
+              return val if row["tipo"] == "DEPOSITO" else -val
             
-        df_hist["flujo_neto"] = df_hist.apply(calc_flujo, axis=1)
-        df_hist["capital_acumulado"] = df_hist["flujo_neto"].cumsum()
+          df_hist["flujo_neto"] = df_hist.apply(calc_flujo, axis=1)
+          df_hist["capital_acumulado"] = df_hist["flujo_neto"].cumsum()
         
-        df_hoy = pd.DataFrame({"fecha": [pd.to_datetime(datetime.today().date())], "capital_acumulado": [df_hist["capital_acumulado"].iloc[-1]]})
-        df_hist = pd.concat([df_hist, df_hoy], ignore_index=True)
+          df_hoy = pd.DataFrame({"fecha": [pd.to_datetime(datetime.today().date())], "capital_acumulado": [df_hist["capital_acumulado"].iloc[-1]]})
+          df_hist = pd.concat([df_hist, df_hoy], ignore_index=True)
 
-        _bola_v2 = construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, tasa_libre_riesgo(), senior=MODO_SENIOR)   # Sprint 2
-        fig_snow = go.Figure()
-        fig_snow.add_trace(go.Scatter(
-            x=df_hist["fecha"], y=df_hist["capital_acumulado"], fill='tozeroy', mode='lines+markers',
-            line=dict(color="#d4af37", width=3), marker=dict(size=6, color="#d4af37", symbol="circle"),
-            fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
-        ))
+          _bola_v2 = construir_bola_nieve_v2(cash_df, tx_df, total_portafolio, tasa_libre_riesgo(), senior=MODO_SENIOR)   # Sprint 2
+          fig_snow = go.Figure()
+          fig_snow.add_trace(go.Scatter(
+              x=df_hist["fecha"], y=df_hist["capital_acumulado"], fill='tozeroy', mode='lines+markers',
+              line=dict(color="#d4af37", width=3), marker=dict(size=6, color="#d4af37", symbol="circle"),
+              fillcolor="rgba(212, 175, 55, 0.15)", name="Capital Invertido", hovertemplate="<b>Fecha:</b> %{x|%d %b, %Y}<br><b>Capital Acumulado:</b> $%{y:,.2f} MXN<extra></extra>"
+          ))
         
-        color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#94a3b8"
-        fig_snow.add_trace(go.Scatter(
-            x=[df_hist["fecha"].iloc[0], df_hist["fecha"].iloc[-1]], y=[total_portafolio, total_portafolio],
-            mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
-        ))
+          color_brecha = "#34d399" if total_portafolio >= df_hist["capital_acumulado"].iloc[-1] else "#94a3b8"
+          fig_snow.add_trace(go.Scatter(
+              x=[df_hist["fecha"].iloc[0], df_hist["fecha"].iloc[-1]], y=[total_portafolio, total_portafolio],
+              mode='lines', line=dict(color=color_brecha, width=2, dash='dash'), name="Valor Portafolio Hoy", hovertemplate="<b>Valor Actual:</b> $%{y:,.2f} MXN<extra></extra>"
+          ))
 
-        style_financial_figure(fig_snow, height=320, showlegend=True)
-        fig_snow.update_layout(hovermode="x unified")
-        fig_snow.update_yaxes(tickprefix="$")
-        with st.container(key="bola_card"):   # tarjeta con filo dorado y luz (CSS .st-key-bola_card)
-            if _bola_v2 is not None:   # Sprint 2 · Capital vs Valor vs CETES; si falla, se pinta la gráfica original intacta
-                fig_snow_v2, resumen_bola = _bola_v2
-                st.markdown(resumen_bola, unsafe_allow_html=True)
-                st.plotly_chart(fig_snow_v2, use_container_width=True, config=plotly_config, key="bola_nieve")
-            else:
-                st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
-    else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
-else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
+          style_financial_figure(fig_snow, height=320, showlegend=True)
+          fig_snow.update_layout(hovermode="x unified")
+          fig_snow.update_yaxes(tickprefix="$")
+          with st.container(key="bola_card"):   # tarjeta con filo dorado y luz (CSS .st-key-bola_card)
+              if _bola_v2 is not None:   # Sprint 2 · Capital vs Valor vs CETES; si falla, se pinta la gráfica original intacta
+                  fig_snow_v2, resumen_bola = _bola_v2
+                  st.markdown(resumen_bola, unsafe_allow_html=True)
+                  st.plotly_chart(fig_snow_v2, use_container_width=True, config=plotly_config, key="bola_nieve")
+              else:
+                  st.plotly_chart(fig_snow, use_container_width=True, config=plotly_config)
+      else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
+  else: st.info("Registra tu primer depósito en «Registro de Movimientos» (menú lateral) para ver crecer tu Bola de Nieve.")
 
-st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
+if not (_MODO_PRO and pro_ui is not None):   # en Pro el título lo pone la escalera
+    st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Progreso y Futuro (Smart DCA)</h4>", unsafe_allow_html=True)
 user_freq, meta_nombre = get_user_profile(active_client_id)
 
 def get_period_index(date_str, freq):
@@ -3667,72 +3711,53 @@ else:
                       "No sumo aportaciones ni rendimiento a tu efectivo.")
 
 # Rediseño · "Franja única": racha, hito y proyección en una sola franja con filo dorado.
-st.markdown(
-    f"<div class='ap-franja ap-filo notranslate' translate='no'>"
-    f"<div><p class='ap-t'>Racha de aportación · <span style='color:{color_racha};margin-left:4px;'>{rango_txt}</span></p>"
-    f"<p class='ap-v' style='color:{color_racha};'>{racha_actual}</p>"
-    f"<p class='ap-s'>{txt_frecuencia.lower()} seguidas · récord {max(racha_actual, racha_maxima)} · ahorro en racha ${ahorro_racha:,.2f}</p></div>"
-    f"<div><p class='ap-t'>{html_seguro(meta_nombre)} · hito ${meta_actual:,.0f}</p>"
-    f"<p class='ap-v'>{progreso_meta:.1f}%</p>"
-    f"<div class='ap-barra'><b style='width:{min(max(progreso_meta, 0), 100):.1f}%'></b></div>"
-    f"<p class='ap-s'>Faltan <b style='color:#e6e9ef;'>${faltante:,.2f} MXN</b></p></div>"
-    f"<div><p class='ap-t'>Proyección a 5 años</p><p class='ap-v'>${proyeccion_5a:,.2f}</p>"
-    f"<p class='ap-s'>{txt_proyeccion}</p></div>"
-    f"</div>", unsafe_allow_html=True)
+# Modo Pro (2026-10): escalera de aportaciones; la base son tus depósitos y el rendimiento es un supuesto opcional.
+if _MODO_PRO and pro_ui is not None:
+    _seccion_pro("Progreso y futuro", pro_ui.render_progreso_pro, cash_df, total_portafolio, capital_aportado, pmt, user_freq,
+                 xirr_valor, tasa_libre_riesgo(), active_client_id)
+else:
+    st.markdown(
+        f"<div class='ap-franja ap-filo notranslate' translate='no'>"
+        f"<div><p class='ap-t'>Racha de aportación · <span style='color:{color_racha};margin-left:4px;'>{rango_txt}</span></p>"
+        f"<p class='ap-v' style='color:{color_racha};'>{racha_actual}</p>"
+        f"<p class='ap-s'>{txt_frecuencia.lower()} seguidas · récord {max(racha_actual, racha_maxima)} · ahorro en racha ${ahorro_racha:,.2f}</p></div>"
+        f"<div><p class='ap-t'>{html_seguro(meta_nombre)} · hito ${meta_actual:,.0f}</p>"
+        f"<p class='ap-v'>{progreso_meta:.1f}%</p>"
+        f"<div class='ap-barra'><b style='width:{min(max(progreso_meta, 0), 100):.1f}%'></b></div>"
+        f"<p class='ap-s'>Faltan <b style='color:#e6e9ef;'>${faltante:,.2f} MXN</b></p></div>"
+        f"<div><p class='ap-t'>Proyección a 5 años</p><p class='ap-v'>${proyeccion_5a:,.2f}</p>"
+        f"<p class='ap-s'>{txt_proyeccion}</p></div>"
+        f"</div>", unsafe_allow_html=True)
 st.markdown("---")
 
 # ==========================================
 # 8.2 SPRINT 2 · TABLA DE POSICIONES PREMIUM (visible en Modo Fácil y en Modo Pro)
 # ==========================================
 metricas_riesgo = {}   # Sprint 3 · la llena el Módulo de Riesgo (Modo Pro) y la consume la Carta CMA
-render_tabla_posiciones(summary, senior=MODO_SENIOR)
+R_PRO = None          # Modo Pro · métricas de riesgo calculadas una sola vez (posiciones, riesgo, estrés y carta)
+if _MODO_PRO and pro_ui is not None and not summary.empty:
+    try:
+        R_PRO = pro_ui.metricas_riesgo_pro(H_PRO, summary, float(total_portafolio), tasa_libre_riesgo())
+    except Exception as _ex_r:
+        log_app.warning("Modo Pro · métricas de riesgo: %s", _ex_r)
+    if R_PRO:
+        metricas_riesgo.update({"beta": R_PRO["beta"], "sharpe": R_PRO["sharpe"], "max_dd": R_PRO["max_dd"] * 100,
+                                "var_95_mxn": R_PRO["var95"], "vol_anual": R_PRO["vol"]})
+if _MODO_PRO and pro_ui is not None:
+    _seccion_pro("Tus posiciones", pro_ui.render_posiciones_pro, H_PRO, summary, (R_PRO or {}).get("vols", {}), (R_PRO or {}).get("betas", {}))
+else:
+    render_tabla_posiciones(summary, senior=MODO_SENIOR)
 st.markdown("---")
 
 # ==========================================
 # RAMIFICACIÓN MODO PRO vs MODO FÁCIL
 # ==========================================
 if st.session_state.get("modo_pro_toggle", False):
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Análisis de Rendimiento y Atribución Global</h4>", unsafe_allow_html=True)
-    perf_col1, perf_col2 = st.columns([1, 2.5])
-
-    with perf_col1:
-        total_friccion = (tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum() if not tx_df.empty else 0.0
-        def calc_xirr():
-            return f"{xirr_valor * 100:+.2f}%" if xirr_valor is not None else "N/A"
-
-        tt_fric = "Total pagado al bróker en comisiones operativas e impuestos (IVA)."
-        tt_xirr = "Tasa Interna de Retorno. Mide el rendimiento real anualizado tomando en cuenta las fechas exactas de tus depósitos y retiros."
-        st.markdown(
-            (
-                f"<div class='pos-box notranslate' translate='no'>"
-                f"<p class='metric-title'>Fricción Financiera <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fric}</span></span></p>"
-                f"<p style='color:#94a3b8;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>${total_friccion:,.2f} MXN</p></div>"
-                f"<div class='pos-box notranslate' translate='no'>"
-                f"<p class='metric-title'>{'Tu rendimiento real al año' if MODO_SENIOR else 'Rentabilidad Ponderada (XIRR)'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_xirr}</span></span></p>"
-                f"<p style='color:#00f0ff;font-size:1.35rem;font-weight:600;font-family:\"Inter\", sans-serif;margin:0;'>{calc_xirr()}</p></div>"
-                f"{html_le_ganaste_a_cetes(xirr_valor, tasa_libre_riesgo(), MODO_SENIOR)}"   # Sprint 2
-            ),
-            unsafe_allow_html=True
-        )
-
-    with perf_col2:
-        if not summary.empty:
-            attr_df = summary[summary["pnl"] != 0].copy()
-            if not attr_df.empty:
-                attr_df.sort_values("pnl", ascending=True, inplace=True)
-                attr_df["color_pnl"] = attr_df["pnl"].apply(lambda x: "#34d399" if x >= 0 else "#94a3b8")
-                fig_attr = go.Figure()
-                fig_attr.add_trace(go.Bar(
-                    y=attr_df["ticker"], x=attr_df["pnl"], orientation="h", marker_color=attr_df["color_pnl"],
-                    text=attr_df["pnl"].apply(lambda x: f"${x:+,.0f}"), textposition="outside"
-                ))
-                style_financial_figure(fig_attr, height=280, title="Atribución Neta por Activo (MXN)", showlegend=False,
-                                       margin=dict(t=36, b=0, l=10, r=10), xgrid=True, ygrid=False)
-                fig_attr.update_layout(xaxis_title="", yaxis_title="")
-                st.plotly_chart(fig_attr, use_container_width=True, config=plotly_config)
-            else: st.info("Aún no hay P&L registrado.")
-        else: st.info("Adquiere activos para medir atribución.")
-
+    # Rediseño 2026-10 · Modo Pro. Cada sección vive en pro_ui.py y se ejecuta aislada (_seccion_pro).
+    rf_pro = tasa_libre_riesgo()
+    total_friccion = float((tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum()) if not tx_df.empty else 0.0
+    _seccion_pro("Rendimiento y atribución", pro_ui.render_rendimiento_pro if pro_ui else None, H_PRO, summary, tx_df, xirr_valor, rf_pro,
+                 total_friccion, float(usd_mxn or 18.5))
     st.markdown("---")
 
     if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
@@ -3876,15 +3901,32 @@ if st.session_state.get("modo_pro_toggle", False):
 
                 score_color = "#34d399" if ai_rating >= 7 else ("#d4af37" if ai_rating >= 4 else "#94a3b8")
 
-                col_chart, col_stats = st.columns([2.5, 1])
-                with col_chart:
-                    fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
-                    fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 148}, {211 if pct_change_1y>=0 else 163}, {153 if pct_change_1y>=0 else 184}, 0.15)"), row=1, col=1)
-                    fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
-                    style_financial_figure(fig_deep, title=f"{target_asset} | Análisis de 1 Año", showlegend=False)
-                    fig_deep.update_layout(yaxis2=dict(showgrid=False, showticklabels=False))
-                    st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
+                # Rediseño 2026-10 · pestañas; la gráfica marca tus compras (punto dorado) sobre MA50/MA200.
+                tab_g, tab_f, tab_v, tab_n = st.tabs(["Gráfica", "Fundamentales", "Lectura V5", "Noticias"])
+                with tab_g:
+                    _ficha_ok = False
+                    if pro_ui is not None:
+                        try:
+                            _mon_graf = moneda_cotizacion(_yf_symbol(target_asset))
+                            fig_ficha, _compras = pro_ui.figura_ficha_tecnica(H_PRO, hist_data, target_asset, tx_df, usd_mxn, _mon_graf)
+                            with st.container(key="ficha_card"):
+                                st.plotly_chart(fig_ficha, use_container_width=True, config=plotly_config, key="ficha_graf")
+                                st.markdown("<div class='notranslate' translate='no'>" + pro_ui.html_compras_caro_barato(
+                                    _compras, float(current_price), float(low_52), float(high_52)) + "</div>", unsafe_allow_html=True)
+                                st.caption(f"Precios en {_mon_graf}. «≈» = compra registrada en otra moneda, convertida con el tipo de cambio. "
+                                           "Rango 52 s: dónde quedó el precio de tu compra entre el mínimo (0 %) y el máximo (100 %) de las últimas 52 semanas, medido con el rango actual.")
+                            _ficha_ok = True
+                        except Exception as _ex_ficha:
+                            log_app.warning("Radiografía · ficha técnica %s: %s", target_asset, _ex_ficha)
+                    if not _ficha_ok:   # respaldo: gráfica previa (precio + volumen)
+                        fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
+                        fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 148}, {211 if pct_change_1y>=0 else 163}, {153 if pct_change_1y>=0 else 184}, 0.15)"), row=1, col=1)
+                        fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
+                        style_financial_figure(fig_deep, title=f"{target_asset} | Análisis de 1 Año", showlegend=False)
+                        fig_deep.update_layout(yaxis2=dict(showgrid=False, showticklabels=False))
+                        st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
                     
+                with tab_v:
                     bulls_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bulls])
                     bears_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bears])
                     st.markdown(
@@ -3908,11 +3950,13 @@ if st.session_state.get("modo_pro_toggle", False):
                         ),
                         unsafe_allow_html=True
                     )
+                with tab_n:
                     if asset_news:
                         news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{html_seguro(n['link'])}' target='_blank' rel='noopener noreferrer' style='color:#d4af37; text-decoration:none;'>{html_seguro(n['title'])}</a></li>" for n in asset_news if str(n['link']).startswith(('https://', 'http://'))])
                         st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
+                    else: st.caption("Yahoo Finance no tiene noticias recientes de este activo.")
                     
-                with col_stats:
+                with tab_f:
                     if is_owned:
                         ret_color_class = "pos-green" if p_retorno_total_mxn >= 0 else "pos-red"
                         st.markdown(
@@ -3957,122 +4001,15 @@ if st.session_state.get("modo_pro_toggle", False):
             else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
     else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
 
-    st.markdown("---")
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Módulo Cuantitativo de Riesgo y Correlación</h4>", unsafe_allow_html=True)
-    if not summary.empty:
-        tickers_list = summary["ticker"].tolist()
-        returns_df, returns_mxn_df, asset_betas = get_advanced_risk_metrics(tickers_list)
-        
-        if not returns_df.empty and not returns_mxn_df.empty:
-            summary["beta"] = summary["ticker"].map(asset_betas).fillna(1.0)
-            port_beta = (summary["ponderacion_pct"] / 100 * summary["beta"]).sum()
-            
-            weights = (summary.set_index("ticker")["ponderacion_pct"] / 100).to_dict()
-            port_returns = pd.Series(0.0, index=returns_mxn_df.index)
-            for t in returns_mxn_df.columns:
-                if t in weights: port_returns += returns_mxn_df[t] * weights[t]
-            
-            rf = tasa_libre_riesgo()   # misma normalización que CETES/XIRR (acepta 0.105 o 10.5)
-            ann_ret = port_returns.mean() * 252
-            ann_vol = port_returns.std() * np.sqrt(252)
-            sharpe_ratio = (ann_ret - rf) / ann_vol if ann_vol > 0 else 0
-            
-            var_95_pct = np.percentile(port_returns, 5) * 100
-            var_95_mxn = total_portafolio * (abs(var_95_pct) / 100)
-            
-            cum_rets = (1 + port_returns).cumprod()
-            rolling_max = cum_rets.cummax()
-            drawdowns = (cum_rets - rolling_max) / rolling_max
-            max_dd = drawdowns.min() * 100
-
-            metricas_riesgo.update({"beta": port_beta, "sharpe": sharpe_ratio, "max_dd": max_dd, "var_95_mxn": var_95_mxn, "vol_anual": float(ann_vol)})   # Sprint 3
-            if MODO_SENIOR:   # Sprint 2 · mismos números en lenguaje llano; las 4 tarjetas técnicas no se pintan
-                render_riesgo_senior(var_95_mxn, max_dd, port_beta)
-                col_k1 = col_k2 = col_k3 = col_k4 = _CONTENEDOR_SILENCIOSO
-            else:
-                col_k1, col_k2, col_k3, col_k4 = st.columns(4)
-            beta_c = "text-neon-red" if port_beta > 1.2 else ("text-neon-cyan" if port_beta < 0.8 else "text-neon-green")
-            tt_beta = "Mide la volatilidad frente al mercado. >1 es más agresivo, <1 es más defensivo."
-            col_k1.markdown(f"<div class='metric-card'><div class='metric-title'>Beta (Volatilidad) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_beta}</span></span></div><div class='metric-value {beta_c}' style='font-size:1.8rem;'>{port_beta:.2f}</div><div class='metric-subtext'>Vs S&P 500</div></div>", unsafe_allow_html=True)
-            
-            tt_sharpe = "Retorno ajustado al riesgo. Valores superiores a 1 indican una excelente gestión del riesgo."
-            sharpe_c = "text-neon-green" if sharpe_ratio > 1 else ("text-neon-gold" if sharpe_ratio > 0.5 else "text-neon-red")
-            col_k2.markdown(f"<div class='metric-card'><div class='metric-title'>Sharpe Ratio <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_sharpe}</span></span></div><div class='metric-value {sharpe_c}' style='font-size:1.8rem;'>{sharpe_ratio:.2f}</div><div class='metric-subtext'>Rendimiento / Riesgo</div></div>", unsafe_allow_html=True)
-            
-            tt_mdd = "La peor caída histórica que ha sufrido el portafolio desde su punto más alto."
-            col_k3.markdown(f"<div class='metric-card'><div class='metric-title'>Drawdown Máximo (1A) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_mdd}</span></span></div><div class='metric-value text-neon-red' style='font-size:1.8rem;'>{max_dd:.1f}%</div><div class='metric-subtext'>Peor caída histórica</div></div>", unsafe_allow_html=True)
-            
-            tt_var = "El umbral de pérdida que se superará estadísticamente solo el 5% de los días."
-            col_k4.markdown(f"<div class='metric-card'><div class='metric-title'>Value at Risk (95%) <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_var}</span></span></div><div class='metric-value text-neon-purple' style='font-size:1.8rem;'>${var_95_mxn:,.0f}</div><div class='metric-subtext'>Pérdida máxima esperada diaria</div></div>", unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-            col_r1, col_r2 = st.columns([1, 1.5])
-            with col_r1:
-                st.markdown("<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>Simulador de Estrés del Mercado</p>", unsafe_allow_html=True)
-                stress_drop = st.slider("Si el S&P 500 cae...", min_value=-50, max_value=0, value=-20, step=5, format="%d%%")
-                simulated_drop = stress_drop * port_beta
-                simulated_loss = total_portafolio * (simulated_drop / 100)
-                st.markdown(f"<div class='pos-box'><p class='metric-title'>Impacto Matemático Estimado</p><h3 style='color:#94a3b8;margin:0;font-family:\"Playfair Display\", serif; font-size:1.8rem; font-weight:400;'>${simulated_loss:,.2f} MXN ({simulated_drop:+.2f}%)</h3></div>", unsafe_allow_html=True)
-                
-            with col_r2:
-                tt_corr = "Mide cómo se mueven tus activos entre sí. Un valor cercano a +1 significa que se mueven igual, -1 en direcciones opuestas (buena diversificación), y 0 que no tienen relación."
-                st.markdown(f"<p style='color:#8b949e;font-size:0.85rem;margin-bottom:5px;font-weight:bold;'>{'Diversificación' if MODO_SENIOR else 'Matriz de Correlación (Diversificación Real)'} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_corr}</span></span></p>", unsafe_allow_html=True)
-                if MODO_SENIOR and len(tickers_list) > 1:   # Sprint 2 · Senior: sin mapa de calor
-                    render_diversificacion_senior(returns_df.corr())
-                elif len(tickers_list) > 1:
-                    corr_matrix = returns_df.corr()
-                    # Sprint 2 · -1 verde (diversifica), 0 oro (neutral), +1 gris (se mueven igual). zmin/zmax fijan la escala.
-                    # Alternativa con rojo explícito: [[0, '#34d399'], [0.5, '#d4af37'], [1, '#b45454']]
-                    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale=[[0, '#34d399'], [0.5, '#d4af37'], [1, '#94a3b8']], zmin=-1, zmax=1, aspect="auto")
-                    style_financial_figure(fig_corr, height=350, xgrid=False, ygrid=False)
-                    st.plotly_chart(fig_corr, use_container_width=True, config=plotly_config)
-                else: st.info("Necesitas al menos 2 activos en tu portafolio para generar el mapa de calor de correlación.")
-    else: st.info("Necesitas registrar activos en tu portafolio para poder calcular tu Nivel de Riesgo.")
 
     st.markdown("---")
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:5px; letter-spacing:1px;' class='notranslate' translate='no'>Boletín CIO Virtual: Reportes y Earnings</h4>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#64748b;font-size:0.85rem;'>Boletín informativo que cruza calendarios de dividendos y reportes trimestrales con el entorno macroeconómico.</p>", unsafe_allow_html=True)
-    
-    if not summary.empty:
-        if st.button("Generar Reporte de Earnings & Macro", use_container_width=True):
-            with st.spinner("Recopilando calendarios de reportes y redactando informe del CIO..."):
-                backend_api_key = None
-                try: backend_api_key = st.secrets["GEMINI_API_KEY"]
-                except: pass
-                
-                if backend_api_key:
-                    try:
-                        assets_list = ", ".join(summary["ticker"].tolist())
-                        
-                        prompt_cio = f"""
-                        Eres el 'CIO Virtual' (Chief Investment Officer) de un Multi-Family Office. 
-                        El portafolio tiene exposición a estos activos: {assets_list}.
-                        
-                        Instrucción: Escribe un 'Boletín Informativo Semanal' enfocado en Earnings (Reportes Trimestrales) y Dividendos de estos activos.
-                        Contextualiza esta información con los eventos macroeconómicos más relevantes del momento, describiendo escenarios posibles.
-                        Mantén un tono institucional, claro y analítico. Usa viñetas para la legibilidad.
-                        Lenguaje informativo y condicional ("se observa", "en caso de", "los datos indican"). No emitas recomendaciones
-                        de compra, venta o mantenimiento, ni instrucciones fiscales; no uses el imperativo. El aviso legal lo agrega la aplicación.
-
-                        Estructura estricta (sin usar asteriscos de markdown):
-                        RESUMEN MACROECONÓMICO: [1 párrafo del panorama global actual]
-                        CALENDARIO DE EARNINGS: [2 o 3 activos del portafolio con reportes próximos y qué parámetros suelen observarse]
-                        DIVIDENDOS Y CONSIDERACIONES FISCALES (INFORMATIVO): [Fechas y conceptos generales a verificar con un especialista]
-                        """
-                        
-                        texto_cio, err_cio = llamar_gemini(prompt_cio, backend_api_key, temperature=0.3, presupuesto_s=90)
-                        if texto_cio: st.session_state["cio_report"] = texto_cio
-                        else:
-                            log_app.warning("CIO Virtual · sin respuesta de Gemini: %s", err_cio)
-                            st.info("El CIO Virtual está consolidando datos de mercado. Genera el reporte nuevamente en unos minutos.")
-                    except Exception as e:
-                        log_app.exception("CIO Virtual · error interno: %s", e)
-                        st.info("El CIO Virtual está consolidando datos de mercado. Genera el reporte nuevamente en unos minutos.")
-                else: st.warning("Configura tu API Key de Gemini para activar al CIO Virtual.")
-                    
-        if st.session_state.get("cio_report"):
-            st.markdown(f"<div class='pos-box'><p style='color:#e5e7eb; font-size:0.95rem; line-height:1.6; white-space:pre-wrap;'>{html_seguro(st.session_state['cio_report'])}</p>"
-                        f"</div>", unsafe_allow_html=True)   # texto de IA escapado
+    if MODO_SENIOR and R_PRO:   # Sprint 2 · lectura en lenguaje llano para el modo de lectura Senior
+        render_riesgo_senior(R_PRO["var95"], R_PRO["max_dd"] * 100, R_PRO["beta"])
+    _seccion_pro("Riesgo", pro_ui.render_riesgo_pro if pro_ui else None, H_PRO, R_PRO, summary, float(total_portafolio))
+    _seccion_pro("Simulador de estrés", pro_ui.render_estres_pro if pro_ui else None, summary, (R_PRO or {}).get("betas", {}),
+                 float(liquidez_mxn), float(total_portafolio))
+    st.markdown("---")
+    _seccion_pro("Boletín del CIO", pro_ui.render_cio_pro if pro_ui else None, H_PRO, summary, active_client_id, tx_df, active_username)
 
     st.markdown("---")
     st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA · Simulador de Rebalanceo</h4>", unsafe_allow_html=True)
@@ -4120,18 +4057,22 @@ if st.session_state.get("modo_pro_toggle", False):
             fuera = summary.loc[~summary["Clase"].isin(list(tgt_dict)), "ticker"].tolist()
             nota_fuera = (f"<p class='metric-subtext' style='margin-top:10px;'>Fuera de los parámetros (clase sin asignar): "
                           f"{html_seguro(', '.join(fuera))}.</p>" if fuera else "")
-            th = "padding:6px;text-align:right;font-size:0.68rem;letter-spacing:1.4px;text-transform:uppercase;color:#8b94a7;font-weight:500;"
-            st.markdown(
-                f"<div class='pos-box notranslate' translate='no' style='overflow-x:auto;'>"
-                f"<p class='metric-title'>Escenario de Distribución · Parámetros Cuantitativos</p>"
-                f"<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#8b94a7;font-variant-numeric:tabular-nums;'>"
-                f"<tr style='border-bottom:1px solid #1c2331;'><th style='{th}text-align:left;'>Clase</th><th style='{th}'>Valor hoy</th>"
-                f"<th style='{th}'>Peso hoy</th><th style='{th}'>Parámetro</th><th style='{th}'>Desviación</th>"
-                f"<th style='{th}'>Distribución del capital</th><th style='{th}'>Peso después</th></tr>{filas_dca}</table>"
-                f"<p class='metric-subtext' style='margin-top:10px;'>Pesos calculados sobre tus posiciones invertidas "
-                f"(${total_activos:,.2f}); el efectivo entra solo a través del capital a distribuir (${new_capital:,.2f}). "
-                f"Desviación positiva = clase por encima de su parámetro.</p>{nota_fuera}</div>",
-                unsafe_allow_html=True)
+            if pro_ui is not None:   # Rediseño 2026-10 · hoy / objetivo / después en barras de 100 %
+                st.markdown(pro_ui.html_dca_barras(actual_cls, tgt_dict, {c: actual_cls[c] + comp_sug[c] for c in tgt_dict}, comp_sug, new_capital),
+                            unsafe_allow_html=True)
+            with st.expander("Tabla detallada del escenario", expanded=pro_ui is None):
+                th = "padding:6px;text-align:right;font-size:0.68rem;letter-spacing:1.4px;text-transform:uppercase;color:#8b94a7;font-weight:500;"
+                st.markdown(
+                    f"<div class='pos-box notranslate' translate='no' style='overflow-x:auto;'>"
+                    f"<p class='metric-title'>Escenario de Distribución · Parámetros Cuantitativos</p>"
+                    f"<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#8b94a7;font-variant-numeric:tabular-nums;'>"
+                    f"<tr style='border-bottom:1px solid #1c2331;'><th style='{th}text-align:left;'>Clase</th><th style='{th}'>Valor hoy</th>"
+                    f"<th style='{th}'>Peso hoy</th><th style='{th}'>Parámetro</th><th style='{th}'>Desviación</th>"
+                    f"<th style='{th}'>Distribución del capital</th><th style='{th}'>Peso después</th></tr>{filas_dca}</table>"
+                    f"<p class='metric-subtext' style='margin-top:10px;'>Pesos calculados sobre tus posiciones invertidas "
+                    f"(${total_activos:,.2f}); el efectivo entra solo a través del capital a distribuir (${new_capital:,.2f}). "
+                    f"Desviación positiva = clase por encima de su parámetro.</p>{nota_fuera}</div>",
+                    unsafe_allow_html=True)
         else: st.warning("Los objetivos deben sumar 100%.")
 
 else:
@@ -4212,10 +4153,14 @@ else:
 # 10. HISTORIAL CONTABLE Y CAJA
 # ==========================================
 st.markdown(f"<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('book', color='#d4af37', size=18)}Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
+if pro_ui is not None:   # Rediseño 2026-10 · el resumen que antes iba en el encabezado, a la derecha de las pestañas
+    st.markdown(pro_ui.html_meta_historial(len(tx_df), len(cash_df), _ultimo_mov), unsafe_allow_html=True)
 tab_ops, tab_caja = st.tabs(["Historial de Transacciones", "Flujo de Caja"])
 
 with tab_ops:
-    if not tx_df.empty:
+    if not tx_df.empty and _MODO_PRO and pro_ui is not None:   # Pro: estado de cuenta agrupado por mes + buscador
+        _seccion_pro("Historial", pro_ui.render_historial_pro_tx, tx_df)
+    elif not tx_df.empty:
         col_f1, col_f2 = st.columns([1, 3])
         with col_f1:
             tickers_disp = ["Todos"] + sorted(tx_df["ticker"].unique().tolist())
@@ -4238,7 +4183,9 @@ with tab_ops:
         st.caption("Aún no tienes transacciones registradas.")
 
 with tab_caja:
-    if not cash_df.empty:
+    if not cash_df.empty and _MODO_PRO and pro_ui is not None:
+        _seccion_pro("Flujo de caja", pro_ui.render_historial_pro_caja, cash_df)
+    elif not cash_df.empty:
         col_c1, col_c2 = st.columns([1, 3])
         with col_c1:
             tipos_disp = ["Todos"] + sorted(cash_df["tipo"].unique().tolist())
@@ -4280,4 +4227,4 @@ render_carta_cma({
     "racha": racha_actual, "rango": rango_txt, "frecuencia": user_freq,
     "meta_nombre": meta_nombre, "meta_monto": float(meta_actual), "progreso_meta": float(progreso_meta),
     "faltante": float(faltante), "cio": st.session_state.get("cio_report"),
-})
+})   # misma tarjeta oscura en ambos modos (decisión 2026-10-16)
