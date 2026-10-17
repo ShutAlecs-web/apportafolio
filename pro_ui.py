@@ -8,7 +8,9 @@ caché de precios, Gemini…) llegan en el objeto `H` para no crear importacione
 Lenguaje: informativo y condicional (Norma 2). Ninguna salida instruye a comprar o vender.
 """
 import html as _html
+import json as _json
 import math
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone, date
 
 import numpy as np
@@ -47,7 +49,19 @@ def cls(v):
     return "ap-pos" if float(v or 0) >= 0 else "ap-neg"
 
 
+# Fluidez: un fragmento se vuelve a ejecutar SOLO él cuando el usuario mueve un control suyo (periodo, vista, supuesto…),
+# en lugar de recalcular toda la Terminal. Si la versión de Streamlit no lo tiene, la función corre como siempre.
+_fragmento = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None) or (lambda f: f)
+
+
+def _en_acordeon():
+    """True cuando esta sesión pinta el Modo Pro en acordeón (estado por sesión, nunca global: hay varios usuarios a la vez)."""
+    return bool(st.session_state.get("_acc_activo", False))
+
+
 def titulo_seccion(texto):
+    if _en_acordeon():   # la barra plegable ya muestra el título
+        return
     st.markdown("<h4 class='notranslate' translate='no' style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; "
                 f"font-style:italic; margin:22px 0 12px 0; letter-spacing:1px;'>{e(texto)}</h4>", unsafe_allow_html=True)
 
@@ -62,6 +76,171 @@ def selector(etiqueta, opciones, key, default=None):
         v = f(etiqueta, opciones, key=key, label_visibility="collapsed")
         return v if v in opciones else default
     return st.radio(etiqueta, opciones, key=key, horizontal=True, label_visibility="collapsed", index=opciones.index(default))
+
+
+# =====================================================================================================
+# 0. ACORDEÓN DEL MODO PRO · barras plegables + «Mi tablero» (mostrar/ocultar y orden, guardado por usuario)
+# =====================================================================================================
+SECCIONES_PRO = [("rend", "Rendimiento del portafolio"), ("div", "Calendario de dividendos"), ("prog", "Progreso y futuro"),
+                 ("posi", "Tus posiciones"), ("atri", "Rendimiento y atribución"), ("radio", "Radiografía individual"),
+                 ("riesgo", "Riesgo y correlación"), ("estres", "Simulador de estrés"), ("cio", "Boletín del CIO Virtual"),
+                 ("dca", "Smart DCA · simulador de rebalanceo"), ("hist", "Historial de movimientos y caja")]
+# La CMA Financial Letter no es plegable: va fija al final de la Terminal (decisión 2026-10-16).
+NOMBRE_SECCION = dict(SECCIONES_PRO)
+ABIERTAS_DEFECTO = {"rend", "posi"}
+
+
+def _prefs_defecto():
+    return {"orden": [k for k, _ in SECCIONES_PRO], "ocultas": []}
+
+
+def _prefs(H, uid):
+    """Preferencias del tablero: primero la sesión; si no, la base (tabla user_prefs); si no, el tablero recomendado."""
+    k = f"acc_prefs_{uid}"
+    if k not in st.session_state:
+        p = None
+        try:
+            p = H.prefs_leer(uid)
+        except Exception as ex:
+            H.log.warning("Tablero · no se pudieron leer preferencias: %s", ex)
+        base = _prefs_defecto()
+        if isinstance(p, dict):
+            orden = [x for x in p.get("orden", []) if x in NOMBRE_SECCION]
+            orden += [x for x in base["orden"] if x not in orden]   # secciones nuevas se agregan al final
+            base = {"orden": orden, "ocultas": [x for x in p.get("ocultas", []) if x in NOMBRE_SECCION]}
+        st.session_state[k] = base
+    return st.session_state[k]
+
+
+def _guardar(H, uid):
+    try:
+        H.prefs_guardar(uid, st.session_state[f"acc_prefs_{uid}"])
+    except Exception as ex:
+        H.log.warning("Tablero · no se pudieron guardar preferencias: %s", ex)
+
+
+def _mover(H, uid, sid, paso):
+    p = st.session_state[f"acc_prefs_{uid}"]
+    o = p["orden"]; i = o.index(sid); j = i + paso
+    if 0 <= j < len(o):
+        o[i], o[j] = o[j], o[i]
+        _guardar(H, uid)
+
+
+def _alternar(H, uid, sid):
+    p = st.session_state[f"acc_prefs_{uid}"]
+    if st.session_state.get(f"acc_vis_{sid}", True):
+        p["ocultas"] = [x for x in p["ocultas"] if x != sid]
+    elif sid not in p["ocultas"]:
+        p["ocultas"].append(sid)
+    _guardar(H, uid)
+
+
+def _restaurar(H, uid):
+    st.session_state[f"acc_prefs_{uid}"] = _prefs_defecto()
+    for sid, _ in SECCIONES_PRO:
+        st.session_state[f"acc_vis_{sid}"] = True
+    _guardar(H, uid)
+
+
+def _todas(estado):
+    st.session_state["acc_estado"] = estado
+    st.session_state["acc_ver"] = st.session_state.get("acc_ver", 0) + 1
+
+
+def preparar_acordeon(H, uid):
+    """Dibuja los controles y crea, en el orden del usuario, un hueco plegable por sección. Después, cada bloque de la
+    Terminal se pinta dentro de su hueco con `with seccion("id"):`, sin importar el orden en que corre el código.
+    Todo lo visible se calcula al cargar (plegado o no): al abrir una barra, los datos ya están listos."""
+    st.session_state["_acc_activo"] = True
+    p = _prefs(H, uid)
+    with st.container(key="acc_controles"):
+        c1, c2, c3 = st.columns(3)
+        c1.button("Abrir todo", key="acc_abrir", on_click=_todas, args=("todo",), use_container_width=True)
+        c2.button("Plegar todo", key="acc_plegar", on_click=_todas, args=("nada",), use_container_width=True)
+        pop = getattr(st, "popover", None)
+        with (c3.popover("Personalizar", use_container_width=True) if pop else c3.expander("Personalizar")):
+            st.caption("Prende o apaga secciones y cámbialas de lugar. Se guarda en tu perfil.")
+            for k, sid in enumerate(p["orden"]):
+                a, b, c, d = st.columns([0.55, 2.6, 0.5, 0.5], vertical_alignment="center")
+                if f"acc_vis_{sid}" not in st.session_state:
+                    st.session_state[f"acc_vis_{sid}"] = sid not in p["ocultas"]
+                a.toggle(" ", key=f"acc_vis_{sid}", on_change=_alternar, args=(H, uid, sid), label_visibility="collapsed")
+                b.markdown(f"<span style='font-size:0.85rem;color:{'#e6e9ef' if sid not in p['ocultas'] else '#6b7385'}'>{e(NOMBRE_SECCION[sid])}</span>",
+                           unsafe_allow_html=True)
+                c.button("↑", key=f"acc_up_{sid}", on_click=_mover, args=(H, uid, sid, -1), disabled=k == 0)
+                d.button("↓", key=f"acc_dn_{sid}", on_click=_mover, args=(H, uid, sid, 1), disabled=k == len(p["orden"]) - 1)
+            st.button("Restaurar tablero recomendado", key="acc_restaurar", on_click=_restaurar, args=(H, uid), use_container_width=True)
+    ver = st.session_state.get("acc_ver", 0)
+    estado = st.session_state.get("acc_estado")
+    slots = {}
+    for sid in p["orden"]:
+        if sid in p["ocultas"]:
+            continue
+        abierta = estado == "todo" or (estado is None and sid in ABIERTAS_DEFECTO)
+        # el sufijo invisible cambia solo con «Abrir/Plegar todo»: obliga a Streamlit a aplicar el nuevo estado a todas las barras
+        slots[sid] = st.container(key=f"acc_{sid}").expander(NOMBRE_SECCION[sid] + "\u200b" * ver, expanded=abierta)
+    if p["ocultas"]:
+        st.caption(f"{len(p['ocultas'])} sección(es) oculta(s) · «Personalizar» para mostrarlas")
+    st.session_state["_acc_slots"] = slots          # por sesión
+    st.session_state["_acc_zona"] = st.container()
+
+
+@contextmanager
+def seccion(sid):
+    """Pinta el bloque dentro de su barra. Si el usuario la ocultó, se calcula en un hueco temporal y se descarta."""
+    destino = (st.session_state.get("_acc_slots") or {}).get(sid)
+    if destino is not None:
+        with destino:
+            yield
+        return
+    zona = st.session_state.get("_acc_zona") or st.container()
+    ph = zona.empty()
+    with ph.container():
+        yield
+    ph.empty()
+
+
+@contextmanager
+def desplegable(etiqueta, key, abierto=False):
+    """Expander normal fuera del acordeón; dentro (Streamlit no permite expanders anidados), un interruptor."""
+    if not _en_acordeon():
+        with st.expander(etiqueta, expanded=abierto):
+            yield
+        return
+    if st.toggle(etiqueta, value=abierto, key=key):
+        with st.container():
+            yield
+    else:
+        ph = st.empty()
+        with ph.container():
+            yield
+        ph.empty()
+
+
+CSS_ACORDEON = """
+<style>
+/* Barras del acordeón: solo el título en blanco y la flecha dorada; filo dorado y un rayo de luz muy tenue */
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpander"] details {
+    background: linear-gradient(180deg, var(--ap-surface-2), var(--ap-surface)) !important; border: 1px solid rgba(201,162,74,0.35) !important;
+    border-radius: 12px !important; position: relative; overflow: hidden; box-shadow: var(--ap-shadow); }
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpander"] details[open] { border-color: rgba(201,162,74,0.75) !important; }
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpander"] summary { padding: 14px 16px !important; position: relative; }
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpander"] summary p {
+    font-family: "Playfair Display", serif !important; font-style: italic !important; font-size: 1.12rem !important; color: #ffffff !important; letter-spacing: 0.3px; }
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpander"] summary svg { color: #e2c575 !important; fill: #e2c575 !important; }
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpander"] summary::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 38%; left: -45%; pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255,244,214,0.10), transparent); animation: ap-rayo 8s ease-in-out infinite; }
+.st-key-acc_div summary::after, .st-key-acc_atri summary::after, .st-key-acc_estres summary::after, .st-key-acc_hist summary::after { animation-delay: 2.6s !important; }
+.st-key-acc_prog summary::after, .st-key-acc_radio summary::after, .st-key-acc_cio summary::after, .st-key-acc_carta summary::after { animation-delay: 5.2s !important; }
+@keyframes ap-rayo { 0%, 72% { left: -45%; } 100% { left: 110%; } }
+[class*="st-key-acc_"]:not(.st-key-acc_controles) [data-testid="stExpanderDetails"] { padding: 4px 14px 14px !important; }
+.st-key-acc_controles button { font-size: 0.78rem !important; }
+.st-key-acc_controles [data-testid="stPopover"] button, .st-key-acc_controles button { border-color: var(--ap-border-strong) !important; }
+@media (prefers-reduced-motion: reduce) { [class*="st-key-acc_"] summary::after { animation: none !important; display: none; } }
+</style>
+"""
 
 
 # =====================================================================================================
@@ -232,6 +411,21 @@ def figura_patrimonio(H, df):
     return fig
 
 
+@_fragmento
+def _kpi_grafica(H, serie):
+    periodo = selector("Periodo", ["7D", "30D", "3M", "Todo"], key="kpi_periodo", default="30D")
+    dias = {"7D": 7, "30D": 30, "3M": 92}.get(periodo)
+    vista = serie[serie.index >= serie.index[-1] - pd.Timedelta(days=dias)] if dias else serie
+    if len(vista) < 2:
+        vista = serie.iloc[-2:]
+    tw = _indice_twr(vista)
+    mercado = (tw.iloc[-1] / tw.iloc[0] - 1) * 100
+    depositos = float(vista["capital"].iloc[-1] - vista["capital"].iloc[0])
+    st.markdown(f"<p class='ap-s ap-kpi-lectura notranslate' translate='no'><span class='{cls(mercado)}'>{pc(mercado)}</span> mercado en el periodo "
+                f"(sin depósitos) · depósitos netos {m(depositos, 0)}</p>", unsafe_allow_html=True)
+    st.plotly_chart(figura_patrimonio(H, vista), use_container_width=True, config=H.cfg, key="kpi_graf")
+
+
 def render_kpis_pro(H, cash_df, tx_df, total, pnl, retorno, capital, costo, liquidez, xirr, rf, summary=None):
     """Un solo cuadro: patrimonio + composición (izquierda), gráfica con escala y periodo (derecha) y abajo P&L, liquidez y XIRR.
     Devuelve True si se dibujó (app.py usa las tarjetas anteriores como respaldo)."""
@@ -257,17 +451,7 @@ def render_kpis_pro(H, cash_df, tx_df, total, pnl, retorno, capital, costo, liqu
                             "y al menos un depósito.</p>", unsafe_allow_html=True)
                 vista = None
             else:
-                periodo = selector("Periodo", ["7D", "30D", "3M", "Todo"], key="kpi_periodo", default="30D")
-                dias = {"7D": 7, "30D": 30, "3M": 92}.get(periodo)
-                vista = serie[serie.index >= serie.index[-1] - pd.Timedelta(days=dias)] if dias else serie
-                if len(vista) < 2:
-                    vista = serie.iloc[-2:]
-                tw = _indice_twr(vista)
-                mercado = (tw.iloc[-1] / tw.iloc[0] - 1) * 100
-                depositos = float(vista["capital"].iloc[-1] - vista["capital"].iloc[0])
-                st.markdown(f"<p class='ap-s ap-kpi-lectura notranslate' translate='no'><span class='{cls(mercado)}'>{pc(mercado)}</span> mercado en el periodo "
-                            f"(sin depósitos) · depósitos netos {m(depositos, 0)}</p>", unsafe_allow_html=True)
-                st.plotly_chart(figura_patrimonio(H, vista), use_container_width=True, config=H.cfg, key="kpi_graf")
+                _kpi_grafica(H, serie)
         s30 = serie.iloc[-31:] if serie is not None else None
         pnl_vals = (s30["valor"] - s30["capital"]).tolist() if s30 is not None else []
         liq_vals = _serie_efectivo(cash_df, s30.index).tolist() if s30 is not None else []
@@ -300,7 +484,7 @@ def _indice_twr(df):
     return pd.Series(idx, index=df.index)
 
 
-def _contribucion_por_activo(tx_df, idx, cierres_fn, yf_symbol):
+def _contribucion_por_activo(tx_df, idx, cierres_fn, yf_symbol, inicio=None):
     """Ganancia acumulada por activo (MXN) día por día: títulos × precio − lo invertido neto en ese activo."""
     tx = tx_df.copy()
     tx["fecha"] = pd.to_datetime(tx["fecha"]).dt.normalize()
@@ -312,7 +496,7 @@ def _contribucion_por_activo(tx_df, idx, cierres_fn, yf_symbol):
     inv = inv.reindex(inv.index.union(idx)).ffill().reindex(idx).fillna(0.0)
     tickers = [t for t in pos.columns if pos[t].abs().sum() > 0]
     simbolos = tuple(yf_symbol(t) for t in tickers)
-    inicio = (idx[0] - timedelta(days=10)).strftime("%Y-%m-%d")
+    inicio = inicio or (idx[0] - timedelta(days=10)).strftime("%Y-%m-%d")
     precios = cierres_fn(simbolos, inicio)
     precios = precios.reindex(precios.index.union(idx)).ffill().bfill().reindex(idx)
     salida = {}
@@ -326,6 +510,7 @@ def _contribucion_por_activo(tx_df, idx, cierres_fn, yf_symbol):
     return pd.DataFrame(salida, index=idx)
 
 
+@_fragmento
 def render_grafica_pro(H, cash_df, tx_df, total_portafolio, rf):
     titulo_seccion("Rendimiento del portafolio")
     df = H.series_bola_nieve(cash_df, tx_df, total_portafolio, rf)
@@ -333,6 +518,14 @@ def render_grafica_pro(H, cash_df, tx_df, total_portafolio, rf):
         st.info("Se necesita historial de precios y al menos un depósito para comparar tu rendimiento.")
         return
     df = df.dropna(subset=["valor"])
+    inicio_full = (df.index[0] - timedelta(days=10)).strftime("%Y-%m-%d")
+    try:   # precarga: S&P 500 y precios por activo listos antes de que el usuario cambie de vista o periodo
+        H.cierres_mxn(("^GSPC",), inicio_full)
+        tx_p = tx_df.copy(); tx_p["titulos"] = tx_p["titulos"].astype(float)
+        pos = tx_p.pivot_table(index="fecha", columns="ticker", values="titulos", aggfunc="sum")
+        H.cierres_mxn(tuple(H.yf_symbol(t) for t in pos.columns), inicio_full)
+    except Exception:
+        pass
     c1, c2 = st.columns([1.4, 1])
     with c1:
         vista = selector("Vista", ["Portafolio vs índices", "Por activo"], key="pro_graf_vista")
@@ -353,7 +546,7 @@ def render_grafica_pro(H, cash_df, tx_df, total_portafolio, rf):
             dias_t = np.asarray((df.index - df.index[0]).days, dtype=float)
             cetes = (np.power(1 + rf, dias_t / 365.0) - 1) * 100
             try:
-                spx = H.cierres_mxn(("^GSPC",), (df.index[0] - timedelta(days=10)).strftime("%Y-%m-%d"))["^GSPC"]
+                spx = H.cierres_mxn(("^GSPC",), inicio_full)["^GSPC"]
                 spx = spx.reindex(spx.index.union(df.index)).ffill().bfill().reindex(df.index)
                 spx = (spx / spx.iloc[0] - 1) * 100
             except Exception:
@@ -372,7 +565,7 @@ def render_grafica_pro(H, cash_df, tx_df, total_portafolio, rf):
                                  "S&P 500 convertido a pesos con el tipo de cambio de cada día.")
             fig.update_yaxes(ticksuffix="%", tickformat="+.1f")
         else:
-            contrib = _contribucion_por_activo(tx_df, df.index, H.cierres_mxn, H.yf_symbol)
+            contrib = _contribucion_por_activo(tx_df, df.index, H.cierres_mxn, H.yf_symbol, inicio_full)
             if contrib.empty:
                 st.caption("Sin precios históricos por activo.")
                 return
@@ -576,6 +769,7 @@ def aportacion_mensual_estimada(cash_df, pmt, user_freq):
     return float(dep["monto_mxn"].astype(float).abs().sum()) / meses
 
 
+@_fragmento
 def render_progreso_pro(cash_df, patrimonio, capital_aportado, pmt, user_freq, xirr, rf, cliente_id):
     titulo_seccion("Progreso y futuro · escalera de aportaciones")
     k_ap = f"pro_aporte_{cliente_id}"
@@ -639,6 +833,7 @@ def _svg_spark(vals, w=84, h=22):
     return f"<svg width='{w}' height='{h}' viewBox='0 0 {w} {h}'><polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.4'/></svg>"
 
 
+@_fragmento
 def render_posiciones_pro(H, summary, vols, betas):
     titulo_seccion("Tus posiciones")
     if summary is None or summary.empty:
@@ -915,6 +1110,7 @@ def _poner_escenario():
         st.session_state["pro_esc_spx"] = v
 
 
+@_fragmento
 def render_estres_pro(summary, betas, liquidez, total_portafolio):
     titulo_seccion("Simulador de estrés · escenarios históricos")
     if summary is None or summary.empty:
@@ -1232,6 +1428,7 @@ def _multi(etiqueta, opciones, key, default):
     return st.multiselect(etiqueta, opciones, default=default, key=key + "_ms", label_visibility="collapsed")
 
 
+@_fragmento
 def render_cio_pro(H, summary, cliente_id, tx_df=None, nombre_cliente="cliente"):
     titulo_seccion("Boletín del CIO Virtual · línea de tiempo")
     if (summary is None or summary.empty) and (tx_df is None or tx_df.empty):
@@ -1261,7 +1458,7 @@ def render_cio_pro(H, summary, cliente_id, tx_df=None, nombre_cliente="cliente")
                 if datos:
                     st.session_state[k_js] = js = datos
                     st.session_state["cio_report"] = _texto_reporte_cio(datos)   # la Carta CMA lo incluye
-                    eventos, inicio, fin = eventos_cio(H, summary, tx_df, js)
+                    st.rerun()   # recarga completa: la carta Pro y la agenda toman el nuevo boletín
                 else:
                     H.log.warning("CIO Virtual · sin JSON: %s", err)
                     st.info("El CIO Virtual está consolidando datos. Intenta de nuevo en unos minutos.")
@@ -1352,7 +1549,7 @@ def render_cio_pro(H, summary, cliente_id, tx_df=None, nombre_cliente="cliente")
             + "</div>", unsafe_allow_html=True)
 
     # bitácora (sirve de base para el área fiscal)
-    with st.expander(f"Bitácora de eventos · {len(vis)} registro(s)", expanded=False):
+    with desplegable(f"Bitácora de eventos · {len(vis)} registro(s)", key="cio_bitacora"):
         filas = "".join(
             f"<tr><td class='ap-m'>{e(x['fecha'])}</td><td><span class='ap-pill' style='color:{COLOR_TIPO[x['tipo']]};border-color:{COLOR_TIPO[x['tipo']]}55'>"
             f"{e(ETQ_TIPO[x['tipo']])}</span></td><td class='tk'>{e(x['clave'])}</td><td style='white-space:normal;min-width:260px;color:#a3a9b6'>{e(x['detalle'])}</td></tr>"
@@ -1453,6 +1650,7 @@ def _filtra(df, q, columnas):
     return df[mask]
 
 
+@_fragmento
 def render_historial_pro_tx(tx_df):
     q = st.text_input("Buscar", placeholder="Buscar activo, fecha (2026-07) o monto…", key="hist_buscar_tx", label_visibility="collapsed")
     df = tx_df.copy()
@@ -1474,6 +1672,7 @@ def render_historial_pro_tx(tx_df):
     st.markdown(f"<div class='notranslate' translate='no' style='max-height:520px;overflow:auto'>{html}</div>", unsafe_allow_html=True)
 
 
+@_fragmento
 def render_historial_pro_caja(cash_df):
     q = st.text_input("Buscar", placeholder="Buscar concepto, tipo o fecha…", key="hist_buscar_caja", label_visibility="collapsed")
     df = cash_df.copy()
@@ -1662,9 +1861,76 @@ def contexto_carta_pro(H, summary, tx_df, cash_df, R, total, rf, usd_mxn, client
 
 
 # =====================================================================================================
+# BARRA LATERAL · estilo de banca móvil (ficha del cliente, módulo arriba con fondo vivo, renglones por grupo)
+# =====================================================================================================
+def html_ficha_cliente(nombre, rol, detalle):
+    ini = (str(nombre or "?").strip()[:1] or "?").upper()
+    return (f"<div class='sb-ficha notranslate' translate='no'><div class='sb-av'>{e(ini)}</div><div style='min-width:0'>"
+            f"<div class='sb-n'>{e(nombre)}</div><div class='sb-d'>{e(detalle)}</div></div><span class='sb-rol'>{e(rol)}</span></div>")
+
+
+def html_grupo(texto):
+    return f"<p class='sb-grp'>{e(texto)}</p>"
+
+
+CSS_SIDEBAR = """
+<style>
+section[data-testid="stSidebar"] > div { background: #07080b; }
+[data-testid="stSidebarContent"] [class*="st-key-sb_"] { gap: 0.35rem; }
+/* Módulo y Modo Pro: banda con degradado negro-oro que se mueve muy despacio */
+.st-key-sb_top { background: linear-gradient(115deg, #050608 0%, rgba(201,162,74,0.15) 32%, #050608 58%, rgba(201,162,74,0.09) 84%, #050608 100%);
+    background-size: 320% 100%; animation: sb-onda 22s ease-in-out infinite alternate; border: 1px solid rgba(201,162,74,0.22);
+    border-radius: 14px; padding: 10px 10px 4px; margin-bottom: 12px; }
+@keyframes sb-onda { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
+@media (prefers-reduced-motion: reduce) { .st-key-sb_top { animation: none; } }
+.st-key-sb_top [role="radiogroup"] { display: grid !important; grid-template-columns: 1fr 1fr; gap: 3px; background: rgba(5,6,8,0.6);
+    border: 1px solid #2a3344; border-radius: 10px; padding: 3px; width: 100%; }
+.st-key-sb_top [role="radiogroup"] label { margin: 0 !important; padding: 7px 4px !important; border-radius: 7px; justify-content: center; cursor: pointer; }
+.st-key-sb_top [role="radiogroup"] label > div:first-child { display: none !important; }
+.st-key-sb_top [role="radiogroup"] label p { font-size: 0.78rem !important; color: #a3a9b6 !important; text-align: center; }
+.st-key-sb_top [role="radiogroup"] label:has(input:checked) { background: #e2c575; }
+.st-key-sb_top [role="radiogroup"] label:has(input:checked) p { color: #15120b !important; font-weight: 600 !important; }
+.st-key-sb_top [data-testid="stCheckbox"] p, .st-key-sb_top [data-testid="stToggle"] p { font-size: 0.8rem !important; color: #e6e9ef !important; }
+/* Ficha del cliente */
+.sb-ficha { display: flex; gap: 10px; align-items: center; padding: 12px; border: 1px solid rgba(201,162,74,0.38); border-radius: 12px;
+    background: linear-gradient(180deg, #111723, #0b0f17); }
+.sb-av { width: 38px; height: 38px; flex: 0 0 38px; border-radius: 50%; border: 1px solid #c9a24a; display: grid; place-items: center;
+    font: italic 400 1.05rem "Playfair Display", serif; color: #e2c575; }
+.sb-n { font-weight: 600; font-size: 0.9rem; color: #e6e9ef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-d { color: #6b7385; font-size: 0.7rem; }
+.sb-rol { margin-left: auto; font: 500 0.56rem Inter, sans-serif; letter-spacing: 1.2px; text-transform: uppercase; color: #e2c575;
+    border: 1px solid rgba(201,162,74,0.45); border-radius: 999px; padding: 2px 7px; }
+.st-key-sb_ficha [data-testid="stSelectbox"] { margin-top: 14px; }
+.st-key-sb_ficha [data-testid="stSelectbox"] label { min-height: 1.2rem; margin-bottom: 4px; }
+.st-key-sb_ficha [data-testid="stSelectbox"] label p { font-size: 0.66rem !important; letter-spacing: 1.4px; text-transform: uppercase; color: #6b7385 !important; }
+.sb-grp { font: 600 0.6rem Inter, sans-serif !important; letter-spacing: 2px; text-transform: uppercase; color: #6b7385 !important; margin: 20px 0 10px !important; line-height: 1.4 !important; }
+[class*="st-key-sb_"] [data-testid="stMarkdownContainer"]:has(.sb-grp) { margin-bottom: 6px; }
+/* Renglones: expanders y botones como lista de banca móvil */
+[class*="st-key-sb_"] [data-testid="stExpander"] details { border: 0 !important; border-bottom: 1px solid #1c2331 !important; border-radius: 0 !important;
+    background: transparent !important; box-shadow: none !important; }
+[class*="st-key-sb_"] [data-testid="stExpander"] summary { padding: 11px 2px !important; }
+[class*="st-key-sb_"] [data-testid="stExpander"] summary p { font-size: 0.86rem !important; font-weight: 500 !important; color: #e6e9ef !important; }
+[class*="st-key-sb_"] [data-testid="stExpander"] summary code { background: transparent !important; color: #6b7385 !important; padding: 0 !important;
+    font-family: "IBM Plex Mono", monospace !important; font-size: 0.7rem !important; margin-left: 6px; }
+[class*="st-key-sb_"] [data-testid="stExpander"] summary [data-testid="stIconMaterial"] { color: #e2c575 !important; }
+[class*="st-key-sb_"] [data-testid="stExpander"] details[open] summary p { color: #e2c575 !important; }
+.st-key-sb_cuenta .stButton button, .st-key-sb_cuenta [data-testid="stPopover"] button, .st-key-sb_pie .stButton button {
+    background: transparent !important; border: 0 !important; border-bottom: 1px solid #1c2331 !important; border-radius: 0 !important;
+    justify-content: flex-start !important; padding: 11px 2px !important; min-height: 0 !important; box-shadow: none !important; }
+.st-key-sb_cuenta .stButton button p, .st-key-sb_cuenta [data-testid="stPopover"] button p { font-size: 0.86rem !important; font-weight: 500 !important; color: #e6e9ef !important; }
+.st-key-sb_cuenta .stButton button:hover p, .st-key-sb_pie .stButton button:hover p { color: #e2c575 !important; }
+.st-key-sb_pie { margin-top: 18px; border-top: 1px solid #1c2331; }
+.st-key-sb_pie .stButton button p { color: #9aa3b2 !important; font-size: 0.84rem !important; }
+.st-key-sb_pref [data-testid="stRadio"] > label p { font-size: 0.86rem !important; color: #e6e9ef !important; font-weight: 500 !important; }
+.st-key-sb_pref [data-testid="stRadio"] { border-bottom: 1px solid #1c2331; padding: 8px 2px 12px; margin-top: 4px; }
+</style>
+"""
+
+
+# =====================================================================================================
 # CSS del Modo Pro (se inyecta una vez desde app.py)
 # =====================================================================================================
-CSS_PRO = """
+CSS_PRO = CSS_ACORDEON + """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');
 .ap-m { font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace !important; letter-spacing: -0.01em; }

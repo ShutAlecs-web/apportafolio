@@ -29,6 +29,7 @@ from fp_edicion_ui import ui_boton_bolsas, ui_boton_compromisos, ui_boton_perfil
 from fp_fase4_ui import ui_planificacion, ui_boton_cascada, ui_boton_deudas, ui_boton_metas
 from fp_fase5_inteligencia import ui_panel_inteligencia, limpiar_cache as limpiar_cache_inteligencia
 from types import SimpleNamespace
+from contextlib import nullcontext
 try:   # Rediseño 2026-10 · Modo Pro y encabezado en un módulo aparte; si falla, la Terminal sigue con las vistas previas
     import pro_ui
 except Exception as _ex_pro_ui:
@@ -2606,6 +2607,21 @@ def render_carta_cma(ctx, pro=False, xp=None):
     La vista previa muestra las páginas reales del PDF; si no se puede, se muestra la versión HTML como antes."""
     st.markdown("<br>", unsafe_allow_html=True)
     nombre_archivo = f"Carta_CMA{'_Pro' if pro else ''}_{re.sub(r'[^A-Za-z0-9_-]', '_', str(ctx['nombre']))}_{hoy_mx():%Y%m%d}"
+    # Fluidez: el PDF (y sus páginas de vista previa) se rehace solo cuando cambia su contenido, no en cada clic.
+    huella = hashlib.sha256(json.dumps([ctx, xp, pro, str(hoy_mx())], default=str, sort_keys=True).encode()).hexdigest()
+    cache = st.session_state.get("_carta_cache") or {}
+    if cache.get("huella") == huella:
+        pdf, edicion_pro, carta_html = cache["pdf"], cache["edicion_pro"], cache.get("html")
+    else:
+        pdf, edicion_pro, carta_html = _construir_carta(ctx, pro, xp)
+        if pdf is None and carta_html is None:
+            st.caption("No pude generar la carta en este momento.")
+            return
+        st.session_state["_carta_cache"] = cache = {"huella": huella, "pdf": pdf, "edicion_pro": edicion_pro, "html": carta_html}
+    _pintar_carta(ctx, pro, pdf, edicion_pro, carta_html, nombre_archivo, cache)
+
+
+def _construir_carta(ctx, pro, xp):
     pdf, edicion_pro = None, False
     if pro and carta_pro is not None and xp is not None:
         try:
@@ -2625,8 +2641,10 @@ def render_carta_cma(ctx, pro=False, xp=None):
             carta_html = generar_carta_cma(ctx)
         except Exception as ex:
             log_app.warning("Carta CMA · %s", ex)
-            st.caption("No pude generar la carta en este momento.")
-            return
+    return pdf, edicion_pro, carta_html
+
+
+def _pintar_carta(ctx, pro, pdf, edicion_pro, carta_html, nombre_archivo, cache):
     descripcion = ("Edición Pro: evolución contra S&amp;P 500 y CETES, de dónde viene tu resultado, riesgo, escenarios de estrés, "
                    "dividendos, agenda y proyección, con gráficas y folio verificable." if pro else
                    "Tu resumen al corte de hoy: cuánto tienes, cuánto has ganado, dónde está tu dinero y cómo vas con tu meta.")
@@ -2642,13 +2660,16 @@ def render_carta_cma(ctx, pro=False, xp=None):
                                   mime="text/html", use_container_width=True, key="carta_html")
         if pro and not ctx.get("cio"):
             st.caption("El Boletín del CIO Virtual se agrega a la carta cuando lo actualizas en esta sesión.")
-        with st.expander("Vista previa", expanded=False):
-            paginas = []
-            if pdf is not None and carta_pro is not None:
-                try:
-                    paginas = carta_pro.paginas_png(pdf)
-                except Exception as ex:
-                    log_app.warning("Carta CMA · vista previa: %s", ex)
+        with st.expander("Vista previa", expanded=False):   # fuera del acordeón: mismo desplegable en ambas ediciones
+            paginas = cache.get("paginas")
+            if paginas is None:
+                paginas = []
+                if pdf is not None and carta_pro is not None:
+                    try:
+                        paginas = carta_pro.paginas_png(pdf)
+                    except Exception as ex:
+                        log_app.warning("Carta CMA · vista previa: %s", ex)
+                cache["paginas"] = paginas
             if paginas:
                 st.caption(f"{len(paginas)} página(s) · {'edición Pro' if edicion_pro else 'edición esencial' if not pro else 'carta completa'}")
                 for img in paginas:
@@ -2981,20 +3002,51 @@ def listar_usuarios():
 all_users = listar_usuarios()
 ES_ADMIN = es_admin(user_id)   # P0-B · rol leído de la base en cada rerun
 
+# Rediseño 2026-10 · Barra lateral estilo banca móvil. Los huecos se crean en el orden visual y cada bloque escribe en el
+# suyo, así el orden de la barra no depende del orden del código. Los permisos (gestor vs cliente) no cambian.
+SB = {k: st.sidebar.container(key=f"sb_{k}") for k in ("top", "ficha", "inv", "pref", "cuenta", "pie")}
+if pro_ui is not None:
+    st.markdown(pro_ui.CSS_SIDEBAR, unsafe_allow_html=True)
+_grp = (lambda t: pro_ui.html_grupo(t)) if pro_ui is not None else (lambda t: f"<p style='font-size:0.7rem;color:#6b7385;'>{t.upper()}</p>")
+SB["pref"].markdown(_grp("Preferencias"), unsafe_allow_html=True)
+SB["cuenta"].markdown(_grp("Cuenta"), unsafe_allow_html=True)
+
+
+def _exp(cont, etiqueta, icono=None, abierto=False):
+    """Renglón desplegable de la barra (con ícono si la versión de Streamlit lo admite)."""
+    try:
+        return cont.expander(etiqueta, expanded=abierto, icon=icono)
+    except TypeError:
+        return cont.expander(etiqueta, expanded=abierto)
+
+
+def _btn(cont, etiqueta, icono=None, **kw):
+    try:
+        return cont.button(etiqueta, icon=icono, **kw)
+    except TypeError:
+        return cont.button(etiqueta, **kw)
+
+
+def _ficha(nombre, rol, detalle):
+    if pro_ui is not None:
+        return pro_ui.html_ficha_cliente(nombre, rol, detalle)
+    return f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>{html_seguro(nombre)}</h3>"
+
 if ES_ADMIN:
-    st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic; display:flex; align-items:center;'>{svg_icon('shield', color='#d4af37', size=18)}Panel de Gestor</h3>", unsafe_allow_html=True)
+    _ficha_ph = SB["ficha"].empty()   # se llena con el cliente elegido (abajo)
     client_dict = dict(zip(all_users["username"], all_users["user_id"]))
     # Al iniciar sesión se abre la cartera propia del gestor (antes: el primer usuario en orden alfabético).
     _nombres_clientes = list(client_dict.keys())
     _ids_clientes = list(client_dict.values())
     _idx_propio = _ids_clientes.index(user_id) if user_id in _ids_clientes else 0
-    selected_client_name = st.sidebar.selectbox("Cliente Activo:", _nombres_clientes, index=_idx_propio,
-                                                key=f"cliente_activo_{user_id}")
+    selected_client_name = SB["ficha"].selectbox("Viendo la cartera de", _nombres_clientes, index=_idx_propio,
+                                                 key=f"cliente_activo_{user_id}")
     active_client_id = client_dict[selected_client_name]
     active_username = selected_client_name 
-    ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=st.sidebar)   # botón en el menú lateral
+    _ficha_ph.markdown(_ficha(active_username, "Gestor", f"Panel de gestor · {len(_nombres_clientes)} perfiles"), unsafe_allow_html=True)
+    ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=SB["cuenta"])   # renglón en Cuenta
     
-    with st.sidebar.expander("Registrar Nuevo Cliente", expanded=False):
+    with _exp(SB["cuenta"], "Registrar nuevo cliente", ":material/person_add:"):
         with st.form("new_client_form"):
             new_usr = st.text_input("Nombre de Usuario")
             new_pwd = st.text_input("Contraseña Temporal", type="password")
@@ -3009,8 +3061,8 @@ if ES_ADMIN:
 else:
     active_client_id = user_id
     active_username = all_users.loc[all_users["user_id"] == user_id, "username"].values[0]
-    st.sidebar.markdown(f"<h3 style='color:#d4af37; font-family:\"Playfair Display\"; font-style:italic;'>Cliente: {html_seguro(active_username)}</h3>", unsafe_allow_html=True)
-    ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=st.sidebar)   # botón en el menú lateral
+    SB["ficha"].markdown(_ficha(active_username, "Cliente", "Cartera privada"), unsafe_allow_html=True)
+    ui_boton_perfil(db_conn, user_id, active_client_id, contenedor=SB["cuenta"])   # renglón en Cuenta
 
 # Privacidad · Aislamiento de IA: las lecturas V5 y el Boletín CIO pertenecen a UN cliente. Si el gestor cambia
 # de cliente se descartan en esta misma ejecución, antes de pintar nada (no pueden filtrarse a otro perfil).
@@ -3022,25 +3074,24 @@ if st.session_state.get("ia_cliente") != active_client_id:
 # 5.1 NAVEGACIÓN PRINCIPAL (Fase 3): "Tu dinero hoy" es el home; la Terminal sigue intacta.
 if "modo_pro_toggle" in st.session_state:
     st.session_state["modo_pro_toggle"] = st.session_state["modo_pro_toggle"]   # conserva el Modo Pro al cambiar de sección
-seccion = st.sidebar.radio("Sección", [SECCION_FP, SECCION_TERMINAL], key="seccion_app", label_visibility="collapsed")
+seccion = SB["top"].radio("Sección", [SECCION_FP, SECCION_TERMINAL], key="seccion_app", label_visibility="collapsed", horizontal=True,
+                          format_func=lambda x: "Tu dinero hoy" if x == SECCION_FP else "Inversiones")
 
-if st.sidebar.button("Cerrar Sesión", use_container_width=True):
+if _btn(SB["pie"], "Cerrar sesión", ":material/logout:", use_container_width=True, key="btn_cerrar_sesion"):
     st.session_state.clear()   # nada del usuario anterior (código de Telegram, reportes de IA) queda en pantalla
     st.session_state["user_id"] = None; st.rerun()
 
-st.sidebar.markdown("---")
 if seccion == SECCION_TERMINAL:
-    st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('eye', color='#d4af37', size=16)}Experiencia de Usuario</h3>", unsafe_allow_html=True)
-    st.sidebar.toggle("Activar Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, Due Diligence, Riesgo).")
+    SB["top"].toggle("Modo Pro", key="modo_pro_toggle", help="Muestra herramientas institucionales (XIRR, riesgo, CIO, carta Pro).")
 
 # Sprint 2 · Modo de Lectura: se pinta en ambas secciones para que el tamaño de letra acompañe al usuario.
-st.sidebar.radio("Modo de Lectura", MODO_LECTURA_OPCIONES, key="modo_lectura", horizontal=True,
+SB["pref"].radio("Modo de lectura", MODO_LECTURA_OPCIONES, key="modo_lectura", horizontal=True,
                  help="Senior: letra más grande, números claros y sin tecnicismos (Beta, VaR, Sharpe).")
 MODO_SENIOR = st.session_state.get("modo_lectura", "Junior") == "Senior"
 if MODO_SENIOR:
     st.markdown(ESTILOS_SENIOR, unsafe_allow_html=True)
 
-with st.sidebar.expander("Estrategia y Perfil", expanded=False):
+with _exp(SB["pref"], "Estrategia y perfil", ":material/track_changes:"):
     st.markdown("<p style='font-size:0.8rem; color:#8b949e;'>Personaliza tu experiencia financiera.</p>", unsafe_allow_html=True)
     current_freq, current_goal = get_user_profile(user_id)
 
@@ -3070,8 +3121,8 @@ with st.sidebar.expander("Estrategia y Perfil", expanded=False):
 # Vinculación de Telegram: protagonista en el área central (siempre del usuario que inició sesión)
 estado_tg = fp_estado_telegram(user_id)
 if estado_tg == "PENDIENTE" and seccion == SECCION_TERMINAL:
-    st.sidebar.button("Conectar Telegram", key="fp_tg_ir", on_click=_fp_ir_a_telegram, use_container_width=True,
-                      help="Registra tus gastos por chat en segundos.")
+    _btn(SB["cuenta"], "Conectar Telegram", ":material/send:", key="fp_tg_ir", on_click=_fp_ir_a_telegram, use_container_width=True,
+         help="Registra tus gastos por chat en segundos.")
 
 if seccion == SECCION_FP:
     if estado_tg == "PENDIENTE":
@@ -3084,7 +3135,8 @@ if seccion == SECCION_FP:
         ui_planificacion(db_conn, active_client_id)
     st.stop()   # la Terminal (cotizaciones, riesgo, IA) no se calcula mientras no se abra
 
-st.sidebar.markdown(f"<h3 style='color:#e5e7eb; font-family:\"Inter\", sans-serif; font-size:0.95rem; font-weight:600; margin:0.6rem 0 0.3rem 0; display:flex; align-items:center;'>{svg_icon('download', color='#d4af37', size=16)}Reportes Institucionales</h3>", unsafe_allow_html=True)
+SB["inv"].markdown(_grp("Inversiones"), unsafe_allow_html=True)
+SB_OP, SB_DEP, SB_REP = SB["inv"].container(), SB["inv"].container(), SB["inv"].container()
 # P0-B · Lectura única y explícita de las tablas de la Terminal, siempre filtrada por el cliente activo
 # (cliente = su propio user_id; admin = el cliente elegido en el Panel de Gestor). La reutilizan reportes, home e historial.
 _TX_COLS = ("id, user_id, timestamp, fecha, tipo_operacion, ticker, clase, plataforma, moneda, "
@@ -3108,7 +3160,7 @@ export_df = tx_df
 if not export_df.empty:
     clean_df = export_df.drop(columns=["id", "user_id", "timestamp"], errors="ignore")
     clean_df.rename(columns={"fecha": "Fecha", "tipo_operacion": "Tipo", "ticker": "Activo", "clase": "Clase", "plataforma": "Plataforma", "moneda": "Moneda", "titulos": "Títulos", "precio_unitario": "Precio Unitario", "comision": "Comisión", "iva": "IVA", "tipo_cambio": "Tipo de Cambio", "total_mxn": "Total MXN"}, inplace=True)
-    col_dl1, col_dl2 = st.sidebar.columns(2)
+    col_dl1, col_dl2 = _exp(SB_REP, "Reportes `CSV · Excel`", ":material/download:").columns(2)
     with col_dl1: st.download_button("CSV", data=clean_df.to_csv(index=False).encode('utf-8'), file_name=f"Portafolio_{active_username}.csv", mime="text/csv", use_container_width=True)
     with col_dl2:
         buffer = io.BytesIO()
@@ -3116,14 +3168,14 @@ if not export_df.empty:
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: clean_df.to_excel(writer, index=False, sheet_name='Terminal')
             st.download_button("Excel", data=buffer.getvalue(), file_name=f"Portafolio_{active_username}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         except: st.download_button("Excel", data=clean_df.to_csv(index=False, sep=";").encode('latin1'), file_name=f"Portafolio_{active_username}_EXCEL.csv", mime="text/csv", use_container_width=True)
-else: st.sidebar.button("Sin datos", disabled=True, use_container_width=True)
+else: _exp(SB_REP, "Reportes `sin datos`", ":material/download:").caption("Aún no hay operaciones para exportar.")
 
 # Modo Dios: el gestor registra operaciones en la cartera del cliente activo (antes solo en USR-001).
 # Alternativa (comportamiento previo): `if active_client_id == "USR-001":`
 if ES_ADMIN:
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("<p style='font-size:0.8rem; color:#8b949e;'>1. Buscar activo y cotización</p>", unsafe_allow_html=True)
-    col_b1, col_b2 = st.sidebar.columns([2, 1])
+    _exp_op = _exp(SB_OP, f"Registrar operación `{len(tx_df)} ops`", ":material/swap_vert:")
+    _exp_op.caption("1. Buscar activo y cotización")
+    col_b1, col_b2 = _exp_op.columns([2, 1])
     with col_b1: search_ticker = st.text_input("Ticker", key="search_t", label_visibility="collapsed", placeholder="Ej. AAPL, O, BTC-USD...")
     with col_b2:
         if st.button("Validar", use_container_width=True):
@@ -3136,10 +3188,10 @@ if ES_ADMIN:
                         if p:
                             st.session_state["val_ticker"] = tk_sym; st.session_state["val_price"] = float(p)
                             st.session_state["val_moneda"] = moneda_cotizacion(tk_sym)   # Sprint 0 · FX
-                            st.sidebar.success(f"${p:.2f} {st.session_state['val_moneda']}")
-                        else: st.sidebar.error("Sin datos.")
-                    except: st.sidebar.error("Inválido.")
-            else: st.sidebar.warning("Escribe un ticker.")
+                            _exp_op.success(f"${p:.2f} {st.session_state['val_moneda']}")
+                        else: _exp_op.error("Sin datos.")
+                    except: _exp_op.error("Inválido.")
+            else: _exp_op.warning("Escribe un ticker.")
 
     val_t = st.session_state.get("val_ticker", "")
     val_p = float(st.session_state.get("val_price", 0.0))
@@ -3153,8 +3205,8 @@ if ES_ADMIN:
     def _tc_a_mercado():
         st.session_state["f_tc"] = round(float(get_live_usd()), 4)
 
-    with st.sidebar.expander("Registrar Operación", expanded=True):
-        st.caption(f"Se registrará en la cartera de: {active_username}")
+    with _exp_op:
+        st.caption(f"2. Se registrará en la cartera de: {active_username}")
         st.button(f"Usar TC de mercado ({float(live_usd_rate):.4f})", on_click=_tc_a_mercado,
                   key="btn_tc_mercado", use_container_width=True,
                   help="Carga el USD/MXN de Yahoo Finance. Para que tu costo cuadre, escribe el TC real de tu conversión.")
@@ -3211,7 +3263,8 @@ def registrar_movimiento_caja(uid_destino, tipo, concepto, monto, fecha):
         cur.execute("INSERT INTO cash_movements (id, user_id, fecha, tipo, concepto, monto_mxn) VALUES (%s, %s, %s, %s, %s, %s)",
                     (f"CMV-TES-{uuid.uuid4().hex}", uid_destino, str(fecha), tipo, concepto, monto_final))
 
-with st.sidebar.expander("Registro de Movimientos (Depósitos / Retiros)", expanded=False):
+_ultimo_caja = str(cash_df["fecha"].max()) if not cash_df.empty else "sin movimientos"
+with _exp(SB_DEP, f"Depósito o retiro `{_ultimo_caja}`", ":material/account_balance_wallet:"):
     if st.session_state.get("flash_caja"):
         st.success(st.session_state.pop("flash_caja"))
     usuarios_validos = dict(zip(all_users["user_id"], all_users["username"]))
@@ -3592,6 +3645,47 @@ H_PRO = SimpleNamespace(style=style_financial_figure, cfg=plotly_config, yf_symb
                         log=log_app, asset_class=ASSET_CLASS, usd_mxn=float(usd_mxn or 18.5))
 
 
+def prefs_leer(uid):
+    """Preferencias de interfaz del usuario (tablero del Modo Pro). Tabla user_prefs(user_id, prefs TEXT JSON)."""
+    _asegurar_tabla_prefs()
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT prefs FROM user_prefs WHERE user_id=%s", (uid,))
+        fila = cur.fetchone()
+    return json.loads(fila[0]) if fila and fila[0] else None
+
+
+def prefs_guardar(uid, prefs):
+    _asegurar_tabla_prefs()
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO user_prefs (user_id, prefs, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT (user_id) DO UPDATE SET prefs = EXCLUDED.prefs, updated_at = CURRENT_TIMESTAMP", (uid, json.dumps(prefs)))
+
+
+def _asegurar_tabla_prefs():
+    if st.session_state.get("_tabla_prefs_ok"):
+        return
+    with db_conn() as conn, conn.cursor() as cur:   # tabla nueva y aislada: no toca transactions / cash_movements
+        cur.execute("CREATE TABLE IF NOT EXISTS user_prefs (user_id TEXT PRIMARY KEY, prefs TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    st.session_state["_tabla_prefs_ok"] = True
+
+
+H_PRO.prefs_leer, H_PRO.prefs_guardar = prefs_leer, prefs_guardar
+
+
+@st.cache_data(ttl=300, max_entries=30, show_spinner=False)
+def _serie_cacheada(cash_df, tx_df, total_portafolio, rf):
+    """Fluidez: la serie diaria del patrimonio la usan el cuadro, la gráfica y la carta; se calcula una vez cada 5 min."""
+    return series_bola_nieve(cash_df, tx_df, total_portafolio, rf)
+
+
+H_PRO.series_bola_nieve = _serie_cacheada
+
+
+def _sec(sid):
+    """Modo Pro: el bloque se pinta dentro de su barra del acordeón. Modo sencillo: sin cambios."""
+    return pro_ui.seccion(sid) if (_MODO_PRO and pro_ui is not None) else nullcontext()
+
+
 def _seccion_pro(nombre, fn, *args, **kwargs):
     """Ejecuta un componente de pro_ui; si falla, la sección se omite con un aviso y el resto de la Terminal sigue."""
     if pro_ui is None:
@@ -3646,11 +3740,24 @@ else:
     k3.markdown(f"<div class='metric-card kpi kpi-3 notranslate' translate='no'><div class='metric-title'>Efectivo Libre <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_liq}</span></span></div><div class='metric-value text-neon-purple'>${liquidez_mxn:,.2f}</div></div>", unsafe_allow_html=True)
     k4.markdown(f"<div class='metric-card kpi kpi-4 notranslate' translate='no'><div class='metric-title'>{texto_simple} <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>Lo que tus inversiones han producido para ti.</span></span></div><div class='metric-value {c_gan}'>${ganancia_neta:+,.2f}</div><div class='metric-subtext {c_gan}'>{retorno_global:+.2f}% de rendimiento</div></div>", unsafe_allow_html=True)
 
+# Rediseño 2026-10 · Modo Pro en acordeón + «Mi tablero»: los huecos se crean aquí, en el orden del usuario.
+st.session_state["_acc_activo"] = False   # se vuelve True solo si esta ejecución pinta el acordeón
+st.session_state["_acc_slots"] = {}
+if _MODO_PRO and pro_ui is not None:
+    try:
+        pro_ui.preparar_acordeon(H_PRO, user_id)   # preferencias del usuario que inició sesión
+    except Exception as _ex_acc:
+        log_app.warning("Acordeón · se muestra sin barras: %s", _ex_acc)
+
 # 8.1 LA BOLA DE NIEVE Y GAMIFICACIÓN
 if _MODO_PRO and pro_ui is not None:   # Rediseño 2026-10 · gráfica Pro (vs índices / por activo) + calendario de dividendos
-    _seccion_pro("Rendimiento del portafolio", pro_ui.render_grafica_pro, H_PRO, cash_df, tx_df, total_portafolio, tasa_libre_riesgo())
-    if not tx_df.empty:
-        _seccion_pro("Calendario de dividendos", pro_ui.render_dividendos, H_PRO, tx_df, active_username)
+    with _sec("rend"):
+        _seccion_pro("Rendimiento del portafolio", pro_ui.render_grafica_pro, H_PRO, cash_df, tx_df, total_portafolio, tasa_libre_riesgo())
+    with _sec("div"):
+        if not tx_df.empty:
+            _seccion_pro("Calendario de dividendos", pro_ui.render_dividendos, H_PRO, tx_df, active_username)
+        else:
+            st.caption("Aún no hay operaciones para calcular dividendos.")
 else:
   st.markdown(f"<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('trend', color='#d4af37', size=18)}La Bola de Nieve (Histórico)</h4>", unsafe_allow_html=True)
   if not cash_df.empty:
@@ -3769,8 +3876,9 @@ else:
 # Rediseño · "Franja única": racha, hito y proyección en una sola franja con filo dorado.
 # Modo Pro (2026-10): escalera de aportaciones; la base son tus depósitos y el rendimiento es un supuesto opcional.
 if _MODO_PRO and pro_ui is not None:
-    _seccion_pro("Progreso y futuro", pro_ui.render_progreso_pro, cash_df, total_portafolio, capital_aportado, pmt, user_freq,
-                 xirr_valor, tasa_libre_riesgo(), active_client_id)
+    with _sec("prog"):
+        _seccion_pro("Progreso y futuro", pro_ui.render_progreso_pro, cash_df, total_portafolio, capital_aportado, pmt, user_freq,
+                     xirr_valor, tasa_libre_riesgo(), active_client_id)
 else:
     st.markdown(
         f"<div class='ap-franja ap-filo notranslate' translate='no'>"
@@ -3784,7 +3892,8 @@ else:
         f"<div><p class='ap-t'>Proyección a 5 años</p><p class='ap-v'>${proyeccion_5a:,.2f}</p>"
         f"<p class='ap-s'>{txt_proyeccion}</p></div>"
         f"</div>", unsafe_allow_html=True)
-st.markdown("---")
+if not _MODO_PRO:
+    st.markdown("---")
 
 # ==========================================
 # 8.2 SPRINT 2 · TABLA DE POSICIONES PREMIUM (visible en Modo Fácil y en Modo Pro)
@@ -3800,10 +3909,12 @@ if _MODO_PRO and pro_ui is not None and not summary.empty:
         metricas_riesgo.update({"beta": R_PRO["beta"], "sharpe": R_PRO["sharpe"], "max_dd": R_PRO["max_dd"] * 100,
                                 "var_95_mxn": R_PRO["var95"], "vol_anual": R_PRO["vol"]})
 if _MODO_PRO and pro_ui is not None:
-    _seccion_pro("Tus posiciones", pro_ui.render_posiciones_pro, H_PRO, summary, (R_PRO or {}).get("vols", {}), (R_PRO or {}).get("betas", {}))
+    with _sec("posi"):
+        _seccion_pro("Tus posiciones", pro_ui.render_posiciones_pro, H_PRO, summary, (R_PRO or {}).get("vols", {}), (R_PRO or {}).get("betas", {}))
 else:
     render_tabla_posiciones(summary, senior=MODO_SENIOR)
-st.markdown("---")
+if not _MODO_PRO:
+    st.markdown("---")
 
 # ==========================================
 # RAMIFICACIÓN MODO PRO vs MODO FÁCIL
@@ -3812,324 +3923,324 @@ if st.session_state.get("modo_pro_toggle", False):
     # Rediseño 2026-10 · Modo Pro. Cada sección vive en pro_ui.py y se ejecuta aislada (_seccion_pro).
     rf_pro = tasa_libre_riesgo()
     total_friccion = float((tx_df["comision"] + tx_df["iva"]).mul(tx_df["tipo_cambio"]).sum()) if not tx_df.empty else 0.0
-    _seccion_pro("Rendimiento y atribución", pro_ui.render_rendimiento_pro if pro_ui else None, H_PRO, summary, tx_df, xirr_valor, rf_pro,
-                 total_friccion, float(usd_mxn or 18.5))
-    st.markdown("---")
+    with _sec("atri"):
+        _seccion_pro("Rendimiento y atribución", pro_ui.render_rendimiento_pro if pro_ui else None, H_PRO, summary, tx_df, xirr_valor, rf_pro,
+                     total_friccion, float(usd_mxn or 18.5))
 
-    if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
+    with _sec("radio"):
+        if "ai_memory" not in st.session_state: st.session_state["ai_memory"] = {}
 
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Radiografía Individual y Lectura Cuantitativa (Motor V5)</h4>", unsafe_allow_html=True)
-    if not summary.empty:
-        selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para análisis a profundidad:", sorted(summary["ticker"].tolist()) + ["+ Buscar nuevo ticker (Ej: AAPL, SPY)"], label_visibility="collapsed")
-        if selected_asset.startswith("+ Buscar"):
-            search_ticker = st.text_input("Ingresa el Ticker de Yahoo Finance a analizar (Ej: NVDA, URA, SCHD):").upper()
-            target_asset = sanitize_ticker(search_ticker) if search_ticker else None
-        else: target_asset = sanitize_ticker(selected_asset)
+        if not summary.empty:
+            selected_asset = st.selectbox("Selecciona un activo en cartera o busca uno nuevo para análisis a profundidad:", sorted(summary["ticker"].tolist()) + ["+ Buscar nuevo ticker (Ej: AAPL, SPY)"], label_visibility="collapsed")
+            if selected_asset.startswith("+ Buscar"):
+                search_ticker = st.text_input("Ingresa el Ticker de Yahoo Finance a analizar (Ej: NVDA, URA, SCHD):").upper()
+                target_asset = sanitize_ticker(search_ticker) if search_ticker else None
+            else: target_asset = sanitize_ticker(selected_asset)
 
-        if target_asset:
-            @st.cache_data(ttl=3600, max_entries=50)
-            def fetch_asset_deep_dive(t):
-                try:
-                    yf_sym = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
-                    tk = yf.Ticker(yf_sym)
-                    hist = tk.history(period="1y")
-                    info = tk.info
-                    news_data = tk.news[:5] if tk.news else []
-                    clean_news = []
-                    for n in news_data:
-                        title = n.get('title')
-                        link = n.get('link')
-                        if title and isinstance(title, str): 
-                            if isinstance(link, str) and link.startswith('http'): safe_link = link
-                            else: safe_link = f"https://finance.yahoo.com/quote/{yf_sym}"
-                            clean_news.append({"title": title, "link": safe_link})
-                    return hist, info, clean_news
-                except: return pd.DataFrame(), {}, []
+            if target_asset:
+                @st.cache_data(ttl=3600, max_entries=50)
+                def fetch_asset_deep_dive(t):
+                    try:
+                        yf_sym = "BTC-USD" if t == "BTC" else (f"{t}.L" if t in ["ISAC", "EIMI", "XDWH", "XNAS", "NUCL"] else t)
+                        tk = yf.Ticker(yf_sym)
+                        hist = tk.history(period="1y")
+                        info = tk.info
+                        news_data = tk.news[:5] if tk.news else []
+                        clean_news = []
+                        for n in news_data:
+                            title = n.get('title')
+                            link = n.get('link')
+                            if title and isinstance(title, str): 
+                                if isinstance(link, str) and link.startswith('http'): safe_link = link
+                                else: safe_link = f"https://finance.yahoo.com/quote/{yf_sym}"
+                                clean_news.append({"title": title, "link": safe_link})
+                        return hist, info, clean_news
+                    except: return pd.DataFrame(), {}, []
 
-            with st.spinner(f"Extrayendo telemetría y corriendo motor de Scoring V5 para {target_asset}..."):
-                hist_data, asset_info, asset_news = fetch_asset_deep_dive(target_asset)
+                with st.spinner(f"Extrayendo telemetría y corriendo motor de Scoring V5 para {target_asset}..."):
+                    hist_data, asset_info, asset_news = fetch_asset_deep_dive(target_asset)
             
-            if not hist_data.empty:
-                if target_asset in summary["ticker"].values:
-                    pos_data = summary[summary["ticker"] == target_asset].iloc[0]
-                    p_titulos, p_val_mercado, p_costo_prom, p_peso, p_retorno_total_pct, p_retorno_total_mxn = pos_data["titulos"], pos_data["valor_actual"], pos_data["costo_promedio"], pos_data["ponderacion_pct"], pos_data["retorno_pct"], pos_data["pnl"]
-                    is_owned = True
-                else:
-                    p_titulos = p_val_mercado = p_costo_prom = p_peso = p_retorno_total_pct = p_retorno_total_mxn = 0.0
-                    is_owned = False
+                if not hist_data.empty:
+                    if target_asset in summary["ticker"].values:
+                        pos_data = summary[summary["ticker"] == target_asset].iloc[0]
+                        p_titulos, p_val_mercado, p_costo_prom, p_peso, p_retorno_total_pct, p_retorno_total_mxn = pos_data["titulos"], pos_data["valor_actual"], pos_data["costo_promedio"], pos_data["ponderacion_pct"], pos_data["retorno_pct"], pos_data["pnl"]
+                        is_owned = True
+                    else:
+                        p_titulos = p_val_mercado = p_costo_prom = p_peso = p_retorno_total_pct = p_retorno_total_mxn = 0.0
+                        is_owned = False
                 
-                current_price = hist_data['Close'].iloc[-1]
-                start_price = hist_data['Close'].iloc[0]
-                pct_change_1y = ((current_price - start_price) / start_price) * 100
-                color_line = "#34d399" if pct_change_1y >= 0 else "#94a3b8"
+                    current_price = hist_data['Close'].iloc[-1]
+                    start_price = hist_data['Close'].iloc[0]
+                    pct_change_1y = ((current_price - start_price) / start_price) * 100
+                    color_line = "#34d399" if pct_change_1y >= 0 else "#94a3b8"
                 
-                pe_ratio = asset_info.get("trailingPE", "N/A")
-                eps = asset_info.get("trailingEps", "N/A")
-                high_52 = asset_info.get("fiftyTwoWeekHigh") or current_price * 1.1
-                low_52 = asset_info.get("fiftyTwoWeekLow") or current_price * 0.9
-                noticias_texto = "\n".join([f"- {n['title']}" for n in asset_news]) if asset_news else "Sin noticias relevantes recientes."
+                    pe_ratio = asset_info.get("trailingPE", "N/A")
+                    eps = asset_info.get("trailingEps", "N/A")
+                    high_52 = asset_info.get("fiftyTwoWeekHigh") or current_price * 1.1
+                    low_52 = asset_info.get("fiftyTwoWeekLow") or current_price * 0.9
+                    noticias_texto = "\n".join([f"- {n['title']}" for n in asset_news]) if asset_news else "Sin noticias relevantes recientes."
 
-                tec_v5 = calcular_tecnicos_v5(hist_data, current_price, low_52, high_52)
-                mem_data = st.session_state["ai_memory"].get(target_asset)
-                if mem_data and mem_data.get("src") == "local" and (time.time() - mem_data.get("ts", 0)) > V5_TTL_PLAN_B_S:
-                    mem_data = None   # el Plan B cacheado expiró: se reintenta Gemini en este rerun
-                if mem_data:
-                    ai_verdict = mem_data.get("v", "HOLD ESTRATÉGICO")
-                    ai_rating = mem_data.get("r", 5)
-                    ai_bulls = mem_data.get("bl", [])
-                    ai_bears = mem_data.get("br", [])
-                    ai_macro = mem_data.get("m", "")
-                else:
-                    ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = "N/A", 5, [], [], ""
-                    error_api = ""
-                    gemini_intentado = False
-                    backend_api_key = None
-                    try: backend_api_key = st.secrets["GEMINI_API_KEY"]
-                    except Exception: pass
+                    tec_v5 = calcular_tecnicos_v5(hist_data, current_price, low_52, high_52)
+                    mem_data = st.session_state["ai_memory"].get(target_asset)
+                    if mem_data and mem_data.get("src") == "local" and (time.time() - mem_data.get("ts", 0)) > V5_TTL_PLAN_B_S:
+                        mem_data = None   # el Plan B cacheado expiró: se reintenta Gemini en este rerun
+                    if mem_data:
+                        ai_verdict = mem_data.get("v", "HOLD ESTRATÉGICO")
+                        ai_rating = mem_data.get("r", 5)
+                        ai_bulls = mem_data.get("bl", [])
+                        ai_bears = mem_data.get("br", [])
+                        ai_macro = mem_data.get("m", "")
+                    else:
+                        ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = "N/A", 5, [], [], ""
+                        error_api = ""
+                        gemini_intentado = False
+                        backend_api_key = None
+                        try: backend_api_key = st.secrets["GEMINI_API_KEY"]
+                        except Exception: pass
 
-                    if backend_api_key:
-                        current_time = time.time()
-                        last_call = st.session_state.get("last_gemini_call", 0)
-                        time_left = 10.0 - (current_time - last_call)
-                        if time_left > 0:
-                            # Escudo anti-baneo: se resuelve en silencio con el Plan B (no se cachea; el próximo rerun reintenta Gemini).
-                            error_api = f"Escudo anti-baneo local: faltan {int(time_left)}s"
-                            ai_verdict = "ERROR API"
-                            # Alternativa visible (desactivada por diseño stealth):
-                            # st.toast(f"Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.")
-                        else:
-                            st.session_state["last_gemini_call"] = current_time
-                            gemini_intentado = True
-                            try:
-                                es_accion = isinstance(pe_ratio, (int, float)) and not isinstance(pe_ratio, bool)
-                                prompt_filled = PROMPT_MAESTRO.format(
-                                    fecha_hoy=datetime.now(ZONA_MX).strftime("%Y-%m-%d"),
-                                    ticker=target_asset,
-                                    clase=ASSET_CLASS.get(target_asset, "Acción" if es_accion else "No clasificado"),
-                                    sector=ASSET_SECTOR.get(target_asset, asset_info.get("sector") or "No especificado"),
-                                    current_price=_fmt_num(current_price),
-                                    usd_mxn=_fmt_num(usd_mxn, "{:,.4f}"),
-                                    low_52w=_fmt_num(low_52), high_52w=_fmt_num(high_52),
-                                    pos_52w=_fmt_num(tec_v5["pos_52w"], "{:.0f}%"),
-                                    dist_max_52w=_fmt_num(tec_v5["dist_max_52w"], "{:+.1f}%"),
-                                    ma50=_fmt_num(tec_v5["ma50"]), dist_ma50=_fmt_num(tec_v5["dist_ma50"], "{:+.1f}%"),
-                                    ma200=_fmt_num(tec_v5["ma200"]), dist_ma200=_fmt_num(tec_v5["dist_ma200"], "{:+.1f}%"),
-                                    cambio_1y=_fmt_num(tec_v5["cambio_1y"], "{:+.1f}%"),
-                                    rsi14=_fmt_num(tec_v5["rsi14"], "{:.0f}"),
-                                    vol_anual=_fmt_num(tec_v5["vol_anual"], "{:.1f}%"),
-                                    max_dd=_fmt_num(tec_v5["max_dd"], "{:.1f}%"),
-                                    pe_ratio=_fmt_num(pe_ratio, "{:.2f}x"), eps=_fmt_num(eps, "{:.2f}"),
-                                    estado_posicion=("EN CARTERA" if is_owned else "SIN POSICIÓN (candidato de observación)"),
-                                    avg_cost_mxn=(_fmt_num(p_costo_prom) if is_owned else "N/A"),
-                                    avg_cost_equiv=(_fmt_num(p_costo_prom / usd_mxn) if is_owned and _num_finito(usd_mxn) else "N/A"),
-                                    net_return_pct=(_fmt_num(p_retorno_total_pct, "{:+.2f}%") if is_owned else "N/A"),
-                                    pnl_mxn=(_fmt_num(p_retorno_total_mxn, "{:+,.2f}") if is_owned else "N/A"),
-                                    portfolio_weight=_fmt_num(p_peso, "{:.2f}%"),
-                                    macro_news_context=noticias_texto,
-                                    fed_cpi_events="Decisiones de tasas FED y Banxico, datos de IPC/inflación global y tipo de cambio USD/MXN en seguimiento continuo.",
-                                )
-                                with st.spinner(f"Corriendo motor de Scoring V5 para {target_asset}..."):
-                                    texto_ia, err_ia = llamar_gemini(prompt_filled, backend_api_key, temperature=0.2, json_mode=True, timeout=20, presupuesto_s=45)
-                                if texto_ia:
-                                    parsed_response = extraer_json_robusto(texto_ia)
-                                    if parsed_response and parsed_response.get("macro_synthesis"):
-                                        ai_rating = _rating_seguro(parsed_response.get("rating", 5))
-                                        ai_verdict = normalizar_veredicto(parsed_response.get("verdict"), ai_rating)
-                                        ai_bulls = _como_lista(parsed_response.get("bull_points"), ["Puntos fuertes en evaluación."])[:4]
-                                        ai_bears = _como_lista(parsed_response.get("bear_points"), ["Riesgos en evaluación."])[:4]
-                                        ai_macro = str(parsed_response.get("macro_synthesis")).strip()
-                                        st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro, "src": "gemini", "ts": time.time()}
+                        if backend_api_key:
+                            current_time = time.time()
+                            last_call = st.session_state.get("last_gemini_call", 0)
+                            time_left = 10.0 - (current_time - last_call)
+                            if time_left > 0:
+                                # Escudo anti-baneo: se resuelve en silencio con el Plan B (no se cachea; el próximo rerun reintenta Gemini).
+                                error_api = f"Escudo anti-baneo local: faltan {int(time_left)}s"
+                                ai_verdict = "ERROR API"
+                                # Alternativa visible (desactivada por diseño stealth):
+                                # st.toast(f"Escudo Anti-Baneo activo. Espera {int(time_left)}s para un nuevo análisis.")
+                            else:
+                                st.session_state["last_gemini_call"] = current_time
+                                gemini_intentado = True
+                                try:
+                                    es_accion = isinstance(pe_ratio, (int, float)) and not isinstance(pe_ratio, bool)
+                                    prompt_filled = PROMPT_MAESTRO.format(
+                                        fecha_hoy=datetime.now(ZONA_MX).strftime("%Y-%m-%d"),
+                                        ticker=target_asset,
+                                        clase=ASSET_CLASS.get(target_asset, "Acción" if es_accion else "No clasificado"),
+                                        sector=ASSET_SECTOR.get(target_asset, asset_info.get("sector") or "No especificado"),
+                                        current_price=_fmt_num(current_price),
+                                        usd_mxn=_fmt_num(usd_mxn, "{:,.4f}"),
+                                        low_52w=_fmt_num(low_52), high_52w=_fmt_num(high_52),
+                                        pos_52w=_fmt_num(tec_v5["pos_52w"], "{:.0f}%"),
+                                        dist_max_52w=_fmt_num(tec_v5["dist_max_52w"], "{:+.1f}%"),
+                                        ma50=_fmt_num(tec_v5["ma50"]), dist_ma50=_fmt_num(tec_v5["dist_ma50"], "{:+.1f}%"),
+                                        ma200=_fmt_num(tec_v5["ma200"]), dist_ma200=_fmt_num(tec_v5["dist_ma200"], "{:+.1f}%"),
+                                        cambio_1y=_fmt_num(tec_v5["cambio_1y"], "{:+.1f}%"),
+                                        rsi14=_fmt_num(tec_v5["rsi14"], "{:.0f}"),
+                                        vol_anual=_fmt_num(tec_v5["vol_anual"], "{:.1f}%"),
+                                        max_dd=_fmt_num(tec_v5["max_dd"], "{:.1f}%"),
+                                        pe_ratio=_fmt_num(pe_ratio, "{:.2f}x"), eps=_fmt_num(eps, "{:.2f}"),
+                                        estado_posicion=("EN CARTERA" if is_owned else "SIN POSICIÓN (candidato de observación)"),
+                                        avg_cost_mxn=(_fmt_num(p_costo_prom) if is_owned else "N/A"),
+                                        avg_cost_equiv=(_fmt_num(p_costo_prom / usd_mxn) if is_owned and _num_finito(usd_mxn) else "N/A"),
+                                        net_return_pct=(_fmt_num(p_retorno_total_pct, "{:+.2f}%") if is_owned else "N/A"),
+                                        pnl_mxn=(_fmt_num(p_retorno_total_mxn, "{:+,.2f}") if is_owned else "N/A"),
+                                        portfolio_weight=_fmt_num(p_peso, "{:.2f}%"),
+                                        macro_news_context=noticias_texto,
+                                        fed_cpi_events="Decisiones de tasas FED y Banxico, datos de IPC/inflación global y tipo de cambio USD/MXN en seguimiento continuo.",
+                                    )
+                                    with st.spinner(f"Corriendo motor de Scoring V5 para {target_asset}..."):
+                                        texto_ia, err_ia = llamar_gemini(prompt_filled, backend_api_key, temperature=0.2, json_mode=True, timeout=20, presupuesto_s=45)
+                                    if texto_ia:
+                                        parsed_response = extraer_json_robusto(texto_ia)
+                                        if parsed_response and parsed_response.get("macro_synthesis"):
+                                            ai_rating = _rating_seguro(parsed_response.get("rating", 5))
+                                            ai_verdict = normalizar_veredicto(parsed_response.get("verdict"), ai_rating)
+                                            ai_bulls = _como_lista(parsed_response.get("bull_points"), ["Puntos fuertes en evaluación."])[:4]
+                                            ai_bears = _como_lista(parsed_response.get("bear_points"), ["Riesgos en evaluación."])[:4]
+                                            ai_macro = str(parsed_response.get("macro_synthesis")).strip()
+                                            st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro, "src": "gemini", "ts": time.time()}
+                                        else:
+                                            ai_verdict, error_api = "ERROR PARSEO", f"La IA no devolvió un JSON legible: {str(texto_ia)[:200]}"
                                     else:
-                                        ai_verdict, error_api = "ERROR PARSEO", f"La IA no devolvió un JSON legible: {str(texto_ia)[:200]}"
-                                else:
-                                    ai_verdict, error_api = "ERROR API", err_ia
-                            except Exception as e:
-                                ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
+                                        ai_verdict, error_api = "ERROR API", err_ia
+                                except Exception as e:
+                                    ai_verdict, error_api = "ERROR API", f"Error interno: {str(e)}"
 
-                    if not backend_api_key or ai_verdict in ["N/A", "ERROR API", "ERROR PARSEO"]:
-                        # PLAN B (stealth): el cliente ve una síntesis normal; el motivo real solo queda en los logs.
-                        if error_api: log_app.warning("Motor V5 · %s -> Plan B local. Motivo: %s", target_asset, error_api)
-                        elif not backend_api_key: log_app.warning("Motor V5 · GEMINI_API_KEY no configurada -> Plan B local.")
-                        ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = plan_b_local_v5(
-                            target_asset, tec_v5, pe_ratio, eps, is_owned, p_peso, p_retorno_total_pct)
-                        if gemini_intentado:
-                            st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro, "src": "local", "ts": time.time()}
+                        if not backend_api_key or ai_verdict in ["N/A", "ERROR API", "ERROR PARSEO"]:
+                            # PLAN B (stealth): el cliente ve una síntesis normal; el motivo real solo queda en los logs.
+                            if error_api: log_app.warning("Motor V5 · %s -> Plan B local. Motivo: %s", target_asset, error_api)
+                            elif not backend_api_key: log_app.warning("Motor V5 · GEMINI_API_KEY no configurada -> Plan B local.")
+                            ai_verdict, ai_rating, ai_bulls, ai_bears, ai_macro = plan_b_local_v5(
+                                target_asset, tec_v5, pe_ratio, eps, is_owned, p_peso, p_retorno_total_pct)
+                            if gemini_intentado:
+                                st.session_state["ai_memory"][target_asset] = {"v": ai_verdict, "r": ai_rating, "bl": ai_bulls, "br": ai_bears, "m": ai_macro, "src": "local", "ts": time.time()}
 
-                score_color = "#34d399" if ai_rating >= 7 else ("#d4af37" if ai_rating >= 4 else "#94a3b8")
+                    score_color = "#34d399" if ai_rating >= 7 else ("#d4af37" if ai_rating >= 4 else "#94a3b8")
 
-                # Rediseño 2026-10 · pestañas; la gráfica marca tus compras (punto dorado) sobre MA50/MA200.
-                tab_g, tab_f, tab_v, tab_n = st.tabs(["Gráfica", "Fundamentales", "Lectura V5", "Noticias"])
-                with tab_g:
-                    _ficha_ok = False
-                    if pro_ui is not None:
-                        try:
-                            _mon_graf = moneda_cotizacion(_yf_symbol(target_asset))
-                            fig_ficha, _compras = pro_ui.figura_ficha_tecnica(H_PRO, hist_data, target_asset, tx_df, usd_mxn, _mon_graf)
-                            with st.container(key="ficha_card"):
-                                st.plotly_chart(fig_ficha, use_container_width=True, config=plotly_config, key="ficha_graf")
-                                st.markdown("<div class='notranslate' translate='no'>" + pro_ui.html_compras_caro_barato(
-                                    _compras, float(current_price), float(low_52), float(high_52)) + "</div>", unsafe_allow_html=True)
-                                st.caption(f"Precios en {_mon_graf}. «≈» = compra registrada en otra moneda, convertida con el tipo de cambio. "
-                                           "Rango 52 s: dónde quedó el precio de tu compra entre el mínimo (0 %) y el máximo (100 %) de las últimas 52 semanas, medido con el rango actual.")
-                            _ficha_ok = True
-                        except Exception as _ex_ficha:
-                            log_app.warning("Radiografía · ficha técnica %s: %s", target_asset, _ex_ficha)
-                    if not _ficha_ok:   # respaldo: gráfica previa (precio + volumen)
-                        fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
-                        fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 148}, {211 if pct_change_1y>=0 else 163}, {153 if pct_change_1y>=0 else 184}, 0.15)"), row=1, col=1)
-                        fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
-                        style_financial_figure(fig_deep, title=f"{target_asset} | Análisis de 1 Año", showlegend=False)
-                        fig_deep.update_layout(yaxis2=dict(showgrid=False, showticklabels=False))
-                        st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
+                    # Rediseño 2026-10 · pestañas; la gráfica marca tus compras (punto dorado) sobre MA50/MA200.
+                    tab_g, tab_f, tab_v, tab_n = st.tabs(["Gráfica", "Fundamentales", "Lectura V5", "Noticias"])
+                    with tab_g:
+                        _ficha_ok = False
+                        if pro_ui is not None:
+                            try:
+                                _mon_graf = moneda_cotizacion(_yf_symbol(target_asset))
+                                fig_ficha, _compras = pro_ui.figura_ficha_tecnica(H_PRO, hist_data, target_asset, tx_df, usd_mxn, _mon_graf)
+                                with st.container(key="ficha_card"):
+                                    st.plotly_chart(fig_ficha, use_container_width=True, config=plotly_config, key="ficha_graf")
+                                    st.markdown("<div class='notranslate' translate='no'>" + pro_ui.html_compras_caro_barato(
+                                        _compras, float(current_price), float(low_52), float(high_52)) + "</div>", unsafe_allow_html=True)
+                                    st.caption(f"Precios en {_mon_graf}. «≈» = compra registrada en otra moneda, convertida con el tipo de cambio. "
+                                               "Rango 52 s: dónde quedó el precio de tu compra entre el mínimo (0 %) y el máximo (100 %) de las últimas 52 semanas, medido con el rango actual.")
+                                _ficha_ok = True
+                            except Exception as _ex_ficha:
+                                log_app.warning("Radiografía · ficha técnica %s: %s", target_asset, _ex_ficha)
+                        if not _ficha_ok:   # respaldo: gráfica previa (precio + volumen)
+                            fig_deep = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.03)
+                            fig_deep.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], fill='tozeroy', mode='lines', name='Precio', line=dict(color=color_line, width=2), fillcolor=f"rgba({52 if pct_change_1y>=0 else 148}, {211 if pct_change_1y>=0 else 163}, {153 if pct_change_1y>=0 else 184}, 0.15)"), row=1, col=1)
+                            fig_deep.add_trace(go.Bar(x=hist_data.index, y=hist_data['Volume'], name='Volumen', marker_color='rgba(212, 175, 55, 0.4)'), row=2, col=1)
+                            style_financial_figure(fig_deep, title=f"{target_asset} | Análisis de 1 Año", showlegend=False)
+                            fig_deep.update_layout(yaxis2=dict(showgrid=False, showticklabels=False))
+                            st.plotly_chart(fig_deep, use_container_width=True, config=plotly_config)
                     
-                with tab_v:
-                    bulls_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bulls])
-                    bears_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bears])
-                    st.markdown(
-                        (
-                            f"<div class='pos-box notranslate' translate='no' style='border-top: 2px solid {score_color};'>"
-                            f"<div style='display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid rgba(212, 175, 55, 0.15);padding-bottom:15px;margin-bottom:15px;'>"
-                            f"<div><p class='metric-title'>Lectura Cuantitativa V5 · Escenario observado</p>"
-                            f"<h3 style='color:{score_color};margin:0;font-size:1.6rem;font-weight:400;font-family:\"Playfair Display\", serif;font-style:italic;'>{html_seguro(ETIQUETA_LECTURA_V5.get(ai_verdict, ai_verdict))}</h3></div>"
-                            f"<div title='Puntaje de confluencia de señales (no es una calificación de compra)' style='background:transparent;color:{score_color};border:1px solid {score_color};font-weight:600;font-size:1.4rem;padding:5px 15px;border-radius:20px;display:flex;align-items:center;'>"
-                            f"{ai_rating}<span style='font-size:0.9rem;margin-left:2px;opacity:0.8;'>/10</span></div></div>"
-                            f"<div style='display:flex;gap:20px;margin-bottom:15px;'>"
-                            f"<div style='flex:1;background:rgba(52, 211, 153, 0.05);border:1px solid rgba(52, 211, 153, 0.2);border-radius:12px;padding:15px;'>"
-                            f"<p style='color:#34d399;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Puntos Fuertes (Bulls)</p>"
-                            f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bulls_html}</ul></div>"
-                            f"<div style='flex:1;background:rgba(148, 163, 184, 0.08);border:1px solid rgba(148, 163, 184, 0.25);border-radius:12px;padding:15px;'>"
-                            f"<p style='color:#94a3b8;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Riesgos (Bears)</p>"
-                            f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bears_html}</ul></div></div>"
-                            f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
-                            f"<p class='metric-title'>Síntesis Macroeconómica</p>"
-                            f"<p style='color:#e5e7eb;font-size:0.9rem;margin:0;line-height:1.6;'><i>\"{html_seguro(ai_macro)}\"</i></p></div></div>"
-                        ),
-                        unsafe_allow_html=True
-                    )
-                with tab_n:
-                    if asset_news:
-                        news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{html_seguro(n['link'])}' target='_blank' rel='noopener noreferrer' style='color:#d4af37; text-decoration:none;'>{html_seguro(n['title'])}</a></li>" for n in asset_news if str(n['link']).startswith(('https://', 'http://'))])
-                        st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
-                    else: st.caption("Yahoo Finance no tiene noticias recientes de este activo.")
-                    
-                with tab_f:
-                    if is_owned:
-                        ret_color_class = "pos-green" if p_retorno_total_mxn >= 0 else "pos-red"
+                    with tab_v:
+                        bulls_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bulls])
+                        bears_html = "".join([f"<li style='margin-bottom:4px;'>{html_seguro(r)}</li>" for r in ai_bears])
                         st.markdown(
                             (
-                                f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'>"
-                                f"<h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Tu Posición (MXN)</h3>"
-                                f"<div class='pos-row'><div><span class='pos-label'>Acciones / Títulos</span><br><span class='pos-val'>{f'{float(p_titulos):.8f}'.rstrip('0').rstrip('.')}</span></div>"
-                                f"<div style='text-align:right;'><span class='pos-label'>Valor de Mercado</span><br><span class='pos-val'>${p_val_mercado:,.2f}</span></div></div>"
-                                f"<div class='pos-row'><div><span class='pos-label'>Costo Promedio</span><br><span class='pos-val'>${p_costo_prom:,.2f}</span></div>"
-                                f"<div style='text-align:right;'><span class='pos-label'>Diversidad Portafolio</span><br><span class='pos-val'>{p_peso:.2f}%</span></div></div>"
-                                f"<div class='pos-row' style='margin-bottom:0;'><div><span class='pos-label'>Retorno Total</span><br>"
-                                f"<span class='{ret_color_class}'>${p_retorno_total_mxn:+,.2f} ({p_retorno_total_pct:+.2f}%)</span></div>"
-                                f"<div style='text-align:right;'><span class='pos-label'>Cotización Pura</span><br>"
-                                f"<span class='pos-val' style='color:#d4af37;'>${current_price:,.2f} USD</span></div></div></div>"
+                                f"<div class='pos-box notranslate' translate='no' style='border-top: 2px solid {score_color};'>"
+                                f"<div style='display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid rgba(212, 175, 55, 0.15);padding-bottom:15px;margin-bottom:15px;'>"
+                                f"<div><p class='metric-title'>Lectura Cuantitativa V5 · Escenario observado</p>"
+                                f"<h3 style='color:{score_color};margin:0;font-size:1.6rem;font-weight:400;font-family:\"Playfair Display\", serif;font-style:italic;'>{html_seguro(ETIQUETA_LECTURA_V5.get(ai_verdict, ai_verdict))}</h3></div>"
+                                f"<div title='Puntaje de confluencia de señales (no es una calificación de compra)' style='background:transparent;color:{score_color};border:1px solid {score_color};font-weight:600;font-size:1.4rem;padding:5px 15px;border-radius:20px;display:flex;align-items:center;'>"
+                                f"{ai_rating}<span style='font-size:0.9rem;margin-left:2px;opacity:0.8;'>/10</span></div></div>"
+                                f"<div style='display:flex;gap:20px;margin-bottom:15px;'>"
+                                f"<div style='flex:1;background:rgba(52, 211, 153, 0.05);border:1px solid rgba(52, 211, 153, 0.2);border-radius:12px;padding:15px;'>"
+                                f"<p style='color:#34d399;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Puntos Fuertes (Bulls)</p>"
+                                f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bulls_html}</ul></div>"
+                                f"<div style='flex:1;background:rgba(148, 163, 184, 0.08);border:1px solid rgba(148, 163, 184, 0.25);border-radius:12px;padding:15px;'>"
+                                f"<p style='color:#94a3b8;font-weight:600;font-size:0.85rem;text-transform:uppercase;margin-top:0;margin-bottom:8px;'>Riesgos (Bears)</p>"
+                                f"<ul style='color:#cbd5e1;font-size:0.85rem;padding-left:20px;margin:0;'>{bears_html}</ul></div></div>"
+                                f"<div style='background:rgba(8, 11, 19, 0.5);padding:15px;border-radius:12px;'>"
+                                f"<p class='metric-title'>Síntesis Macroeconómica</p>"
+                                f"<p style='color:#e5e7eb;font-size:0.9rem;margin:0;line-height:1.6;'><i>\"{html_seguro(ai_macro)}\"</i></p></div></div>"
                             ),
                             unsafe_allow_html=True
                         )
-                    else: 
-                        st.markdown(f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'><h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Estado de Cartera</h3><p style='color:#8b949e;font-size:0.85rem;'>Actualmente no posees {html_seguro(target_asset)} en tu portafolio. La lectura se muestra solo como referencia de observación.</p></div>", unsafe_allow_html=True)
+                    with tab_n:
+                        if asset_news:
+                            news_html = "".join([f"<li style='margin-bottom:6px;'><a href='{html_seguro(n['link'])}' target='_blank' rel='noopener noreferrer' style='color:#d4af37; text-decoration:none;'>{html_seguro(n['title'])}</a></li>" for n in asset_news if str(n['link']).startswith(('https://', 'http://'))])
+                            st.markdown(f"<div style='margin-top:15px;' class='notranslate' translate='no'><p class='metric-title'>Data Feed Inyectada al Modelo (Live News)</p><div class='pos-box'><ul style='color:#9ca3af;font-size:0.85rem;margin:0;padding-left:15px;'>{news_html}</ul></div></div>", unsafe_allow_html=True)
+                        else: st.caption("Yahoo Finance no tiene noticias recientes de este activo.")
+                    
+                    with tab_f:
+                        if is_owned:
+                            ret_color_class = "pos-green" if p_retorno_total_mxn >= 0 else "pos-red"
+                            st.markdown(
+                                (
+                                    f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'>"
+                                    f"<h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Tu Posición (MXN)</h3>"
+                                    f"<div class='pos-row'><div><span class='pos-label'>Acciones / Títulos</span><br><span class='pos-val'>{f'{float(p_titulos):.8f}'.rstrip('0').rstrip('.')}</span></div>"
+                                    f"<div style='text-align:right;'><span class='pos-label'>Valor de Mercado</span><br><span class='pos-val'>${p_val_mercado:,.2f}</span></div></div>"
+                                    f"<div class='pos-row'><div><span class='pos-label'>Costo Promedio</span><br><span class='pos-val'>${p_costo_prom:,.2f}</span></div>"
+                                    f"<div style='text-align:right;'><span class='pos-label'>Diversidad Portafolio</span><br><span class='pos-val'>{p_peso:.2f}%</span></div></div>"
+                                    f"<div class='pos-row' style='margin-bottom:0;'><div><span class='pos-label'>Retorno Total</span><br>"
+                                    f"<span class='{ret_color_class}'>${p_retorno_total_mxn:+,.2f} ({p_retorno_total_pct:+.2f}%)</span></div>"
+                                    f"<div style='text-align:right;'><span class='pos-label'>Cotización Pura</span><br>"
+                                    f"<span class='pos-val' style='color:#d4af37;'>${current_price:,.2f} USD</span></div></div></div>"
+                                ),
+                                unsafe_allow_html=True
+                            )
+                        else: 
+                            st.markdown(f"<div class='pos-box notranslate' translate='no' style='margin-top:0;'><h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:20px;font-size:1.3rem;font-weight:400;'>Estado de Cartera</h3><p style='color:#8b949e;font-size:0.85rem;'>Actualmente no posees {html_seguro(target_asset)} en tu portafolio. La lectura se muestra solo como referencia de observación.</p></div>", unsafe_allow_html=True)
 
-                    if isinstance(pe_ratio, float): pe_ratio = f"{pe_ratio:.2f}x"
-                    if isinstance(eps, float): eps = f"${eps:.2f}"
-                    if high_52 != low_52 and high_52 != "N/A": range_pct = max(0, min(100, ((current_price - low_52) / (high_52 - low_52)) * 100))
-                    else: range_pct = 50
+                        if isinstance(pe_ratio, float): pe_ratio = f"{pe_ratio:.2f}x"
+                        if isinstance(eps, float): eps = f"${eps:.2f}"
+                        if high_52 != low_52 and high_52 != "N/A": range_pct = max(0, min(100, ((current_price - low_52) / (high_52 - low_52)) * 100))
+                        else: range_pct = 50
 
-                    tt_fnd = "El Ratio P/E indica cuántos años de beneficios estás pagando por la acción. El EPS es la ganancia reportada por cada acción en circulación."
-                    st.markdown(
-                        (
-                            f"<div class='pos-box notranslate' translate='no' style='margin-top:15px;'>"
-                            f"<h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:15px;font-size:1.3rem;font-weight:400;'>Fundamentales y Rango <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fnd}</span></span></h3>"
-                            f"<span class='pos-label'>Rango de 52 Semanas</span>"
-                            f"<div style='display:flex;justify-content:space-between;font-size:0.8rem;color:#8b949e;margin-bottom:5px;'>"
-                            f"<span>${low_52:,.2f}</span><span style='color:white;font-weight:bold;'>${current_price:,.2f}</span><span>${high_52:,.2f}</span></div>"
-                            f"<div style='width:100%;background-color:#1f2937;border-radius:4px;height:8px;margin-bottom:20px;position:relative;'>"
-                            f"<div style='position:absolute;left:{range_pct}%;top:-4px;width:4px;height:16px;background-color:#d4af37;border-radius:2px;'></div>"
-                            f"<div style='width:{range_pct}%;background:linear-gradient(90deg, #d4af37 0%, #fcf6ba 100%);height:100%;border-radius:4px;'></div></div>"
-                            f"<div class='pos-row' style='margin-bottom:0;'><div><span class='pos-label'>Ratio P/E</span><br><span class='pos-val'>{pe_ratio}</span></div>"
-                            f"<div style='text-align:right;'><span class='pos-label'>EPS (Beneficio)</span><br><span class='pos-val'>{eps}</span></div></div></div>"
-                        ),
-                        unsafe_allow_html=True
-                    )
-            else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
-    else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
+                        tt_fnd = "El Ratio P/E indica cuántos años de beneficios estás pagando por la acción. El EPS es la ganancia reportada por cada acción en circulación."
+                        st.markdown(
+                            (
+                                f"<div class='pos-box notranslate' translate='no' style='margin-top:15px;'>"
+                                f"<h3 style='color:#d4af37;font-family:\"Playfair Display\", serif;font-style:italic;margin-top:0;margin-bottom:15px;font-size:1.3rem;font-weight:400;'>Fundamentales y Rango <span class='tooltip-container' tabindex='0'>ⓘ<span class='tooltip-text'>{tt_fnd}</span></span></h3>"
+                                f"<span class='pos-label'>Rango de 52 Semanas</span>"
+                                f"<div style='display:flex;justify-content:space-between;font-size:0.8rem;color:#8b949e;margin-bottom:5px;'>"
+                                f"<span>${low_52:,.2f}</span><span style='color:white;font-weight:bold;'>${current_price:,.2f}</span><span>${high_52:,.2f}</span></div>"
+                                f"<div style='width:100%;background-color:#1f2937;border-radius:4px;height:8px;margin-bottom:20px;position:relative;'>"
+                                f"<div style='position:absolute;left:{range_pct}%;top:-4px;width:4px;height:16px;background-color:#d4af37;border-radius:2px;'></div>"
+                                f"<div style='width:{range_pct}%;background:linear-gradient(90deg, #d4af37 0%, #fcf6ba 100%);height:100%;border-radius:4px;'></div></div>"
+                                f"<div class='pos-row' style='margin-bottom:0;'><div><span class='pos-label'>Ratio P/E</span><br><span class='pos-val'>{pe_ratio}</span></div>"
+                                f"<div style='text-align:right;'><span class='pos-label'>EPS (Beneficio)</span><br><span class='pos-val'>{eps}</span></div></div></div>"
+                            ),
+                            unsafe_allow_html=True
+                        )
+                else: st.warning(f"No se pudieron cargar los datos históricos de Yahoo Finance para el ticker: {target_asset}")
+        else: st.info("Agrega activos a tu portafolio para activar la Radiografía Individual.")
 
 
-    st.markdown("---")
-    if MODO_SENIOR and R_PRO:   # Sprint 2 · lectura en lenguaje llano para el modo de lectura Senior
-        render_riesgo_senior(R_PRO["var95"], R_PRO["max_dd"] * 100, R_PRO["beta"])
-    _seccion_pro("Riesgo", pro_ui.render_riesgo_pro if pro_ui else None, H_PRO, R_PRO, summary, float(total_portafolio))
-    _seccion_pro("Simulador de estrés", pro_ui.render_estres_pro if pro_ui else None, summary, (R_PRO or {}).get("betas", {}),
-                 float(liquidez_mxn), float(total_portafolio))
-    st.markdown("---")
-    _seccion_pro("Boletín del CIO", pro_ui.render_cio_pro if pro_ui else None, H_PRO, summary, active_client_id, tx_df, active_username)
+    with _sec("riesgo"):
+        if MODO_SENIOR and R_PRO:   # Sprint 2 · lectura en lenguaje llano para el modo de lectura Senior
+            render_riesgo_senior(R_PRO["var95"], R_PRO["max_dd"] * 100, R_PRO["beta"])
+        _seccion_pro("Riesgo", pro_ui.render_riesgo_pro if pro_ui else None, H_PRO, R_PRO, summary, float(total_portafolio))
+    with _sec("estres"):
+        _seccion_pro("Simulador de estrés", pro_ui.render_estres_pro if pro_ui else None, summary, (R_PRO or {}).get("betas", {}),
+                     float(liquidez_mxn), float(total_portafolio))
+    with _sec("cio"):
+        _seccion_pro("Boletín del CIO", pro_ui.render_cio_pro if pro_ui else None, H_PRO, summary, active_client_id, tx_df, active_username)
 
-    st.markdown("---")
-    st.markdown("<h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-top:20px; margin-bottom:15px; letter-spacing:1px;'>Smart DCA · Simulador de Rebalanceo</h4>", unsafe_allow_html=True)
-    if not summary.empty:
-        # El capital se precarga con el efectivo disponible (una vez por cliente y sesión, para que el refresco de
-        # cotizaciones no borre lo que escribas). Los parámetros conservan su default 60/25/15 y ahora tienen key
-        # para que la Carta CMA use los mismos.
-        _k_cap = f"dca_capital_{active_client_id}"
-        if _k_cap not in st.session_state:
-            st.session_state[_k_cap] = float(round(max(liquidez_mxn, 0.0), 2))
-        c_tgt1, c_tgt2, c_tgt3, c_dca = st.columns(4)
-        with c_tgt1: tgt_etf = st.number_input("Parámetro ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0, key="dca_tgt_etf")
-        with c_tgt2: tgt_acc = st.number_input("Parámetro Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0, key="dca_tgt_acc")
-        with c_tgt3: tgt_cripto = st.number_input("Parámetro Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key="dca_tgt_cripto")
-        with c_dca: new_capital = st.number_input("Capital a distribuir (MXN)", min_value=0.0, step=500.0, key=_k_cap,
-                                                  help=f"Precargado con tu efectivo disponible (${liquidez_mxn:,.2f}). "
-                                                       "Cámbialo para simular otra aportación.")
+    with _sec("dca"):
+     if not summary.empty:
+         # El capital se precarga con el efectivo disponible (una vez por cliente y sesión, para que el refresco de
+         # cotizaciones no borre lo que escribas). Los parámetros conservan su default 60/25/15 y ahora tienen key
+         # para que la Carta CMA use los mismos.
+         _k_cap = f"dca_capital_{active_client_id}"
+         if _k_cap not in st.session_state:
+             st.session_state[_k_cap] = float(round(max(liquidez_mxn, 0.0), 2))
+         c_tgt1, c_tgt2, c_tgt3, c_dca = st.columns(4)
+         with c_tgt1: tgt_etf = st.number_input("Parámetro ETF (%)", min_value=0.0, max_value=100.0, value=60.0, step=1.0, key="dca_tgt_etf")
+         with c_tgt2: tgt_acc = st.number_input("Parámetro Acción (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0, key="dca_tgt_acc")
+         with c_tgt3: tgt_cripto = st.number_input("Parámetro Cripto (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key="dca_tgt_cripto")
+         with c_dca: new_capital = st.number_input("Capital a distribuir (MXN)", min_value=0.0, step=500.0, key=_k_cap,
+                                                   help=f"Precargado con tu efectivo disponible (${liquidez_mxn:,.2f}). "
+                                                        "Cámbialo para simular otra aportación.")
 
-        if abs((tgt_etf + tgt_acc + tgt_cripto) - 100.0) < 1e-6:
-            tgt_dict = {"ETF": tgt_etf, "Acción": tgt_acc, "Cripto": tgt_cripto}
-            new_tot = total_activos + new_capital
-            deficits, comp_sug, actual_cls = {}, {}, {}
-            for cls, tgt in tgt_dict.items():
-                c_val = float(summary.loc[summary["Clase"] == cls, "valor_actual"].sum()) if cls in summary["Clase"].values else 0.0
-                actual_cls[cls] = c_val
-                deficits[cls] = max(0, (new_tot * (tgt / 100.0)) - c_val)
+         if abs((tgt_etf + tgt_acc + tgt_cripto) - 100.0) < 1e-6:
+             tgt_dict = {"ETF": tgt_etf, "Acción": tgt_acc, "Cripto": tgt_cripto}
+             new_tot = total_activos + new_capital
+             deficits, comp_sug, actual_cls = {}, {}, {}
+             for cls, tgt in tgt_dict.items():
+                 c_val = float(summary.loc[summary["Clase"] == cls, "valor_actual"].sum()) if cls in summary["Clase"].values else 0.0
+                 actual_cls[cls] = c_val
+                 deficits[cls] = max(0, (new_tot * (tgt / 100.0)) - c_val)
 
-            tot_def = sum(deficits.values())
-            for cls in tgt_dict: comp_sug[cls] = new_capital * (deficits[cls] / tot_def) if tot_def > 0 else new_capital * (tgt_dict[cls]/100)
+             tot_def = sum(deficits.values())
+             for cls in tgt_dict: comp_sug[cls] = new_capital * (deficits[cls] / tot_def) if tot_def > 0 else new_capital * (tgt_dict[cls]/100)
 
-            # P0-B · Escenario aritmético (no es una instrucción de inversión). Tabla: hoy vs parámetro vs después.
-            filas_dca = ""
-            for cls, tgt in tgt_dict.items():
-                pct_hoy = (actual_cls[cls] / total_activos * 100) if total_activos > 0 else 0.0
-                pct_desp = ((actual_cls[cls] + comp_sug[cls]) / new_tot * 100) if new_tot > 0 else 0.0
-                desv = pct_hoy - tgt
-                color_desv = "#d4af37" if abs(desv) < 2 else ("#c084fc" if desv > 0 else "#94a3b8")
-                filas_dca += (f"<tr><td style='padding:8px 6px;color:#e6e9ef;'>{cls}</td>"
-                              f"<td style='padding:8px 6px;text-align:right;'>${actual_cls[cls]:,.2f}</td>"
-                              f"<td style='padding:8px 6px;text-align:right;'>{pct_hoy:.1f}%</td>"
-                              f"<td style='padding:8px 6px;text-align:right;'>{tgt:.0f}%</td>"
-                              f"<td style='padding:8px 6px;text-align:right;color:{color_desv};'>{desv:+.1f} pp</td>"
-                              f"<td style='padding:8px 6px;text-align:right;color:#ffffff;font-weight:500;'>${comp_sug[cls]:,.2f}</td>"
-                              f"<td style='padding:8px 6px;text-align:right;'>{pct_desp:.1f}%</td></tr>")
-            fuera = summary.loc[~summary["Clase"].isin(list(tgt_dict)), "ticker"].tolist()
-            nota_fuera = (f"<p class='metric-subtext' style='margin-top:10px;'>Fuera de los parámetros (clase sin asignar): "
-                          f"{html_seguro(', '.join(fuera))}.</p>" if fuera else "")
-            if pro_ui is not None:   # Rediseño 2026-10 · hoy / objetivo / después en barras de 100 %
-                st.markdown(pro_ui.html_dca_barras(actual_cls, tgt_dict, {c: actual_cls[c] + comp_sug[c] for c in tgt_dict}, comp_sug, new_capital),
-                            unsafe_allow_html=True)
-            with st.expander("Tabla detallada del escenario", expanded=pro_ui is None):
-                th = "padding:6px;text-align:right;font-size:0.68rem;letter-spacing:1.4px;text-transform:uppercase;color:#8b94a7;font-weight:500;"
-                st.markdown(
-                    f"<div class='pos-box notranslate' translate='no' style='overflow-x:auto;'>"
-                    f"<p class='metric-title'>Escenario de Distribución · Parámetros Cuantitativos</p>"
-                    f"<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#8b94a7;font-variant-numeric:tabular-nums;'>"
-                    f"<tr style='border-bottom:1px solid #1c2331;'><th style='{th}text-align:left;'>Clase</th><th style='{th}'>Valor hoy</th>"
-                    f"<th style='{th}'>Peso hoy</th><th style='{th}'>Parámetro</th><th style='{th}'>Desviación</th>"
-                    f"<th style='{th}'>Distribución del capital</th><th style='{th}'>Peso después</th></tr>{filas_dca}</table>"
-                    f"<p class='metric-subtext' style='margin-top:10px;'>Pesos calculados sobre tus posiciones invertidas "
-                    f"(${total_activos:,.2f}); el efectivo entra solo a través del capital a distribuir (${new_capital:,.2f}). "
-                    f"Desviación positiva = clase por encima de su parámetro.</p>{nota_fuera}</div>",
-                    unsafe_allow_html=True)
-        else: st.warning("Los objetivos deben sumar 100%.")
+             # P0-B · Escenario aritmético (no es una instrucción de inversión). Tabla: hoy vs parámetro vs después.
+             filas_dca = ""
+             for cls, tgt in tgt_dict.items():
+                 pct_hoy = (actual_cls[cls] / total_activos * 100) if total_activos > 0 else 0.0
+                 pct_desp = ((actual_cls[cls] + comp_sug[cls]) / new_tot * 100) if new_tot > 0 else 0.0
+                 desv = pct_hoy - tgt
+                 color_desv = "#d4af37" if abs(desv) < 2 else ("#c084fc" if desv > 0 else "#94a3b8")
+                 filas_dca += (f"<tr><td style='padding:8px 6px;color:#e6e9ef;'>{cls}</td>"
+                               f"<td style='padding:8px 6px;text-align:right;'>${actual_cls[cls]:,.2f}</td>"
+                               f"<td style='padding:8px 6px;text-align:right;'>{pct_hoy:.1f}%</td>"
+                               f"<td style='padding:8px 6px;text-align:right;'>{tgt:.0f}%</td>"
+                               f"<td style='padding:8px 6px;text-align:right;color:{color_desv};'>{desv:+.1f} pp</td>"
+                               f"<td style='padding:8px 6px;text-align:right;color:#ffffff;font-weight:500;'>${comp_sug[cls]:,.2f}</td>"
+                               f"<td style='padding:8px 6px;text-align:right;'>{pct_desp:.1f}%</td></tr>")
+             fuera = summary.loc[~summary["Clase"].isin(list(tgt_dict)), "ticker"].tolist()
+             nota_fuera = (f"<p class='metric-subtext' style='margin-top:10px;'>Fuera de los parámetros (clase sin asignar): "
+                           f"{html_seguro(', '.join(fuera))}.</p>" if fuera else "")
+             if pro_ui is not None:   # Rediseño 2026-10 · hoy / objetivo / después en barras de 100 %
+                 st.markdown(pro_ui.html_dca_barras(actual_cls, tgt_dict, {c: actual_cls[c] + comp_sug[c] for c in tgt_dict}, comp_sug, new_capital),
+                             unsafe_allow_html=True)
+             with (pro_ui.desplegable("Tabla detallada del escenario", key="dca_tabla") if pro_ui is not None else st.expander("Tabla detallada del escenario", expanded=True)):
+                 th = "padding:6px;text-align:right;font-size:0.68rem;letter-spacing:1.4px;text-transform:uppercase;color:#8b94a7;font-weight:500;"
+                 st.markdown(
+                     f"<div class='pos-box notranslate' translate='no' style='overflow-x:auto;'>"
+                     f"<p class='metric-title'>Escenario de Distribución · Parámetros Cuantitativos</p>"
+                     f"<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#8b94a7;font-variant-numeric:tabular-nums;'>"
+                     f"<tr style='border-bottom:1px solid #1c2331;'><th style='{th}text-align:left;'>Clase</th><th style='{th}'>Valor hoy</th>"
+                     f"<th style='{th}'>Peso hoy</th><th style='{th}'>Parámetro</th><th style='{th}'>Desviación</th>"
+                     f"<th style='{th}'>Distribución del capital</th><th style='{th}'>Peso después</th></tr>{filas_dca}</table>"
+                     f"<p class='metric-subtext' style='margin-top:10px;'>Pesos calculados sobre tus posiciones invertidas "
+                     f"(${total_activos:,.2f}); el efectivo entra solo a través del capital a distribuir (${new_capital:,.2f}). "
+                     f"Desviación positiva = clase por encima de su parámetro.</p>{nota_fuera}</div>",
+                     unsafe_allow_html=True)
+         else: st.warning("Los objetivos deben sumar 100%.")
 
 else:
     st.markdown("<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px;' class='notranslate' translate='no'>Tu Portafolio Simplificado</h4>", unsafe_allow_html=True)
@@ -4208,56 +4319,59 @@ else:
 # ==========================================
 # 10. HISTORIAL CONTABLE Y CAJA
 # ==========================================
-st.markdown(f"<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('book', color='#d4af37', size=18)}Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
-if pro_ui is not None:   # Rediseño 2026-10 · el resumen que antes iba en el encabezado, a la derecha de las pestañas
-    st.markdown(pro_ui.html_meta_historial(len(tx_df), len(cash_df), _ultimo_mov), unsafe_allow_html=True)
-tab_ops, tab_caja = st.tabs(["Historial de Transacciones", "Flujo de Caja"])
+with _sec("hist"):
+    if not _MODO_PRO:
+        st.markdown(f"<br><h4 style='color:#ffffff; font-family:\"Playfair Display\", serif; font-size:1.2rem; font-style:italic; margin-bottom:15px; letter-spacing:1px; display:flex; align-items:center;' class='notranslate' translate='no'>{svg_icon('book', color='#d4af37', size=18)}Historial de Movimientos y Caja</h4>", unsafe_allow_html=True)
+    if pro_ui is not None:   # Rediseño 2026-10 · el resumen que antes iba en el encabezado, a la derecha de las pestañas
+        st.markdown(pro_ui.html_meta_historial(len(tx_df), len(cash_df), _ultimo_mov), unsafe_allow_html=True)
+    tab_ops, tab_caja = st.tabs(["Historial de Transacciones", "Flujo de Caja"])
 
-with tab_ops:
-    if not tx_df.empty and _MODO_PRO and pro_ui is not None:   # Pro: estado de cuenta agrupado por mes + buscador
-        _seccion_pro("Historial", pro_ui.render_historial_pro_tx, tx_df)
-    elif not tx_df.empty:
-        col_f1, col_f2 = st.columns([1, 3])
-        with col_f1:
-            tickers_disp = ["Todos"] + sorted(tx_df["ticker"].unique().tolist())
-            filtro_t = st.selectbox("Filtrar por Activo", tickers_disp, key="filtro_ticker_hist")
+    with tab_ops:
+        if not tx_df.empty and _MODO_PRO and pro_ui is not None:   # Pro: estado de cuenta agrupado por mes + buscador
+            _seccion_pro("Historial", pro_ui.render_historial_pro_tx, tx_df)
+        elif not tx_df.empty:
+            col_f1, col_f2 = st.columns([1, 3])
+            with col_f1:
+                tickers_disp = ["Todos"] + sorted(tx_df["ticker"].unique().tolist())
+                filtro_t = st.selectbox("Filtrar por Activo", tickers_disp, key="filtro_ticker_hist")
         
-        df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
-        df_mostrar_tx = df_mostrar_tx.iloc[::-1]   # P0-B · lo más reciente arriba
+            df_mostrar_tx = tx_df[tx_df["ticker"] == filtro_t] if filtro_t != "Todos" else tx_df.copy()
+            df_mostrar_tx = df_mostrar_tx.iloc[::-1]   # P0-B · lo más reciente arriba
 
-        _tit = lambda v: (f"{abs(float(v)):.8f}".rstrip("0").rstrip(".") or "0")
-        filas_tx = "".join(
-            f"<tr><td>{html_seguro(r['fecha'])}</td><td><span class='ap-pill{'' if r['tipo_operacion'] == 'COMPRA' else ' gris'}'>{html_seguro(r['tipo_operacion'])}</span></td>"
-            f"<td class='tk'>{html_seguro(r['ticker'])}</td><td style='color:#8b94a7;font-size:0.78rem;'>{html_seguro(r['clase'])}</td>"
-            f"<td class='n'>{_tit(r['titulos'])}</td><td class='n'>${float(r['precio_unitario']):,.4f}</td>"
-            f"<td class='n'>{float(r['tipo_cambio']):,.4f}</td><td class='n' style='color:#ffffff;font-weight:500;'>${float(r['total_mxn']):,.2f}</td></tr>"
-            for _, r in df_mostrar_tx.iterrows())
-        st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:360px;'><table><tr><th>Fecha</th><th>Tipo</th><th>Activo</th><th>Clase</th>"
-                    "<th class='n'>Títulos</th><th class='n'>Precio U.</th><th class='n'>T.C.</th><th class='n'>Total MXN</th></tr>"
-                    f"{filas_tx}</table></div>", unsafe_allow_html=True)
-    else: 
-        st.caption("Aún no tienes transacciones registradas.")
+            _tit = lambda v: (f"{abs(float(v)):.8f}".rstrip("0").rstrip(".") or "0")
+            filas_tx = "".join(
+                f"<tr><td>{html_seguro(r['fecha'])}</td><td><span class='ap-pill{'' if r['tipo_operacion'] == 'COMPRA' else ' gris'}'>{html_seguro(r['tipo_operacion'])}</span></td>"
+                f"<td class='tk'>{html_seguro(r['ticker'])}</td><td style='color:#8b94a7;font-size:0.78rem;'>{html_seguro(r['clase'])}</td>"
+                f"<td class='n'>{_tit(r['titulos'])}</td><td class='n'>${float(r['precio_unitario']):,.4f}</td>"
+                f"<td class='n'>{float(r['tipo_cambio']):,.4f}</td><td class='n' style='color:#ffffff;font-weight:500;'>${float(r['total_mxn']):,.2f}</td></tr>"
+                for _, r in df_mostrar_tx.iterrows())
+            st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:360px;'><table><tr><th>Fecha</th><th>Tipo</th><th>Activo</th><th>Clase</th>"
+                        "<th class='n'>Títulos</th><th class='n'>Precio U.</th><th class='n'>T.C.</th><th class='n'>Total MXN</th></tr>"
+                        f"{filas_tx}</table></div>", unsafe_allow_html=True)
+        else: 
+            st.caption("Aún no tienes transacciones registradas.")
 
-with tab_caja:
-    if not cash_df.empty and _MODO_PRO and pro_ui is not None:
-        _seccion_pro("Flujo de caja", pro_ui.render_historial_pro_caja, cash_df)
-    elif not cash_df.empty:
-        col_c1, col_c2 = st.columns([1, 3])
-        with col_c1:
-            tipos_disp = ["Todos"] + sorted(cash_df["tipo"].unique().tolist())
-            filtro_c = st.selectbox("Filtrar por Tipo", tipos_disp, key="filtro_tipo_caja")
+    with tab_caja:
+        if not cash_df.empty and _MODO_PRO and pro_ui is not None:
+            _seccion_pro("Flujo de caja", pro_ui.render_historial_pro_caja, cash_df)
+        elif not cash_df.empty:
+            col_c1, col_c2 = st.columns([1, 3])
+            with col_c1:
+                tipos_disp = ["Todos"] + sorted(cash_df["tipo"].unique().tolist())
+                filtro_c = st.selectbox("Filtrar por Tipo", tipos_disp, key="filtro_tipo_caja")
             
-        df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
-        df_mostrar_cash = df_mostrar_cash.iloc[::-1]   # P0-B · lo más reciente arriba
+            df_mostrar_cash = cash_df[cash_df["tipo"] == filtro_c] if filtro_c != "Todos" else cash_df.copy()
+            df_mostrar_cash = df_mostrar_cash.iloc[::-1]   # P0-B · lo más reciente arriba
 
-        filas_caja = "".join(
-            f"<tr><td>{html_seguro(r['fecha'])}</td><td><span class='ap-pill{'' if float(r['monto_mxn']) >= 0 else ' gris'}'>{html_seguro(r['tipo'])}</span></td>"
-            f"<td>{html_seguro(r['concepto'])}</td><td class='n {'ap-pos' if float(r['monto_mxn']) >= 0 else 'ap-neg'}'>{mxn_signo(r['monto_mxn'])}</td></tr>"
-            for _, r in df_mostrar_cash.iterrows())
-        st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:360px;'><table><tr><th>Fecha</th><th>Tipo</th><th>Concepto</th>"
-                    f"<th class='n'>Monto MXN</th></tr>{filas_caja}</table></div>", unsafe_allow_html=True)
-    else: 
-        st.caption("Aún no tienes movimientos de caja registrados.")
+            filas_caja = "".join(
+                f"<tr><td>{html_seguro(r['fecha'])}</td><td><span class='ap-pill{'' if float(r['monto_mxn']) >= 0 else ' gris'}'>{html_seguro(r['tipo'])}</span></td>"
+                f"<td>{html_seguro(r['concepto'])}</td><td class='n {'ap-pos' if float(r['monto_mxn']) >= 0 else 'ap-neg'}'>{mxn_signo(r['monto_mxn'])}</td></tr>"
+                for _, r in df_mostrar_cash.iterrows())
+            st.markdown("<div class='ap-tw notranslate' translate='no' style='max-height:360px;'><table><tr><th>Fecha</th><th>Tipo</th><th>Concepto</th>"
+                        f"<th class='n'>Monto MXN</th></tr>{filas_caja}</table></div>", unsafe_allow_html=True)
+        else: 
+            st.caption("Aún no tienes movimientos de caja registrados.")
+
 
 # ==========================================
 # 11. SPRINT 3 · CMA FINANCIAL LETTER (carta de banca privada, imprimible a PDF)
@@ -4285,12 +4399,19 @@ _ctx_carta = {
     "faltante": float(faltante), "cio": st.session_state.get("cio_report"),
 }
 _xp_carta = None
-if _MODO_PRO and pro_ui is not None and not summary.empty:   # datos extra de la edición Pro (gráficas, riesgo, agenda…)
+_huella_xp = hashlib.sha256(json.dumps([round(float(total_portafolio), 0), len(tx_df), len(cash_df), str(hoy_mx()),
+                                        st.session_state.get(f"cio_json_{active_client_id}"), st.session_state.get(f"pro_aporte_{active_client_id}"),
+                                        st.session_state.get(f"dca_capital_{active_client_id}"), _parametros_carta, xirr_valor],
+                                       default=str, sort_keys=True).encode()).hexdigest()
+if _MODO_PRO and pro_ui is not None and not summary.empty and st.session_state.get("_xp_huella") == _huella_xp:
+    _xp_carta = st.session_state.get("_xp_carta")   # fluidez: nada relevante cambió, se reutiliza
+elif _MODO_PRO and pro_ui is not None and not summary.empty:   # datos extra de la edición Pro (gráficas, riesgo, agenda…)
     try:
         _xp_carta = pro_ui.contexto_carta_pro(H_PRO, summary, tx_df, cash_df, R_PRO, float(total_portafolio), tasa_libre_riesgo(),
                                               float(usd_mxn or 18.5), active_client_id, float(liquidez_mxn), _parametros_carta,
                                               st.session_state.get(f"cio_json_{active_client_id}"), xirr_valor)
+        st.session_state["_xp_carta"], st.session_state["_xp_huella"] = _xp_carta, _huella_xp
     except Exception as _ex_xp:
         log_app.warning("Carta CMA Pro · contexto: %s", _ex_xp)
-render_carta_cma(_ctx_carta, pro=_MODO_PRO, xp=_xp_carta)   # dos ediciones: esencial (sencillo) y Pro
+render_carta_cma(_ctx_carta, pro=_MODO_PRO, xp=_xp_carta)   # fija al final, fuera del acordeón   # dos ediciones: esencial (sencillo) y Pro
 
